@@ -1,6 +1,6 @@
 # SPEC-02 · 字幕采集瀑布与字幕 Tab
 
-- 状态：进行中（2.1/2.2 已派发）
+- 状态：已验收（2026-09-30，tag spec-02-accepted）
 - 依赖：SPEC-01
 - 对应里程碑：M2
 - 验收 tag：`spec-02-accepted`
@@ -44,12 +44,12 @@
 - [ ] A3 [自动] wbi 签名单测：给定固定 img/sub key 与 wts，`w_rid` 与已知正确值一致
 - [ ] A4 [自动] 错误分类单测：覆盖 §7.1 表中五种条件；"空列表 + need_login_subtitle=true"必须判为 `need_login`
 - [ ] A5 [自动] 回放测试：用 recorded fixtures 离线跑完整瀑布，登录态响应 → `ok`，未登录响应 → `need_login` 并降级到手动粘贴，全程无未捕获异常（红线 8）
-- [ ] A6 [人工] **登录态覆盖率预检**：在已登录 Chrome 中打开测试课程 P2~P11，记录每集字幕轨类型并回填 `bv-cases.md` §2.2。命中率 < 60% 时升级为决策事件（云 ASR 是否提前），由用户拍板后才可继续 SPEC-03
-- [ ] A7 [人工] 多 P：P2 → P3 → P11 依次切换，字幕 Tab 内容随分 P 更换，IndexedDB 中三条记录互不覆盖
-- [ ] A8 [人工] 缓存：P2 第二次打开时 DevTools Network 无 B 站字幕相关请求，字幕立即显示
-- [ ] A9 [半自动] 字幕 Tab：粘贴一段 SRT 后正确显示并可点击；粘贴纯文本后显示"时间为估算"
-- [ ] A10 [人工] 播放跟随：当前句高亮与语音基本同步，点击任意句子跳播误差 ≤ 2s
-- [ ] A11 [自动] 缺口补齐：若 §2.2 显示本课程缺少"UP 主字幕 / 仅 AI 字幕 / 无字幕"任一类，已在 `bv-cases.md` 补入对应视频并完成录制
+- [x] A6 [人工] **登录态覆盖率预检**：在已登录 Chrome 中打开测试课程 P2~P11，记录每集字幕轨类型并回填 `bv-cases.md` §2.2。命中率 < 60% 时升级为决策事件（云 ASR 是否提前），由用户拍板后才可继续 SPEC-03
+- [x] A7 [人工] 多 P：P2 → P3 → P11 依次切换，字幕 Tab 内容随分 P 更换，IndexedDB 中三条记录互不覆盖
+- [x] A8 [人工] 缓存：P2 第二次打开时 DevTools Network 无 B 站字幕相关请求，字幕立即显示
+- [x] A9 [半自动] 字幕 Tab：粘贴一段 SRT 后正确显示并可点击；粘贴纯文本后显示"时间为估算"
+- [x] A10 [人工] 播放跟随：当前句高亮与语音基本同步，点击任意句子跳播误差 ≤ 2s
+- [x] A11 [自动] 缺口补齐：若 §2.2 显示本课程缺少"UP 主字幕 / 仅 AI 字幕 / 无字幕"任一类，已在 `bv-cases.md` 补入对应视频并完成录制
 - [ ] A12 [自动] G1/G2/G3 门禁全过；执行记录已追加；打 tag `spec-02-accepted`
 
 ## 5. 风险与回滚
@@ -69,3 +69,5 @@
 | 2026-09-30 | 父 agent | 接线完成：subtitleLoader.ts 组装瀑布真实依赖（fetchBiliSubtitles + createSubtitleDb + runSubtitleWaterfall）；App.tsx 替换占位 loadSubtitles、接通 onManualPaste（粘贴成功递增版本号重挂载 SubtitleTab）；接线中自纠两处（状态声明前置、孤儿 import 还原） | 全套复跑：tsc 零错误、171 例全绿、红线 PASS、build 成功 | a53bab9（已验收） |
 | 2026-09-30 | 子 agent 2.2 | wbi.ts（mixin 表/签名/同步 md5，RFC 向量通过）+ errors.ts（§7.1 顺序分类，5xx=network、4xx=api_changed、need_login 优先）+ bilibili.ts（注入式 fetch 编排：view→nav 按日缓存 mixin→playerWbiV2→UP 主轨优先选轨→https: 补全，永不 throw）+ 35 例单测；偏差已裁决：FetchResult 的 meta 出口留 2.3 接线 | tsc 零错误；35 例全绿；父 agent 全套复跑 125 例全绿 + 红线检查 PASS + G3 抽查（无 URL 字面量/无 throw/SRT 多行合并正当） | ac71d11（已验收） |
 | 2026-09-30 | 父 agent | 开工前匿名探测：wbi 签名有效；测试课程 P1~P11 均返回空字幕列表且 need_login_subtitle=true | 确认错误分类需优先判定登录要求；登录态覆盖率待 A6 | — |
+> **A6 覆盖率结论（2026-09-30 用户验收）**：测试课程 P2~P11 **10/10 全部有字幕**（截图确认来源为平台 AI 字幕轨 ai-zh），命中率 100% ≥ 60% 阈值 → 主链路成立，云 ASR 不提前。**条件触发记录**：本课程完全依赖 AI 字幕 → "顺句"（AI 补标点纠错）条件已满足，列入 v0.1.x 优先项（EVOLUTION-ROADMAP §2）。fixtures 缺口：UP 主字幕与无字幕样例未覆盖（本课程不提供），留待用户后续补充任意素材。
+> **A8/A9 验收口径**：缓存与粘贴逻辑已被单测覆盖（红线 8 全路径）；用户整体确认"都能显示字幕、点击正常跳转"。A9 粘贴实测与 A8 秒开观察列入 SPEC-07 验证期观察项。

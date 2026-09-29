@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "react": "18.3",
-    "react-dom": "18.3"
+    "react-dom": "18.3",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/chrome": "^0.3.4",
