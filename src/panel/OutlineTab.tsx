@@ -129,7 +129,7 @@ export function OutlineSectionList({
               <p className="outline-summary">{section.summary}</p>
               <ul className="outline-bullets">
                 {section.bullets.map((bullet, i) => (
-                  <li key={i}>{bullet}</li>
+                  <li key={i}>{bullet.text}</li>
                 ))}
               </ul>
               {section.terms.length > 0 && (

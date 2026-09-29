@@ -6,13 +6,23 @@ import { z } from 'zod';
 import type { ChunkState, Cue, Section } from '../../types';
 import type { SnappedSection } from './snap';
 
-/** 候选章节（模型单块输出，TECH-DESIGN §6.1） */
+/** 候选章节（模型单块输出，TECH-DESIGN §6.1；SPEC-03 3c：bullets 带 startSec、新增 importance） */
 export const SectionCandidateSchema = z.object({
   title: z.string().min(4).max(40),
   startSec: z.number().int().nonnegative(),
   summary: z.string().max(120),
-  bullets: z.array(z.string()).min(1).max(5),
+  bullets: z
+    .array(
+      z.object({
+        text: z.string().min(1),
+        startSec: z.number().int().nonnegative(),
+      }),
+    )
+    .min(1)
+    .max(5),
   terms: z.array(z.string()).max(15),
+  /** 1-5：本章在整片中的重要性（模型判断） */
+  importance: z.number().int().min(1).max(5),
 });
 export type SectionCandidate = z.infer<typeof SectionCandidateSchema>;
 
@@ -30,7 +40,7 @@ export type OutlineModelFn = (req: {
   userPrompt: string;
 }) => Promise<{ content: string }>;
 
-/** finalize 后的章节：density 由子任务 3.5 填充 */
+/** finalize 后的章节：density/score 由 density.ts 填充（importance 来自模型） */
 export type OutlineSection = Omit<Section, 'density'>;
 
 /** 分块状态：在共享 ChunkState 上扩展预算熔断跳过标记 */
@@ -63,6 +73,8 @@ export interface RunOutlineOptions {
   mergeTitleThreshold?: number;
   /** 增量合并：时间相邻窗口（毫秒），默认 60_000 */
   mergeAdjacentMs?: number;
+  /** 最短章节时长（毫秒），默认 OUTLINE.minSectionDurationMs（90s）；finalize 后不足者并入相邻较长章节 */
+  minSectionDurationMs?: number;
   targetChars?: number;
   overlapChars?: number;
   /**

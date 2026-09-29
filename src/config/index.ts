@@ -32,6 +32,8 @@ export const OUTLINE = {
   maxRetries: 1,
   /** 吸附容差：候选时间戳超此值视为幻觉，丢弃该章节 */
   snapMaxDriftMs: 5_000,
+  /** 最短章节时长：finalize 后不足此值的章节并入相邻较长章节（SPEC-03 3c） */
+  minSectionDurationMs: 90_000,
 } as const;
 
 export const DENSITY = {

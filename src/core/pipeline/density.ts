@@ -1,28 +1,27 @@
 /**
- * 章节信息密度计算（TECH-DESIGN §4.3，SPEC-03 子任务 3.5）。
- * 纯确定性计算（红线 1）：模型只提供 terms 列表，密度分档完全由代码推导，
- * 无模型调用、无随机源、无时间依赖。
+ * 章节信息密度打分（TECH-DESIGN §4.3；SPEC-03 3c 范围变更：0-100 打分制）。
+ * 纯确定性计算（红线 1）：模型只提供 terms 与 importance，score 与 density 分档
+ * 完全由代码推导，无模型调用、无随机源、无时间依赖。
+ *
+ * score = round(100 * (0.45*newTermRateNorm + 0.25*termRateNorm + 0.3*importanceNorm))
+ * - newTermRate：每分钟新术语（与既有逻辑一致，跨章去重、分钟数下限 0.1），全片 min-max 归一；
+ * - termRate：术语总数/分钟（章内归一化去重），全片 min-max 归一；
+ * - importance：(importance-1)/4，天然 0-1，不再归一；
+ * - 零跨度（max==min）分量取 0.5。
+ * 退化：单章 / 全零（无任何术语且 importance 全同，无区分信号）→ score 50（中位）。
  */
-import { DENSITY } from '../../config';
 import type { Density, Section } from '../../types';
+
+/** score 分档阈值：≥70 high，≤30 low，否则 mid */
+export const DENSITY_HIGH_SCORE = 70;
+export const DENSITY_LOW_SCORE = 30;
+
+/** score 综合权重（SPEC-03 3c：新知识率 45% + 术语密度 25% + importance 30%） */
+const WEIGHTS = { newTermRate: 0.45, termRate: 0.25, importance: 0.3 } as const;
 
 /** 术语归一化：trim + 小写（大小写/首尾空白不敏感去重） */
 function normalizeTerm(term: string): string {
   return term.trim().toLowerCase();
-}
-
-/**
- * 分位数（实现方式：线性插值，即 R-7 / Type 7，与 numpy/pandas 默认一致）：
- * pos = (n-1)*p，落在整数位直接取值，否则在相邻两个排序值间线性插值。
- */
-function quantile(sorted: number[], p: number): number {
-  if (sorted.length === 0) return 0;
-  if (sorted.length === 1) return sorted[0];
-  const pos = (sorted.length - 1) * p;
-  const lo = Math.floor(pos);
-  const hi = Math.ceil(pos);
-  if (lo === hi) return sorted[lo];
-  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
 }
 
 /** 章节分钟数：(endMs-startMs)/60000；< 0.1 按 0.1 计（短章防除零放大） */
@@ -30,61 +29,82 @@ function minutesOf(s: { startMs: number; endMs: number }): number {
   return Math.max((s.endMs - s.startMs) / 60_000, 0.1);
 }
 
+/** min-max 归一：零跨度（max==min）时全取 0.5（无区分信号 → 中位） */
+function minMaxNorm(values: number[]): number[] {
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  if (max === min) return values.map(() => 0.5);
+  return values.map((v) => (v - min) / (max - min));
+}
+
 /**
- * 计算各章节信息密度（TECH-DESIGN §4.3）：
- * - newTerms[i] = 第 i 章 terms 中未在此前任何章节（含本章内此前出现）出现过的数量；
- * - rate[i] = newTerms[i] / 章节分钟数（分钟数下限 0.1）；
- * - 章节数 ≥ minSectionsForQuantile(4)：按全片 rate 的 P75/P25 分位数分档
- *   （≥P75 → high，≤P25 → low，其余 mid）；
- * - 章节数 < 4：绝对阈值（rate ≥ highNewTermsPerMin(3) → high；rate ≥ 1 → mid，下界 1 为
- *   固定常量，TECH-DESIGN §4.3 未将其配置化；否则 low）。
- * 退化：空输入 → []；单章 → ['mid']（单章无对比意义）；全部 rate=0（无术语）→ 全 low
- * （分位数路径下 P75=P25=0 会把 0 误判为 high，需显式短路）。
- * 返回与输入等长的 Density[]（顺序一一对应）。
+ * 对全片章节计算 0-100 综合分数（顺序与输入一一对应）。
+ * 退化：空输入 → []；单章 / 无任何术语且 importance 全同 → [50...]（中位，无区分信号）。
  */
-export function computeDensity(sections: Array<Omit<Section, 'density'>>): Density[] {
+export function computeScores(sections: Array<Omit<Section, 'density'>>): number[] {
   const n = sections.length;
   if (n === 0) return [];
 
-  // 按章节顺序统计每章新术语数与 rate，维护已见术语集合
+  // 按章节顺序统计每章新术语数/术语总数，维护已见术语集合（跨章去重）
   const seen = new Set<string>();
-  const rates: number[] = [];
+  const newRates: number[] = [];
+  const termRates: number[] = [];
+  const importances: number[] = [];
   for (const s of sections) {
-    let newTerms = 0;
+    const uniqInSec: string[] = [];
+    const seenInSec = new Set<string>();
     for (const term of s.terms) {
       const key = normalizeTerm(term);
+      if (seenInSec.has(key)) continue;
+      seenInSec.add(key);
+      uniqInSec.push(key);
+    }
+    let newTerms = 0;
+    for (const key of uniqInSec) {
       if (!seen.has(key)) {
         newTerms += 1;
         seen.add(key);
       }
     }
-    rates.push(newTerms / minutesOf(s));
+    const mins = minutesOf(s);
+    newRates.push(newTerms / mins);
+    termRates.push(uniqInSec.length / mins);
+    importances.push(s.importance);
   }
 
-  // 退化：单章无对比意义 → mid（优先于全零判断，即使该章 rate=0）
-  if (n === 1) return ['mid'];
-
-  // 退化：全部 rate=0（无任何术语）→ 全 low
-  if (rates.every((r) => r === 0)) return sections.map(() => 'low' as const);
-
-  if (n >= DENSITY.minSectionsForQuantile) {
-    // 分位数分档：先判 high（≥P75）再判 low（≤P25），二者相等时 high 优先
-    const sorted = [...rates].sort((a, b) => a - b);
-    const p75 = quantile(sorted, DENSITY.highQuantile);
-    const p25 = quantile(sorted, DENSITY.lowQuantile);
-    return rates.map((r) => (r >= p75 ? 'high' : r <= p25 ? 'low' : 'mid'));
+  // 退化：单章 / 全零（无任何术语且 importance 全同）→ 全 50
+  const allZeroTerms =
+    newRates.every((r) => r === 0) && termRates.every((r) => r === 0);
+  if (n === 1 || (allZeroTerms && importances.every((i) => i === importances[0]))) {
+    return sections.map(() => 50);
   }
 
-  // 绝对阈值分档（< 4 章）
-  return rates.map((r) => {
-    if (r >= DENSITY.highNewTermsPerMin) return 'high' as const;
-    if (r >= 1) return 'mid' as const;
-    return 'low' as const;
-  });
+  const newNorm = minMaxNorm(newRates);
+  const termNorm = minMaxNorm(termRates);
+  return sections.map(
+    (_, i) =>
+      Math.round(
+        100 *
+          (WEIGHTS.newTermRate * newNorm[i] +
+            WEIGHTS.termRate * termNorm[i] +
+            WEIGHTS.importance * ((importances[i] - 1) / 4)),
+      ),
+  );
 }
 
-/** computeDensity + 按索引合并，返回补全 density 的完整 Section[]（原字段浅拷贝不变） */
+/** score → density 分档：≥70 high，≤30 low，否则 mid */
+export function densityFromScore(score: number): Density {
+  if (score >= DENSITY_HIGH_SCORE) return 'high';
+  if (score <= DENSITY_LOW_SCORE) return 'low';
+  return 'mid';
+}
+
+/** computeScores + 按分数分档，返回补全 score 与 density 的完整 Section[]（原字段浅拷贝不变） */
 export function attachDensity(sections: Array<Omit<Section, 'density'>>): Section[] {
-  const densities = computeDensity(sections);
-  return sections.map((s, i) => ({ ...s, density: densities[i] }));
+  const scores = computeScores(sections);
+  return sections.map((s, i) => ({
+    ...s,
+    score: scores[i],
+    density: densityFromScore(scores[i]),
+  }));
 }

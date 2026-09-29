@@ -22,15 +22,17 @@ import {
 } from './types';
 
 export { chunkCues, type ChunkOptions } from './chunk';
-export { buildOutlinePrompts, formatTimecode } from './prompts';
-export { snapCandidates, type SnappedSection, type SnapResult } from './snap';
+export { buildOutlinePrompts, buildOutlineRegeneratePrompts, formatTimecode } from './prompts';
+export { snapCandidates, snapBullets, nearestCueStartMs, type SnappedSection, type SnapResult } from './snap';
 export {
+  enforceMinDuration,
   finalizeOutline,
   IncrementalMerger,
   titleSimilarity,
   validateOutline,
   type MergeOptions,
 } from './merge';
+export { regenerateSection, rescoreOutline, type RegenerateOptions } from './regenerate';
 export {
   OutlineChunkSchema,
   SectionCandidateSchema,
@@ -199,7 +201,11 @@ export async function runOutline(
     }
   }
 
-  const sections: Section[] = finalizeOutline(merger.getSections(), cues);
+  const sections: Section[] = finalizeOutline(
+    merger.getSections(),
+    cues,
+    opts.minSectionDurationMs,
+  );
   const failedChunks = chunkState.filter((s) => s.status === 'failed').length;
   return { sections, chunkState, droppedBySnap, budgetHit, failedChunks };
 }

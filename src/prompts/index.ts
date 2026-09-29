@@ -6,6 +6,7 @@
  * （驱动大纲缓存失效）。解析失败在模块加载期即 throw——属构建期问题，应尽早暴露。
  */
 import outlinePromptMd from './outline.md?raw';
+import outlineRegenerateMd from './outline-regenerate.md?raw';
 
 export interface PromptHeader {
   promptVersion: string;
@@ -34,13 +35,20 @@ export function stripPromptHeaderComments(raw: string): string {
 }
 
 const OUTLINE_HEADER = parsePromptHeader(outlinePromptMd);
+const OUTLINE_REGENERATE_HEADER = parsePromptHeader(outlineRegenerateMd);
 
 /** 各 prompt 当前版本（来自文件头注释，单一事实源） */
 export const PROMPT_VERSIONS = {
   outline: OUTLINE_HEADER.promptVersion,
+  outlineRegenerate: OUTLINE_REGENERATE_HEADER.promptVersion,
 } as const;
 
 /** 大纲生成 system prompt 正文（单一事实源：src/prompts/outline.md） */
 export function getOutlineSystemPrompt(): string {
   return stripPromptHeaderComments(outlinePromptMd);
+}
+
+/** 单章重生成 system prompt 正文（单一事实源：src/prompts/outline-regenerate.md） */
+export function getOutlineRegenerateSystemPrompt(): string {
+  return stripPromptHeaderComments(outlineRegenerateMd);
 }

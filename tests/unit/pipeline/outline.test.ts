@@ -20,12 +20,19 @@ const twoChunkCues = (): Cue[] => Array.from({ length: 20 }, (_, i) => mkCue(i, 
 const oneChunkCues = (gapMs = 20_000): Cue[] =>
   Array.from({ length: 5 }, (_, i) => mkCue(i, i * gapMs));
 
-const CAND = (title: string, startSec: number, bullets = ['要点'], terms: string[] = []): SectionCandidate => ({
+const CAND = (
+  title: string,
+  startSec: number,
+  bullets: string[] = ['要点'],
+  terms: string[] = [],
+  importance = 3,
+): SectionCandidate => ({
   title,
   startSec,
   summary: '本章摘要',
-  bullets,
+  bullets: bullets.map((text) => ({ text, startSec })),
   terms,
+  importance,
 });
 
 const json = (sections: SectionCandidate[]): string => JSON.stringify({ sections });
@@ -36,13 +43,15 @@ const byChunk = (
 ): OutlineModelFn => async (req) => fn(req.userPrompt.includes('c0:') ? 0 : 1);
 
 describe('runOutline（A1/A2/A3/A4/A6 编排）', () => {
+  // 注：除"最短章节强制"专项用例外，以下用例传 minSectionDurationMs=0 关闭
+  // 90s 最短章节强制，聚焦各自原有语义（吸附/合并/校验/熔断等）。
   it('正常两块 → 两块章节均在且按时间排序，chunkState 全部 done', async () => {
     const modelFn: OutlineModelFn = byChunk(async (n) =>
       n === 0
         ? { content: json([CAND('课程介绍与环境搭建', 0), CAND('变量与类型系统', 150)]) }
         : { content: json([CAND('循环与流程控制', 160)]) },
     );
-    const res = await runOutline(twoChunkCues(), modelFn);
+    const res = await runOutline(twoChunkCues(), modelFn, { minSectionDurationMs: 0 });
 
     expect(res.sections.map((s) => s.startMs)).toEqual([0, 150_000, 160_000]);
     expect(res.sections.map((s) => s.title)).toEqual(['课程介绍与环境搭建', '变量与类型系统', '循环与流程控制']);
@@ -64,7 +73,7 @@ describe('runOutline（A1/A2/A3/A4/A6 编排）', () => {
         ? { content: json([CAND('课程介绍与环境搭建', 0), CAND('变量与类型系统', 150)]) }
         : { content: json([CAND('循环与流程控制', 160)]) },
     );
-    const res = await runOutline(twoChunkCues(), modelFn);
+    const res = await runOutline(twoChunkCues(), modelFn, { minSectionDurationMs: 0 });
     const [s1, s2, s3] = res.sections;
     expect(s1.endMs).toBe(149_999);
     expect(s2.endMs).toBe(159_999);
@@ -81,7 +90,7 @@ describe('runOutline（A1/A2/A3/A4/A6 编排）', () => {
     const modelFn: OutlineModelFn = async () => ({
       content: json([CAND('课程导论', 3), CAND('类型讲解', 37), CAND('幻觉演示', 32)]),
     });
-    const res = await runOutline(oneChunkCues(), modelFn);
+    const res = await runOutline(oneChunkCues(), modelFn, { minSectionDurationMs: 0 });
     expect(res.sections).toHaveLength(2);
     expect(res.sections[0].startMs).toBe(0); // 严格相等，非约等于
     expect(res.sections[1].startMs).toBe(40_000);
@@ -104,7 +113,7 @@ describe('runOutline（A1/A2/A3/A4/A6 编排）', () => {
         ? { content: json([CAND('课程介绍与环境搭建', 0), CAND('变量与类型系统', 150)]) }
         : { content: json([CAND('循环与流程控制', 163), CAND('函数封装实践', 181)]) },
     );
-    const res = await runOutline(cues, modelFn);
+    const res = await runOutline(cues, modelFn, { minSectionDurationMs: 0 });
     expect(res.sections.length).toBeGreaterThanOrEqual(3);
     const cueStarts = new Set(cues.map((c) => c.startMs));
     for (const s of res.sections) expect(cueStarts.has(s.startMs)).toBe(true);
@@ -229,11 +238,14 @@ describe('runOutline（A1/A2/A3/A4/A6 编排）', () => {
           }
         : { content: json([CAND('变量与类型系统详解', 160, ['作用域规则'], ['变量', '作用域'])]) },
     );
-    const res = await runOutline(twoChunkCues(), modelFn);
+    const res = await runOutline(twoChunkCues(), modelFn, { minSectionDurationMs: 0 });
     expect(res.sections).toHaveLength(2); // 160s 候题并入 150s 尾部
     expect(res.sections[1].startMs).toBe(150_000);
     expect(res.sections[1].title).toBe('变量与类型系统');
-    expect(res.sections[1].bullets).toEqual(['变量声明', '作用域规则']);
+    expect(res.sections[1].bullets).toEqual([
+      { text: '变量声明', startMs: 150_000 },
+      { text: '作用域规则', startMs: 160_000 },
+    ]);
     expect(res.sections[1].terms).toEqual(['变量', '作用域']);
   });
 
@@ -255,11 +267,32 @@ describe('runOutline（A1/A2/A3/A4/A6 编排）', () => {
             : json([CAND('循环与流程控制', 160)]),
       };
     };
-    const res = await runOutline(twoChunkCues(), build(false));
-    const resDelayed = await runOutline(twoChunkCues(), build(true));
+    const res = await runOutline(twoChunkCues(), build(false), { minSectionDurationMs: 0 });
+    const resDelayed = await runOutline(twoChunkCues(), build(true), { minSectionDurationMs: 0 });
     expect(resDelayed.sections.map((s) => ({ startMs: s.startMs, title: s.title }))).toEqual(
       expected.sections,
     );
     expect(resDelayed.sections).toEqual(res.sections);
+  });
+
+  it('最短章节强制（默认 90s）：过短章节并入相邻较长者，产物仍通过覆盖校验', async () => {
+    // oneChunkCues：5 条 Cue 20s 间隔（0..80s，末尾 85s）；两章各 ~45s → 全部不达标 → 并成一章
+    const modelFn: OutlineModelFn = async () => ({
+      content: json([CAND('第一章节标题甲', 0, ['甲要点']), CAND('第二章节标题乙', 45, ['乙要点'])]),
+    });
+    const res = await runOutline(oneChunkCues(), modelFn); // 不关 minSectionDurationMs
+    expect(res.sections).toHaveLength(1);
+    expect(res.sections[0].startMs).toBe(0);
+    expect(res.sections[0].endMs).toBe(85_000);
+    // 后章（40s，末章按 85s 计）更短 → 并入前邻，保留前邻标题，bullets 合并
+    expect(res.sections[0].title).toBe('第一章节标题甲');
+    expect(res.sections[0].bullets).toEqual([
+      { text: '甲要点', startMs: 0 },
+      { text: '乙要点', startMs: 40_000 }, // 45s 候选 bullet 吸附到最近 Cue（40s）
+    ]);
+    // 产物携带 importance 与 score
+    expect(res.sections[0].importance).toBe(3);
+    expect(res.sections[0].score).toBe(50); // 单章退化 → 中位
+    expect(res.sections[0].density).toBe('mid');
   });
 });

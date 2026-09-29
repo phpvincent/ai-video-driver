@@ -51,6 +51,15 @@ export interface FetchResult {
 
 export type Density = 'low' | 'mid' | 'high';
 
+/** 章节要点（SPEC-03 3c 范围变更：bullets 升级为带时间戳对象，可点跳播） */
+export interface SectionBullet {
+  text: string;
+  /** 吸附后的 Cue 开始时间（毫秒） */
+  startMs: number;
+  /** 吸附偏差超阈值回落到章节起点时为 true（UI 可弱化跳播精度提示） */
+  approximate?: boolean;
+}
+
 export interface Section {
   id: string;
   /** 8-20 字 */
@@ -61,10 +70,14 @@ export interface Section {
   endMs: number;
   /** 40-80 字 */
   summary: string;
-  /** 2-5 条 */
-  bullets: string[];
+  /** 2-5 条（每条带吸附后的开始时间） */
+  bullets: SectionBullet[];
   /** 本章出现的技术术语（模型抽取；密度由代码确定性计算） */
   terms: string[];
+  /** 1-5，模型给出的章节重要性（SPEC-03 3c） */
+  importance: number;
+  /** 0-100 综合打分（代码计算：新知识率 45% + 术语密度 25% + importance 30%；density 徽标由 score 分档） */
+  score?: number;
   density: Density;
   /** 覆盖的 Cue 序号区间 */
   cueRange: [number, number];

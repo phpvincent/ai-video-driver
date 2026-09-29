@@ -28,8 +28,12 @@ const section = (
   startMs,
   endMs,
   summary: `${title}的摘要`,
-  bullets: [`${title}要点一`, `${title}要点二`],
+  bullets: [
+    { text: `${title}要点一`, startMs },
+    { text: `${title}要点二`, startMs: endMs - 1 },
+  ],
   terms: ['术语A'],
+  importance: 3,
   cueRange: [0, 1],
   ...extra,
 });
