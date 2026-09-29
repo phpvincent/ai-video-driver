@@ -127,6 +127,13 @@ function SectionCard({
   const [feedback, setFeedback] = useState('');
   /** 最近一次提交的反馈（失败重试时复用） */
   const lastFeedbackRef = useRef<string | undefined>(undefined);
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  /** 重生成开始：平滑滚动并保持本章为视觉焦点（选中效果切换到该模块） */
+  useEffect(() => {
+    if (regenerating) {
+      cardRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [regenerating]);
 
   const submit = (fb: string | undefined) => {
     lastFeedbackRef.current = fb;
@@ -135,10 +142,11 @@ function SectionCard({
 
   return (
     <div
+      ref={cardRef}
       data-section-id={section.id}
       className={
         'outline-section' +
-        (active ? ' active' : '') +
+        (active || regenerating ? ' active' : '') +
         (regenerating ? ' regenerating' : '')
       }
     >
@@ -184,7 +192,8 @@ function SectionCard({
       {section.terms.length > 0 && (
         <div className="outline-terms">{section.terms.join(' · ')}</div>
       )}
-      {feedbackOpen && !regenerating && (
+      {/* 反馈表单常驻渲染，grid 0fr/1fr 过渡实现丝滑展开收起（避免条件渲染的硬切） */}
+      <div className={'outline-regen-collapse' + (feedbackOpen && !regenerating ? ' open' : '')}>
         <div className="outline-regen-form">
           <textarea
             className="outline-regen-input"
@@ -201,8 +210,11 @@ function SectionCard({
             重新生成本章
           </button>
         </div>
-      )}
-      {regenerating && <div className="outline-regen-loading">本章重新生成中…</div>}
+      </div>
+      {/* 重生成提示同样走 collapse 过渡 */}
+      <div className={'outline-regen-collapse' + (regenerating ? ' open' : '')}>
+        <div className="outline-regen-loading">本章重新生成中…</div>
+      </div>
       {errorText && !regenerating && (
         <div className="outline-regen-error">
           <span className="outline-regen-error-text">{errorText}</span>

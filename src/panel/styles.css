@@ -618,3 +618,44 @@ body {
   color: #f53f3f;
   word-break: break-word;
 }
+
+/* ===== 单章重生成丝滑过渡（SPEC-03 范围变更 UI 打磨） ===== */
+/* grid 0fr/1fr 折叠动画：表单与提示的展开/收起平滑过渡 */
+.outline-regen-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.28s ease;
+  opacity: 0;
+}
+.outline-regen-collapse.open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.outline-regen-collapse > .outline-regen-form,
+.outline-regen-collapse > .outline-regen-loading {
+  overflow: hidden;
+  min-height: 0;
+}
+/* 卡片选中/重生成态的样式切换平滑过渡 */
+.outline-section {
+  transition: background-color 0.25s ease, border-color 0.25s ease,
+    box-shadow 0.25s ease;
+}
+/* 重生成中：复用选中高亮 + 轻微呼吸提示（替代生硬的骨架替换） */
+.outline-section.regenerating {
+  animation: outline-regen-breathe 1.6s ease-in-out infinite;
+}
+@keyframes outline-regen-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.0); }
+  50% { box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .outline-regen-collapse,
+  .outline-section {
+    transition: none;
+  }
+  .outline-section.regenerating {
+    animation: none;
+  }
+}
