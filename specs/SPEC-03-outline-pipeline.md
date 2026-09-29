@@ -48,6 +48,18 @@
 | 2026-09-30 | 父 agent | 3.4/3.5 并行验收：全套复跑 tsc 零错误、**283 例全绿（+50）**、红线全 PASS（prompts 检查首次实跑：SKILL.md→outline.md 引用校验通过）、build 成功 | ✅ 剩余：OutlineRecord 缓存接线（含 SW 宿主验证 A4b）、进度钩子、A4/A5/A13 联调待用户 | fc7db80 |
 | 2026-09-30 | 父 agent | 收尾接线（3.1~3.5 之后的父 agent 亲自部分）：① runOutline 增 onProgress 进度钩子（增量合并阶段按块下标顺序触发、回调异常吞掉）+ 3 例钩子单测；② db 层 outlines store get/save（键 [videoId, promptVersion, model]，红线 7 定向失效；chunkState 断点随存）；③ outlineLoader 接缓存（命中短路、结果落库写失败不阻断）+ 进度透传；④ OutlineResult.sections 升级为 Section[]（与 3.5 finalize 对齐） | tsc 零错误；286 例全绿；红线全 PASS；build 成功 | 3408a28（已验收） |
 
+
+## 3c. 范围变更记录（2026-09-30，用户驱动的大纲质量迭代）
+
+用户实测 P7（27 分钟）产出 23 章（过度碎片化，均 70 秒/章），提出四项改进。按宪法 §8 记录：
+
+1. **切 Tab 后大纲状态丢失**（显示问题）：Tab 重挂载未自动读缓存 → 改为挂载即自动加载（缓存命中秒显），仅无缓存时显示生成按钮
+2.1 **章节时间显示为范围**：UI 显示 `mm:ss-mm:ss`（endMs 已有）；bullets 升级为带开始时间戳的对象，可点跳播
+2.2 **密度改 0-100 打分**：score = 代码确定性合成（新知识率 min-max 归一 45% + 术语密度 25% + 模型给出的 importance 1-5 归一 30%）；density 低/中/高徽标保留为分数分档
+2.3 **每章单独重新生成 + 用户反馈**：regenerateSection 管道（反馈仅方向性引导，内容仍必须来自字幕素材，防幻觉约束入 prompt）；UI 每章独立重生成按钮 + 反馈输入
+4. **Prompt 粒度优化**：prompt v0.2.0（章节粒度约束：全片章节数 ≤ max(3, ceil(分钟数/4))、单章 3-8 分钟、片头寒暄并入首章）+ 代码强制最短章节 90 秒（不足自动合并，finalize 后处理）
+
+连带变更：SectionCandidateSchema bullets → `{text, startSec}` 对象数组（吸附到 Cue 边界）、新增 `importance` 字段、Section 类型新增 importance/score、promptVersion 0.1.0 → 0.2.0（**旧缓存按红线 7 自动失效**，用户需重新生成）、新增 src/prompts/outline-regenerate.md。
 ## 4. 验收标准
 
 - [ ] A1 [自动] 切片单测：空字幕、单 Cue、单条超长 Cue、恰好 1800 字、切点均落在 Cue 边界
