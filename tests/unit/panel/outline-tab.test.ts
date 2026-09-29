@@ -224,7 +224,8 @@ describe('单章重生成 UI 状态', () => {
         onSubmitRegen: () => {},
       }),
     );
-    expect(html).toContain('outline-section regenerating');
+    expect(html).toContain('outline-section active regenerating');
+    // 打磨后：重生成卡片复用选中高亮（active）并平滑滚动聚焦
     expect(html).toContain('本章重新生成中…');
     expect(html).toContain('<button type="button" class="outline-regen-btn" disabled=""');
   });

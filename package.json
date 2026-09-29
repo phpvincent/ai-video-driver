@@ -8,7 +8,8 @@
     "build": "vite build",
     "test": "vitest run --passWithNoTests",
     "check:redlines": "node scripts/check-redlines.mjs",
-    "check:prompts": "node scripts/check-prompts.mjs"
+    "check:prompts": "node scripts/check-prompts.mjs",
+    "verify": "tsc --noEmit && vitest run && node scripts/check-redlines.mjs && vite build"
   },
   "dependencies": {
     "react": "18.3",
