@@ -61,5 +61,5 @@
 
 | 日期 | 执行者 | 变更摘要 | 自测结果 | commit |
 |---|---|---|---|---|
-| 2026-09-30 | 父 agent | 子任务 1.2 共享契约完成：`src/types.ts`（TECH-DESIGN §4 全量类型）、`src/messages.ts`（10 类消息）、`src/config/index.ts`（端点与阈值） | 编译随 1.1 构建验证 | <随提交回填> |
-| 2026-09-30 | 子 agent 1.1 | 工程初始化：package.json / tsconfig / vitest / vite 三入口配置（background ES + panel HTML/ES，content IIFE 经 closeBundle 二次构建）、panel.html 与 background/content/panel 占位入口、check 双脚本占位 | `npm run build` 零错误，dist 含 background.js / content.js / panel.html / panel.js；`npm test` 与双 check exit 0；`tsc --noEmit` 零错误 | <随提交回填> |
+| 2026-09-30 | 父 agent | 子任务 1.2 共享契约完成：`src/types.ts`（TECH-DESIGN §4 全量类型）、`src/messages.ts`（10 类消息）、`src/config/index.ts`（端点与阈值） | 编译随 1.1 构建验证 | 5ecc048 |
+| 2026-09-30 | 子 agent 1.1 | 工程初始化：package.json / tsconfig / vitest / vite 三入口配置（background ES + panel HTML/ES，content IIFE 经 closeBundle 二次构建）、panel.html 与 background/content/panel 占位入口、check 双脚本占位 | `npm run build` 零错误，dist 含 background.js / content.js / panel.html / panel.js；`npm test` 与双 check exit 0；`tsc --noEmit` 零错误 | 904a548（父 agent 复跑 G1/G3 通过，已验收） |
