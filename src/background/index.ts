@@ -15,6 +15,7 @@ import type { VideoId } from '../types';
 export type Action =
   | { kind: 'storeVideo'; tabId: number; payload: VideoInfoPayload }
   | { kind: 'clearVideo'; tabId: number }
+  | { kind: 'enableSidePanel'; tabId: number }
   | { kind: 'forwardToPanel'; message: RuntimeMessage }
   | { kind: 'forwardToTab'; tabId: number; message: RuntimeMessage }
   | { kind: 'respond'; response: VideoInfoPayload | null }
@@ -39,10 +40,10 @@ export function routeBackgroundMessage(msg: RuntimeMessage, ctx: RouteContext): 
       if (tabId === null) {
         return [{ kind: 'ignore', reason: 'VIDEO_DETECTED 需要 content script 来源 tab' }];
       }
-      // 注意：不调用 setOptions 启用面板——面板全局可用（manifest side_panel），
-      // 实测 setOptions 与 setPanelBehavior 混用会互相覆盖状态，导致点击失效。
+      // per-tab 启用必须保留：历史版本的禁用状态会残留，检测到视频时是唯一的重启用时机
       return [
         { kind: 'storeVideo', tabId, payload: msg.payload },
+        { kind: 'enableSidePanel', tabId },
         { kind: 'forwardToPanel', message: { type: MSG.VIDEO_CHANGED, payload: msg.payload } },
       ];
     }
@@ -141,6 +142,10 @@ async function executeActions(actions: Action[], sendResponse: (response?: unkno
         tabVideoMap.delete(action.tabId);
         await persistTabVideoMap();
         break;
+      case 'enableSidePanel':
+        await chrome.sidePanel.setOptions({ tabId: action.tabId, enabled: true });
+        console.info('[vsc] side panel enabled for tab', action.tabId);
+        break;
       case 'forwardToPanel':
         // panel 可能未打开（无接收方会 reject），静默吞掉
         chrome.runtime.sendMessage(action.message).catch(() => {});
@@ -174,20 +179,20 @@ async function executeActions(actions: Action[], sendResponse: (response?: unkno
 function bootstrap(): void {
   console.info('[vsc] background boot');
 
-  // 点击工具栏图标打开侧边栏——唯一的侧边栏状态管理入口。
-  // 教训：setPanelBehavior 与 setOptions 混用会互相覆盖状态（openPanelOnActionClick
-  // 失效 + "No active side panel for tab"），因此全项目禁止再调用 setOptions。
+  // 点击工具栏图标打开侧边栏——首选路径。
   chrome.sidePanel
     .setPanelBehavior({ openPanelOnActionClick: true })
     .then(() => console.info('[vsc] openPanelOnActionClick enabled'))
     .catch((err: unknown) => console.error('[vsc] setPanelBehavior failed:', err));
 
-  // 兜底：behavior 未生效时（onClicked 触发即为信号），在用户手势的同步调用栈内
-  // 直调 open()——open 前不得有任何 await（跨异步边界手势失效）。
+  // 兜底：behavior 未生效时（onClicked 触发即为信号）。两个调用背靠背同步发出、
+  // 都不 await：setOptions 先启用（清残留禁用），open 紧随其后保持在手势栈内。
+  // open 前任何 await 都会丢手势（报 "may only be called in response to a user gesture"）。
   chrome.action.onClicked.addListener((tab) => {
     const tabId = tab.id;
     if (typeof tabId !== 'number') return;
-    console.info('[vsc] action clicked (behavior miss), opening side panel for tab', tabId);
+    console.info('[vsc] action clicked (behavior miss), enabling + opening for tab', tabId);
+    void chrome.sidePanel.setOptions({ tabId, enabled: true });
     chrome.sidePanel.open({ tabId }).catch((err: unknown) => {
       console.error('[vsc] sidePanel.open failed:', err);
     });

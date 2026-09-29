@@ -137,6 +137,7 @@ function handleUrlChange(): void {
     const videoId = toVideoId(parsed.bvid, parsed.page);
     if (videoId === currentVideoId) return;
     currentVideoId = videoId;
+    console.info('[vsc] content: video detected ->', videoId);
     post({ type: MSG.VIDEO_DETECTED, payload: collectVideoInfo(parsed) });
   } else if (currentVideoId) {
     const leftPayload: VideoIdPayload = { videoId: currentVideoId };
