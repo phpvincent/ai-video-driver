@@ -4,10 +4,12 @@
  */
 import { useEffect, useState } from 'react';
 import { MSG, type PlaybackPayload, type RuntimeMessage, type VideoInfoPayload } from '../messages';
-import type { FetchResult, VideoMeta } from '../types';
+import type { FetchResult, ModelConfig, VideoMeta } from '../types';
+import type { OutlineResult } from '../core/pipeline/outline';
 import { ChatTab } from './ChatTab';
 import { MindmapTab } from './MindmapTab';
 import { OutlineTab } from './OutlineTab';
+import { loadOutlineForVideo } from './outlineLoader';
 import { SettingsPage } from './settings/SettingsPage';
 import { SubtitleTab } from './SubtitleTab';
 import { loadSubtitles as runWaterfall, loadSubtitlesManual } from './subtitleLoader';
@@ -41,6 +43,33 @@ export function App() {
   const [showSettings, setShowSettings] = useState(false);
   /** 手动粘贴版本号：递增触发 SubtitleTab 重载（key 变化） */
   const [pasteVersion, setPasteVersion] = useState(0);
+  /** 设置中的模型配置（modelReady 判断用；生成时 loadOutlineForVideo 会实时重读） */
+  const [modelConfig, setModelConfig] = useState<ModelConfig | null>(null);
+
+  /** chrome.runtime.sendMessage 的安全包装：上下文失效时静默返回 null */
+  const sendRuntimeMessage = (message: unknown): Promise<unknown> => {
+    try {
+      return chrome.runtime.sendMessage(message);
+    } catch {
+      return Promise.resolve(null);
+    }
+  };
+
+  /** 拉取设置中的模型配置（挂载时与设置页关闭后刷新 modelReady） */
+  const refreshModelConfig = () => {
+    sendRuntimeMessage({ type: MSG.GET_SETTINGS })
+      .then((response: unknown) => {
+        const stored = (response ?? {}) as { model?: ModelConfig };
+        setModelConfig(stored.model ?? null);
+      })
+      .catch(() => {
+        // background 未就绪时保持空配置（modelReady=false）
+      });
+  };
+
+  useEffect(() => {
+    refreshModelConfig();
+  }, []);
 
   useEffect(() => {
     // 打开侧边栏时拉取当前 tab 的视频信息
@@ -102,6 +131,10 @@ export function App() {
       });
   };
 
+  /** 大纲生成（SPEC-03 3.4）：读设置与字幕缓存 → runOutline，异常由 OutlineTab 状态机呈现 */
+  const handleLoadOutline = (videoId: string): Promise<OutlineResult> =>
+    loadOutlineForVideo(videoId);
+
   return (
     <div className="app">
       <header className="info-bar">
@@ -126,7 +159,13 @@ export function App() {
       </header>
 
       {showSettings ? (
-        <SettingsPage onClose={() => setShowSettings(false)} />
+        <SettingsPage
+          onClose={() => {
+            setShowSettings(false);
+            // 保存后返回需刷新 modelReady
+            refreshModelConfig();
+          }}
+        />
       ) : (
         <>
           <nav className="tabs">
@@ -160,7 +199,17 @@ export function App() {
                 onManualPaste={handleManualPaste}
               />
             )}
-            {tab === 'outline' && <OutlineTab />}
+            {tab === 'outline' && (
+              <OutlineTab
+                videoId={video?.videoId ?? null}
+                meta={meta}
+                positionMs={playback?.positionMs ?? 0}
+                onRequestSeek={handleRequestSeek}
+                loadOutline={handleLoadOutline}
+                modelReady={!!modelConfig?.apiKey}
+                onOpenSettings={() => setShowSettings(true)}
+              />
+            )}
             {tab === 'mindmap' && <MindmapTab />}
             {tab === 'chat' && <ChatTab />}
           </main>
