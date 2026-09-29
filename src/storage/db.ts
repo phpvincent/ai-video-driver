@@ -11,7 +11,7 @@
  * 高层 API getSubtitle / saveSubtitle 仅操作 DB.stores.subtitles（键 videoId）。
  * 红线 8 的兜底在调用方（waterfall）：本模块异常向上传播，不在 DB 层吞错。
  */
-import type { OutlineRecord, SubtitleRecord } from '../types';
+import type { OutlineRecord, QaRecord, SubtitleRecord } from '../types';
 import { DB } from '../config';
 
 /** 最小数据库契约：注入点，单测用内存实现替换 */
@@ -19,6 +19,8 @@ export interface DbLike {
   open(): Promise<void>;
   get<T>(store: string, key: IDBValidKey): Promise<T | undefined>;
   put(store: string, key: IDBValidKey, value: unknown): Promise<void>;
+  /** 全量读取某 store（SPEC-05 追加：qaHistory 无索引前缀扫描，靠 get 全量 + 过滤） */
+  getAll<T>(store: string): Promise<T[]>;
 }
 
 /** IDBRequest → Promise */
@@ -78,6 +80,11 @@ export function createSubtitleDb(idbFactory?: IDBFactory): DbLike {
       const req = db.transaction(store, 'readwrite').objectStore(store).put(value, key);
       await requestToPromise(req);
     },
+    async getAll<T>(store: string): Promise<T[]> {
+      const db = await ensureOpen();
+      const req = db.transaction(store, 'readonly').objectStore(store).getAll();
+      return await requestToPromise<T[]>(req);
+    },
   };
 }
 
@@ -132,4 +139,24 @@ export async function saveOutline(
   await db.open();
   const record: OutlineRecord = { ...rec, createdAt: new Date(now()).toISOString() };
   await db.put(DB.stores.outlines, outlineCacheKey(rec.videoId, rec.promptVersion, rec.model), record);
+}
+
+// ---------------------------------------------------------------------------
+// qaHistory（SPEC-05 追加）：键 id（QaRecord.id）；qaHistory 量级低（每视频几十条），
+// listQaByVideo 用全量 getAll + 过滤，不建 IDB 索引。
+// ---------------------------------------------------------------------------
+
+/** 写问答记录（键 rec.id，store 取 DB.stores.qaHistory） */
+export async function saveQaRecord(db: DbLike, rec: QaRecord): Promise<void> {
+  await db.open();
+  await db.put(DB.stores.qaHistory, rec.id, rec);
+}
+
+/** 按视频列出问答记录（createdAt 升序；无记录返回空数组） */
+export async function listQaByVideo(db: DbLike, videoId: string): Promise<QaRecord[]> {
+  await db.open();
+  const all = await db.getAll<QaRecord>(DB.stores.qaHistory);
+  return all
+    .filter((r) => r.videoId === videoId)
+    .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
 }

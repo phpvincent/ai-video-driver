@@ -7,6 +7,8 @@
  */
 import outlinePromptMd from './outline.md?raw';
 import outlineRegenerateMd from './outline-regenerate.md?raw';
+import segmentQaMd from './segment-qa.md?raw';
+import termExplainerMd from './term-explainer.md?raw';
 
 export interface PromptHeader {
   promptVersion: string;
@@ -36,11 +38,15 @@ export function stripPromptHeaderComments(raw: string): string {
 
 const OUTLINE_HEADER = parsePromptHeader(outlinePromptMd);
 const OUTLINE_REGENERATE_HEADER = parsePromptHeader(outlineRegenerateMd);
+const TERM_EXPLAINER_HEADER = parsePromptHeader(termExplainerMd);
+const SEGMENT_QA_HEADER = parsePromptHeader(segmentQaMd);
 
 /** 各 prompt 当前版本（来自文件头注释，单一事实源） */
 export const PROMPT_VERSIONS = {
   outline: OUTLINE_HEADER.promptVersion,
   outlineRegenerate: OUTLINE_REGENERATE_HEADER.promptVersion,
+  termExplainer: TERM_EXPLAINER_HEADER.promptVersion,
+  segmentQa: SEGMENT_QA_HEADER.promptVersion,
 } as const;
 
 /** 大纲生成 system prompt 正文（单一事实源：src/prompts/outline.md） */
@@ -51,4 +57,14 @@ export function getOutlineSystemPrompt(): string {
 /** 单章重生成 system prompt 正文（单一事实源：src/prompts/outline-regenerate.md） */
 export function getOutlineRegenerateSystemPrompt(): string {
   return stripPromptHeaderComments(outlineRegenerateMd);
+}
+
+/** 术语解释 system prompt 正文（单一事实源：src/prompts/term-explainer.md，SPEC-05） */
+export function getTermExplainerSystemPrompt(): string {
+  return stripPromptHeaderComments(termExplainerMd);
+}
+
+/** 区间问答 system prompt 正文（单一事实源：src/prompts/segment-qa.md，SPEC-05） */
+export function getSegmentQaSystemPrompt(): string {
+  return stripPromptHeaderComments(segmentQaMd);
 }

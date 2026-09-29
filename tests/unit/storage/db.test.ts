@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { createSubtitleDb, getSubtitle, saveSubtitle, type DbLike } from '../../../src/storage/db';
+import {
+  createSubtitleDb,
+  getSubtitle,
+  listQaByVideo,
+  saveQaRecord,
+  saveSubtitle,
+  type DbLike,
+} from '../../../src/storage/db';
 import { DB } from '../../../src/config';
-import type { SubtitleRecord, VideoMeta } from '../../../src/types';
+import type { QaRecord, SubtitleRecord, VideoMeta } from '../../../src/types';
 
 const meta: VideoMeta = {
   videoId: 'BV1X_p1',
@@ -42,6 +49,10 @@ class MemoryDbLike implements DbLike {
   async put(store: string, key: IDBValidKey, value: unknown): Promise<void> {
     if (!this.stores.has(store)) this.stores.set(store, new Map());
     this.stores.get(store)!.set(key, value);
+  }
+
+  async getAll<T>(store: string): Promise<T[]> {
+    return [...(this.stores.get(store)?.values() ?? [])] as T[];
   }
 }
 
@@ -98,6 +109,12 @@ function makeFakeFactory(): { factory: IDBFactory; openCount: () => number } {
             if (store === undefined) throw new Error(`object store not found: ${storeName}`);
             store.set(key, value);
             req.result = key;
+          }),
+        getAll: () =>
+          makeRequest((req) => {
+            const store = stores.get(storeName);
+            if (store === undefined) throw new Error(`object store not found: ${storeName}`);
+            req.result = [...store.values()];
           }),
       }),
     }),
@@ -189,5 +206,71 @@ describe('createSubtitleDb（注入 IDBFactory）', () => {
     const got = await getSubtitle(db, 'BV1X_p1');
     expect(got).toMatchObject({ videoId: 'BV1X_p1', status: 'manual_pasted' });
     expect(openCount()).toBe(1);
+  });
+
+  it('createSubtitleDb 的 getAll：全量返回某 store 的全部记录', async () => {
+    const { factory } = makeFakeFactory();
+    const db = createSubtitleDb(factory);
+    await db.put('qaHistory', 'id-1', { id: 'id-1' });
+    await db.put('qaHistory', 'id-2', { id: 'id-2' });
+    await db.put('qaHistory', 'id-1', { id: 'id-1', v: 2 });
+    const all = await db.getAll<{ id: string; v?: number }>('qaHistory');
+    expect(all).toHaveLength(2);
+    expect(all.find((r) => r.id === 'id-1')).toMatchObject({ v: 2 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// qaHistory（SPEC-05）
+// ---------------------------------------------------------------------------
+
+function qaRecord(overrides: Partial<QaRecord>): QaRecord {
+  return {
+    id: 'qa-1',
+    videoId: 'BV1X_p1',
+    interactionType: 'segment',
+    sectionId: null,
+    timestampMs: 60_000,
+    rangeMs: [30_000, 90_000],
+    question: '这段讲了什么',
+    answer: '回答正文',
+    payload: { answer: '回答正文' },
+    createdAt: '2026-09-30T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+describe('saveQaRecord / listQaByVideo（内存 DbLike 注入）', () => {
+  it('保存后按 videoId 过滤返回，createdAt 升序', async () => {
+    const db = new MemoryDbLike();
+    await saveQaRecord(db, qaRecord({ id: 'b', createdAt: '2026-09-30T00:00:02.000Z' }));
+    await saveQaRecord(db, qaRecord({ id: 'a', createdAt: '2026-09-30T00:00:01.000Z' }));
+    const list = await listQaByVideo(db, 'BV1X_p1');
+    expect(list.map((r) => r.id)).toEqual(['a', 'b']);
+    // 底层存储位置：qaHistory store + 键 id
+    expect(db.stores.get(DB.stores.qaHistory)?.has('a')).toBe(true);
+  });
+
+  it('跨视频隔离：只返回目标 videoId 的记录', async () => {
+    const db = new MemoryDbLike();
+    await saveQaRecord(db, qaRecord({ id: 'x1', videoId: 'BV1X_p1' }));
+    await saveQaRecord(db, qaRecord({ id: 'x2', videoId: 'BV1Y_p1' }));
+    await saveQaRecord(db, qaRecord({ id: 'x3', videoId: 'BV1X_p1' }));
+    const list = await listQaByVideo(db, 'BV1X_p1');
+    expect(list.map((r) => r.id)).toEqual(['x1', 'x3']);
+  });
+
+  it('无记录返回空数组', async () => {
+    const db = new MemoryDbLike();
+    expect(await listQaByVideo(db, 'BV1X_p1')).toEqual([]);
+  });
+
+  it('记录字段完整透传（A4 聚合字段齐备）', async () => {
+    const db = new MemoryDbLike();
+    const rec = qaRecord({ sectionId: 'sec_0002', interactionType: 'term', rangeMs: null });
+    await saveQaRecord(db, rec);
+    const [got] = await listQaByVideo(db, rec.videoId);
+    expect(got).toEqual(rec);
+    expect(got.sectionId).toBe('sec_0002');
   });
 });
