@@ -57,15 +57,14 @@ describe('routeBackgroundMessage', () => {
     expect(kinds(actions)).toEqual(['ignore']);
   });
 
-  it('VIDEO_LEFT：clear + disableSidePanel + forward(VIDEO_CHANGED, null)', () => {
+  it('VIDEO_LEFT：clear + forward(VIDEO_CHANGED, null)；不禁用侧边栏（per-tab 禁用会残留导致 open 失败）', () => {
     const actions = routeBackgroundMessage(
       { type: MSG.VIDEO_LEFT, payload: { videoId: video.videoId } },
       makeCtx(),
     );
-    expect(kinds(actions)).toEqual(['clearVideo', 'disableSidePanel', 'forwardToPanel']);
+    expect(kinds(actions)).toEqual(['clearVideo', 'forwardToPanel']);
     expect(actions[0]).toEqual({ kind: 'clearVideo', tabId: TAB_ID });
-    expect(actions[1]).toEqual({ kind: 'disableSidePanel', tabId: TAB_ID });
-    expect(actions[2]).toEqual({
+    expect(actions[1]).toEqual({
       kind: 'forwardToPanel',
       message: { type: MSG.VIDEO_CHANGED, payload: null },
     });

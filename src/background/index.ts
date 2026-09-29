@@ -16,7 +16,6 @@ export type Action =
   | { kind: 'storeVideo'; tabId: number; payload: VideoInfoPayload }
   | { kind: 'clearVideo'; tabId: number }
   | { kind: 'enableSidePanel'; tabId: number }
-  | { kind: 'disableSidePanel'; tabId: number }
   | { kind: 'forwardToPanel'; message: RuntimeMessage }
   | { kind: 'forwardToTab'; tabId: number; message: RuntimeMessage }
   | { kind: 'respond'; response: VideoInfoPayload | null }
@@ -57,9 +56,10 @@ export function routeBackgroundMessage(msg: RuntimeMessage, ctx: RouteContext): 
       if (!current || current.videoId !== msg.payload.videoId) {
         return [{ kind: 'ignore', reason: '映射不存在或已更新，跳过过期 VIDEO_LEFT' }];
       }
+      // 不禁用该 tab 的侧边栏：Chrome 的 per-tab 禁用状态会残留，导致后续
+      // open()/点击行为报 "No active side panel"。面板对无视频状态自行展示。
       return [
         { kind: 'clearVideo', tabId },
-        { kind: 'disableSidePanel', tabId },
         { kind: 'forwardToPanel', message: { type: MSG.VIDEO_CHANGED, payload: null } },
       ];
     }
@@ -144,9 +144,6 @@ async function executeActions(actions: Action[], sendResponse: (response?: unkno
       case 'enableSidePanel':
         await chrome.sidePanel.setOptions({ tabId: action.tabId, enabled: true });
         break;
-      case 'disableSidePanel':
-        await chrome.sidePanel.setOptions({ tabId: action.tabId, enabled: false });
-        break;
       case 'forwardToPanel':
         // panel 可能未打开（无接收方会 reject），静默吞掉
         chrome.runtime.sendMessage(action.message).catch(() => {});
@@ -186,13 +183,16 @@ function bootstrap(): void {
     .then(() => console.info('[vsc] openPanelOnActionClick enabled'))
     .catch((err: unknown) => console.error('[vsc] setPanelBehavior failed:', err));
 
-  // 双保险：若 behavior 未生效（注册失败 / 被其他设置覆盖），点击图标时手动打开。
+  // 双保险：若 behavior 未生效（注册失败 / 被其他设置覆盖），点击图标时先显式
+  // 启用该 tab 的面板再打开——覆盖任何 per-tab 禁用残留，"点击必开"。
   // behavior 生效时 onClicked 不会触发，两者互补不冲突。
   chrome.action.onClicked.addListener((tab) => {
-    if (typeof tab.id !== 'number') return;
-    console.info('[vsc] action clicked, opening side panel for tab', tab.id);
+    const tabId = tab.id;
+    if (typeof tabId !== 'number') return;
+    console.info('[vsc] action clicked, opening side panel for tab', tabId);
     chrome.sidePanel
-      .open({ tabId: tab.id })
+      .setOptions({ tabId, enabled: true })
+      .then(() => chrome.sidePanel.open({ tabId }))
       .catch((err: unknown) => console.error('[vsc] sidePanel.open failed:', err));
   });
 
