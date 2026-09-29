@@ -1,0 +1,174 @@
+/**
+ * 模型客户端单元测试（SPEC-03 3.1）。
+ * 全部经注入 fetchFn 与自建 mock Response 验证，不发真实网络请求。
+ * 红线 9：baseUrl 为运行时假域名，apiKey 使用 "test-key" 假值。
+ */
+import { describe, expect, it, vi } from 'vitest';
+import { chatCompletion, type ChatRequest, type FetchLike } from '../../../src/core/harness/modelClient';
+
+const BASE_URL = 'https://api.example.test/v1';
+const FAKE_KEY = 'test-key';
+
+function makeRequest(overrides: Partial<ChatRequest> = {}): ChatRequest {
+  return {
+    baseUrl: BASE_URL,
+    apiKey: FAKE_KEY,
+    model: 'test-model',
+    temperature: 0.2,
+    maxTokens: 64,
+    messages: [
+      { role: 'system', content: 'you are a test' },
+      { role: 'user', content: 'hello' },
+    ],
+    ...overrides,
+  };
+}
+
+function okResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+const NORMAL_BODY = {
+  choices: [{ message: { role: 'assistant', content: 'world' } }],
+  usage: { prompt_tokens: 11, completion_tokens: 7 },
+};
+
+/** 记录调用并返回预设 Response 的 mock fetch */
+function mockFetch(response: Response | ((url: string, init?: RequestInit) => Response)): {
+  fetchFn: FetchLike;
+  calls: Array<{ url: string; init?: RequestInit }>;
+} {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const fetchFn: FetchLike = (url, init) => {
+    calls.push({ url, init });
+    const res = typeof response === 'function' ? response(url, init) : response;
+    return Promise.resolve(res);
+  };
+  return { fetchFn, calls };
+}
+
+function parseBody(init?: RequestInit): Record<string, unknown> {
+  return JSON.parse(String(init?.body)) as Record<string, unknown>;
+}
+
+describe('chatCompletion', () => {
+  it('正常返回：content 与 usage 正确映射', async () => {
+    const { fetchFn } = mockFetch(okResponse(NORMAL_BODY));
+    const res = await chatCompletion(makeRequest(), fetchFn);
+    expect(res.content).toBe('world');
+    expect(res.inputTokens).toBe(11);
+    expect(res.outputTokens).toBe(7);
+  });
+
+  it('URL 拼接：baseUrl 尾部斜杠被规范化', async () => {
+    const { fetchFn, calls } = mockFetch(okResponse(NORMAL_BODY));
+    await chatCompletion(makeRequest({ baseUrl: `${BASE_URL}///` }), fetchFn);
+    expect(calls[0]?.url).toBe(`${BASE_URL}/chat/completions`);
+  });
+
+  it('请求头含 Bearer + apiKey，body 为 POST JSON', async () => {
+    const { fetchFn, calls } = mockFetch(okResponse(NORMAL_BODY));
+    await chatCompletion(makeRequest(), fetchFn);
+    const headers = calls[0]?.init?.headers as Record<string, string>;
+    expect(headers['Authorization']).toBe(`Bearer ${FAKE_KEY}`);
+    expect(headers['Content-Type']).toBe('application/json');
+    expect(calls[0]?.init?.method).toBe('POST');
+  });
+
+  it('请求体携带 model / messages / temperature / max_tokens', async () => {
+    const { fetchFn, calls } = mockFetch(okResponse(NORMAL_BODY));
+    const req = makeRequest();
+    await chatCompletion(req, fetchFn);
+    const body = parseBody(calls[0]?.init);
+    expect(body['model']).toBe('test-model');
+    expect(body['temperature']).toBe(0.2);
+    expect(body['max_tokens']).toBe(64);
+    expect(body['messages']).toEqual(req.messages);
+  });
+
+  it('responseFormatJson=true 时 body 含 response_format，且默认不带', async () => {
+    const withJson = mockFetch(okResponse(NORMAL_BODY));
+    await chatCompletion(makeRequest({ responseFormatJson: true }), withJson.fetchFn);
+    expect(parseBody(withJson.calls[0]?.init)['response_format']).toEqual({ type: 'json_object' });
+
+    const withoutJson = mockFetch(okResponse(NORMAL_BODY));
+    await chatCompletion(makeRequest(), withoutJson.fetchFn);
+    expect(parseBody(withoutJson.calls[0]?.init)['response_format']).toBeUndefined();
+  });
+
+  it('401 → throw 且消息含 401 与响应摘要', async () => {
+    const { fetchFn } = mockFetch(
+      okResponse({ error: { message: 'Invalid API key' } }, 401),
+    );
+    await expect(chatCompletion(makeRequest(), fetchFn)).rejects.toThrow('401');
+  });
+
+  it('500 → throw 且消息含 500', async () => {
+    const { fetchFn } = mockFetch(new Response('internal server error', { status: 500 }));
+    await expect(chatCompletion(makeRequest(), fetchFn)).rejects.toThrow('500');
+  });
+
+  it('非 2xx 错误摘要被压缩：超长 body 截断到 200 字符', async () => {
+    const longText = 'x'.repeat(5000);
+    const { fetchFn } = mockFetch(new Response(longText, { status: 502 }));
+    let err: unknown;
+    try {
+      await chatCompletion(makeRequest(), fetchFn);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(Error);
+    const message = (err as Error).message;
+    expect(message).toContain('502');
+    expect(message.length).toBeLessThan(300);
+  });
+
+  it('响应非 JSON → throw', async () => {
+    const { fetchFn } = mockFetch(new Response('<html>gateway</html>', { status: 200 }));
+    await expect(chatCompletion(makeRequest(), fetchFn)).rejects.toThrow(/not json/i);
+  });
+
+  it('choices 缺失 → throw', async () => {
+    const { fetchFn } = mockFetch(okResponse({ usage: { prompt_tokens: 1 } }));
+    await expect(chatCompletion(makeRequest(), fetchFn)).rejects.toThrow(/missing choices/);
+  });
+
+  it('choices 为空数组 → throw', async () => {
+    const { fetchFn } = mockFetch(okResponse({ choices: [] }));
+    await expect(chatCompletion(makeRequest(), fetchFn)).rejects.toThrow(/missing choices/);
+  });
+
+  it('message.content 非 string → throw', async () => {
+    const { fetchFn } = mockFetch(okResponse({ choices: [{ message: { content: null } }] }));
+    await expect(chatCompletion(makeRequest(), fetchFn)).rejects.toThrow(/content/);
+  });
+
+  it('usage 缺失 → tokens 记 0，不 throw', async () => {
+    const { fetchFn } = mockFetch(okResponse({ choices: [{ message: { content: 'hi' } }] }));
+    const res = await chatCompletion(makeRequest(), fetchFn);
+    expect(res.content).toBe('hi');
+    expect(res.inputTokens).toBe(0);
+    expect(res.outputTokens).toBe(0);
+  });
+
+  it('注入 fetchFn 被调用且仅调用一次', async () => {
+    const spy = vi.fn(() => Promise.resolve(okResponse(NORMAL_BODY)));
+    await chatCompletion(makeRequest(), spy as unknown as FetchLike);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('多 role 消息原样透传（system/user/assistant）', async () => {
+    const { fetchFn, calls } = mockFetch(okResponse(NORMAL_BODY));
+    const messages = [
+      { role: 'system' as const, content: 's' },
+      { role: 'user' as const, content: 'u1' },
+      { role: 'assistant' as const, content: 'a1' },
+      { role: 'user' as const, content: 'u2' },
+    ];
+    await chatCompletion(makeRequest({ messages }), fetchFn);
+    expect(parseBody(calls[0]?.init)['messages']).toEqual(messages);
+  });
+});
