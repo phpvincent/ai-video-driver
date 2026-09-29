@@ -6,7 +6,7 @@
  * 密度计算（density）属子任务 3.5，本模块不产出。
  */
 import { OUTLINE } from '../../config';
-import type { Cue } from '../../types';
+import type { Cue, Section } from '../../types';
 import { chunkCues } from './chunk';
 import { finalizeOutline, IncrementalMerger } from './merge';
 import { buildOutlinePrompts } from './prompts';
@@ -181,15 +181,25 @@ export async function runOutline(
     adjacentMs: opts.mergeAdjacentMs,
   });
   let droppedBySnap = 0;
+  let doneChunks = 0;
   for (let i = 0; i < chunks.length; i++) {
     const candidates = candidatesByChunk[i];
     if (!candidates) continue;
     const { kept, dropped } = snapCandidates(candidates, cues, snapMaxDriftMs);
     droppedBySnap += dropped;
     merger.addChunk(kept);
+    doneChunks += 1;
+    // 进度钩子：每确认一个块的章节后回调（UI 流式渲染用；异常不阻断 pipeline）
+    if (opts.onProgress) {
+      try {
+        opts.onProgress(merger.getSections(), doneChunks, chunks.length);
+      } catch {
+        /* 回调异常忽略：进度提示非关键路径 */
+      }
+    }
   }
 
-  const sections: OutlineSection[] = finalizeOutline(merger.getSections(), cues);
+  const sections: Section[] = finalizeOutline(merger.getSections(), cues);
   const failedChunks = chunkState.filter((s) => s.status === 'failed').length;
   return { sections, chunkState, droppedBySnap, budgetHit, failedChunks };
 }

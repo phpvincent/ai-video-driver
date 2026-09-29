@@ -11,7 +11,7 @@
  * 高层 API getSubtitle / saveSubtitle 仅操作 DB.stores.subtitles（键 videoId）。
  * 红线 8 的兜底在调用方（waterfall）：本模块异常向上传播，不在 DB 层吞错。
  */
-import type { SubtitleRecord } from '../types';
+import type { OutlineRecord, SubtitleRecord } from '../types';
 import { DB } from '../config';
 
 /** 最小数据库契约：注入点，单测用内存实现替换 */
@@ -101,4 +101,35 @@ export async function saveSubtitle(
   await db.open();
   const record: SubtitleRecord = { ...rec, fetchedAt: new Date(now()).toISOString() };
   await db.put(DB.stores.subtitles, rec.videoId, record);
+}
+
+/** 大纲缓存键：[videoId, promptVersion, model]（红线 7：prompt/模型升级定向失效） */
+export function outlineCacheKey(videoId: string, promptVersion: string, model: string): string {
+  return `${videoId}::${promptVersion}::${model}`;
+}
+
+/** 读大纲缓存，未命中返回 null */
+export async function getOutline(
+  db: DbLike,
+  videoId: string,
+  promptVersion: string,
+  model: string,
+): Promise<OutlineRecord | null> {
+  await db.open();
+  const rec = await db.get<OutlineRecord>(
+    DB.stores.outlines,
+    outlineCacheKey(videoId, promptVersion, model),
+  );
+  return rec ?? null;
+}
+
+/** 写大纲缓存（含 chunkState 断点，供续跑；fetchedAt 由本层盖章） */
+export async function saveOutline(
+  db: DbLike,
+  rec: OutlineRecord,
+  now: () => number = Date.now,
+): Promise<void> {
+  await db.open();
+  const record: OutlineRecord = { ...rec, createdAt: new Date(now()).toISOString() };
+  await db.put(DB.stores.outlines, outlineCacheKey(rec.videoId, rec.promptVersion, rec.model), record);
 }

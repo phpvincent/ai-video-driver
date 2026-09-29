@@ -4,6 +4,7 @@
  */
 import { z } from 'zod';
 import type { ChunkState, Cue, Section } from '../../types';
+import type { SnappedSection } from './snap';
 
 /** 候选章节（模型单块输出，TECH-DESIGN §6.1） */
 export const SectionCandidateSchema = z.object({
@@ -39,7 +40,8 @@ export interface OutlineChunkState extends ChunkState {
 }
 
 export interface OutlineResult {
-  sections: OutlineSection[];
+  /** finalize + attachDensity 后的完整章节（3.5 起 Section 含 density） */
+  sections: Section[];
   chunkState: OutlineChunkState[];
   /** 吸附阶段因偏差超阈值丢弃的候选章节数（红线 2：幻觉路径） */
   droppedBySnap: number;
@@ -63,4 +65,14 @@ export interface RunOutlineOptions {
   mergeAdjacentMs?: number;
   targetChars?: number;
   overlapChars?: number;
+  /**
+   * 进度钩子：每确认完一个块的章节后回调（增量合并阶段，按块下标顺序）。
+   * confirmed 为当前已合并章节快照（已吸附到真实 Cue 边界，但未 finalize，
+   * 无 density/endMs 终值与 id）；回调异常被吞掉（进度提示非关键路径）。
+   */
+  onProgress?: (
+    confirmed: SnappedSection[],
+    doneChunks: number,
+    totalChunks: number,
+  ) => void;
 }
