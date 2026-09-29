@@ -36,6 +36,7 @@
 | 09-30 | 决策 | 字幕术语澄清：一级通道抓取的是播放器字幕轨列表（UP 主上传字幕 + 平台 AI 字幕同在 player wbi/v2 的 subtitles 数组，UP 主优先、AI 次之），"博主自己配的字幕"本就是主要抓取对象；AI 字幕无标点/同音字问题 → "顺句"列为条件触发进化项 | ✅ 受影响文档：TECH-DESIGN §1.3/§7.1、EVOLUTION-ROADMAP §2、MEMORY，逐个已改 |
 | 09-30 | 施工 | **SPEC-01 开工**：父 agent 完成子任务 1.2 共享契约（types/messages/config，commit 5ecc048）；派发子任务 1.1 工程脚手架，子 agent 交付（commit 904a548），父 agent 复跑 G1（build/test/check 全绿）与 G3（content 占位零 import、config 外无敏感串）验收通过 | ✅ 已推送；剩余 1.3/1.4/1.5 待派发 |
 | 09-30 | 施工 | SPEC-01 子任务 1.3/1.4/1.5 **并行派发并全部验收**（aa524f6 / e982d73 / dc2f488）：manifest+background 路由、红线与 prompt 检查脚本、content+panel 壳；并行冲突一处由父 agent 裁决——**config 拆 shared 层**（content 唯一合法配置入口，模型端点彻底隔离出 content 上下文），1.3 的检查脚本在真实仓库扫描中抓出 2 条违规并已修复。当前全套：tsc 零错误、vitest 47 例全绿、check 全 PASS、build 成功 | ✅ A1~A4 自动验收通过；**A5/A6 待用户人工验收**（装 Chrome 验证 videoId 显示与分 P 切换） |
+| 09-30 | 验收 | **SPEC-01 全部验收通过，tag spec-01-accepted**。A5（侧边栏打开、videoId/标题/时长/播放状态显示）与 A6（P2→P3 无刷新切换、含关闭面板再打开场景）用户确认通过。期间 6 轮人工验收迭代修复：dist 缺 manifest、sidePanel 点击无反应（per-tab 禁用残留、跨 await 丢手势、关闭面板清空 active 条目需显式 path 绑定）——sidePanel API 坑合集已入项目记忆 | ✅ SPEC-01 关闭；开工 SPEC-02 |
 | 09-30 | 打回 | 用户人工验收 A5 首次执行报"清单文件缺失"——**dist/ 无 manifest.json**（构建只产出 JS/HTML，清单未复制），判定为 A1 自动验收的疏漏（只查产物存在，未查"dist 可加载"） | ✅ 父 agent 单点修复：vite closeBundle 复制 manifest.json 进 dist，构建后校验通过；**教训入库：[自动] 验收项的断言必须覆盖验收语句的完整语义**（A1 说"可直接加载"就必须模拟加载条件） |
 
 ---
