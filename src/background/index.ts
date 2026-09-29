@@ -183,17 +183,22 @@ function bootstrap(): void {
     .then(() => console.info('[vsc] openPanelOnActionClick enabled'))
     .catch((err: unknown) => console.error('[vsc] setPanelBehavior failed:', err));
 
-  // 双保险：若 behavior 未生效（注册失败 / 被其他设置覆盖），点击图标时先显式
-  // 启用该 tab 的面板再打开——覆盖任何 per-tab 禁用残留，"点击必开"。
+  // 全局启用面板：清除历史版本可能留下的 per-tab 禁用残留
+  chrome.sidePanel.setOptions({ enabled: true }).catch((err: unknown) => {
+    console.error('[vsc] global setOptions failed:', err);
+  });
+
+  // 双保险：behavior 未生效时，在用户手势的同步调用栈内直接 open。
+  // 关键：open() 之前不得有任何 await —— 跨过异步边界手势即失效，
+  // 会报 "No active side panel for tab"（Chrome 官方文档即此同步写法）。
   // behavior 生效时 onClicked 不会触发，两者互补不冲突。
   chrome.action.onClicked.addListener((tab) => {
     const tabId = tab.id;
     if (typeof tabId !== 'number') return;
-    console.info('[vsc] action clicked, opening side panel for tab', tabId);
-    chrome.sidePanel
-      .setOptions({ tabId, enabled: true })
-      .then(() => chrome.sidePanel.open({ tabId }))
-      .catch((err: unknown) => console.error('[vsc] sidePanel.open failed:', err));
+    console.info('[vsc] action clicked (behavior miss), opening side panel for tab', tabId);
+    chrome.sidePanel.open({ tabId }).catch((err: unknown) => {
+      console.error('[vsc] sidePanel.open failed:', err);
+    });
   });
 
   // SW 重启恢复 tab → video 映射
