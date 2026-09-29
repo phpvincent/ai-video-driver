@@ -22,6 +22,8 @@ export const MSG = {
   PAUSE: 'player/pause',
   /** panel -> background -> content：恢复播放 */
   RESUME: 'player/resume',
+  /** panel -> background：拉取当前 tab 的视频信息（panel 打开时） */
+  CURRENT_VIDEO_GET: 'video/current-get',
   /** panel <-> background：设置读写 */
   GET_SETTINGS: 'settings/get',
   SET_SETTINGS: 'settings/set',
@@ -62,5 +64,6 @@ export type RuntimeMessage =
   | { type: typeof MSG.SEEK; payload: SeekPayload }
   | { type: typeof MSG.PAUSE; payload: VideoIdPayload }
   | { type: typeof MSG.RESUME; payload: VideoIdPayload }
+  | { type: typeof MSG.CURRENT_VIDEO_GET }
   | { type: typeof MSG.GET_SETTINGS }
   | { type: typeof MSG.SET_SETTINGS; payload: Record<string, unknown> };
