@@ -38,12 +38,11 @@ function makeCtx(overrides: Partial<RouteContext> = {}): RouteContext {
 const kinds = (actions: { kind: string }[]) => actions.map((a) => a.kind);
 
 describe('routeBackgroundMessage', () => {
-  it('VIDEO_DETECTED：store + enableSidePanel + forward(VIDEO_CHANGED)', () => {
+  it('VIDEO_DETECTED：store + forward(VIDEO_CHANGED)；不调 setOptions（与 setPanelBehavior 互斥）', () => {
     const actions = routeBackgroundMessage({ type: MSG.VIDEO_DETECTED, payload: video }, makeCtx());
-    expect(kinds(actions)).toEqual(['storeVideo', 'enableSidePanel', 'forwardToPanel']);
+    expect(kinds(actions)).toEqual(['storeVideo', 'forwardToPanel']);
     expect(actions[0]).toMatchObject({ tabId: TAB_ID, payload: video });
-    expect(actions[1]).toEqual({ kind: 'enableSidePanel', tabId: TAB_ID });
-    expect(actions[2]).toEqual({
+    expect(actions[1]).toEqual({
       kind: 'forwardToPanel',
       message: { type: MSG.VIDEO_CHANGED, payload: video },
     });
