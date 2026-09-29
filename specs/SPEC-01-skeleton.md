@@ -1,51 +1,64 @@
-# SPEC-01 · 工程骨架与 B 站识别
+# SPEC-01 · 工程骨架、共享契约与质量工具链
 
 - 状态：待开工
 - 依赖：无
 - 对应里程碑：M1
-- 执行者：（派发时填写）
+- 验收 tag：`spec-01-accepted`
 
 ## 1. 目标与范围
 
 **做**：
-- 初始化 monorepo 工程：Vite + TypeScript + React，Chrome MV3 扩展可构建产物
-- manifest.json（权限按 TECH-DESIGN §9，host_permissions 含 B站/DeepSeek/Obsidian 本地端口）
-- Side Panel 空壳（React 挂载，三 Tab 占位：大纲/导图/问答）
-- content script：B 站视频页识别（bvid 提取、SPA URL 变化监听、video 元素挂载监听）
-- background service worker：消息路由骨架（content ↔ panel 通信打通）
-- 设置页占位（modelConfig 表单，暂不持久化调用逻辑）
+- 工程初始化：Vite + TypeScript + React + vitest，产出可加载的 Chrome MV3 扩展（`dist/`）
+- `manifest.json`：权限严格按 TECH-DESIGN §9，不含 YouTube 等 v0.1 范围外的域名
+- **共享契约**（此后仅父 agent 可改）：
+  - `src/types.ts`：TECH-DESIGN §4 全部类型（Cue / FetchResult / Section / Density / QaRecord / TermCard / ModelConfig / PipelineTrace）
+  - `src/messages.ts`：content ↔ background ↔ panel 消息协议（videoId 变化、播放进度、跳播、暂停、侧边栏状态）
+  - `src/config/`：接口端点、默认模型配置、阈值（切片 1800/200、吸附 5s、密度阈值、预算 200k、估算 4 字/秒）
+- **质量工具链**：
+  - `npm run check:redlines`：红线 9、10 的 grep 规则 + 汇总执行 `check:prompts` 与红线对应单测
+  - `npm run check:prompts`：SKILL.md 引用的 `src/prompts/*.md` 存在、关键规则词出现（本期 prompt 目录为空，脚本需能在空目录下通过）
+- content script：B 站视频页识别 videoId（`{bvid}_p{page}`）、SPA URL 变化监听、`<video>` 挂载监听，变化时上报
+- background：tab → videoId 映射、消息转发、在 B 站视频页为该 tab 启用侧边栏（`chrome.sidePanel.setOptions`），用户点击工具栏图标打开
+- 侧边栏：React 挂载，四 Tab 占位（字幕 / 大纲 / 导图 / 问答），顶部显示当前 videoId 与分 P 标题
+- 设置页占位：ModelConfig 表单（本期不接入调用）
 
-**不做**：任何网络请求、任何模型调用、字幕抓取（属 SPEC-02/03）。
+**不做**：任何字幕请求、模型调用、IndexedDB（属 SPEC-02 起）。
 
 ## 2. 前置条件
 
-- Node ≥ 20（已有），Chrome 开发者模式可用
-- 用户三个开放问题的答复不阻塞本 spec（骨架与它们无关）
+- Node ≥ 20；Chrome 开发者模式
+- 仓库已关联 `git@github.com:phpvincent/ai-video-driver.git`（2026-09-30 完成）
 
-## 3. 执行方案（可拆为 3 个子任务派发）
+## 3. 执行方案
 
-| # | 子任务 | 交付物 | 预估 |
-|---|---|---|---|
-| 1.1 | 工程初始化 | package.json / vite.config / tsconfig / 目录结构（严格按 TECH-DESIGN §9） | 0.5d |
-| 1.2 | manifest + background | manifest.json、background/index.ts 消息路由、sidePanel 权限联动 | 0.5d |
-| 1.3 | content script + Panel 壳 | bilibili.ts（bvid/URL/video 监听）、panel 三 Tab 占位、设置页表单壳 | 1d |
+| # | 子任务 | 交付物 | 允许修改的路径 | 预估 |
+|---|---|---|---|---|
+| 1.1 | 工程初始化 | package.json、vite/ts/vitest 配置、目录骨架（TECH-DESIGN §9） | 仓库根配置文件、`src/` 空目录、`tests/unit/` | 0.5d |
+| 1.2 | 共享契约 | types.ts、messages.ts、config/ | `src/types.ts`、`src/messages.ts`、`src/config/` | 0.5d |
+| 1.3 | 质量工具链 | check-redlines.mjs、check-prompts.mjs 及其自测 | `scripts/`、`tests/unit/scripts/` | 0.5d |
+| 1.4 | manifest + background | manifest.json、background/index.ts | `manifest.json`、`src/background/` | 0.5d |
+| 1.5 | content script + 侧边栏壳 | content/bilibili.ts、panel 四 Tab、设置页壳 | `src/content/`、`src/panel/` | 1d |
 
-## 4. 验收标准（父 agent 逐条执行）
+1.2 由父 agent 亲自完成（共享契约归属父 agent），其余子任务可派发。
 
-- [ ] A1 `npm run build` 零错误零警告，产出 `dist/` 可直接"加载已解压的扩展程序"
-- [ ] A2 `npm test` 通过（至少含 bvid 提取的单元测试：标准 URL / 带 query / SPA 路由切换三种）
-- [ ] A3 打开任意 B 站视频页，Side Panel 自动打开且显示当前 bvid；切到非视频页不打开
-- [ ] A4 视频页内 SPA 跳转（推荐流切视频）后，panel 内 bvid **无刷新更新**
-- [ ] A5 G3 红线检查：manifest 无多余权限、无硬编码 key/URL 之外的 secret
-- [ ] A6 执行记录已按规范追加
+## 4. 验收标准
+
+- [ ] A1 [自动] `npm run build` 零错误，`dist/` 结构可被 Chrome"加载已解压的扩展程序"
+- [ ] A2 [自动] `npm test` 通过；videoId 解析单测覆盖：标准 URL、带 query、带 `?p=3`、无 p 参数默认 1、`/video/BV…/` 尾斜杠、非视频页返回 null
+- [ ] A3 [自动] `npm run check:redlines` 通过；并构造两个违规样例（`src/content/` 引用 apiKey、`src/core/` 出现接口 URL）验证脚本能报错
+- [ ] A4 [自动] manifest 权限与 TECH-DESIGN §9 完全一致（脚本比对）
+- [ ] A5 [人工] 打开测试课程 P2，点击工具栏图标打开侧边栏，显示 `BV1YG7G6eEPR_p2` 与分 P 标题；打开非视频页时工具栏图标不启用侧边栏
+- [ ] A6 [人工] 在侧边栏打开状态下，通过播放器分 P 列表从 P2 切到 P3，侧边栏 videoId **无刷新**变为 `_p3`
+- [ ] A7 [自动] G1/G2/G3 门禁全过；执行记录已追加；打 tag `spec-01-accepted`
 
 ## 5. 风险与回滚
 
-- 风险：MV3 service worker 生命周期导致消息丢失 → 用 chrome.storage 做状态中转
-- 回滚：纯新增工程，git revert 即可
+- MV3 Service Worker 被回收导致 tab 状态丢失 → 映射同步写入 `chrome.storage.session`，SW 重启后恢复
+- B 站分 P 切换可能不触发整页导航 → 同时监听 URL 变化与 `<video>` 元素替换
+- 回滚：新增工程，回退对应 commit
 
 ## 6. 执行记录（append-only）
 
-| 日期 | 执行者 | 变更摘要 | 自测结果 |
-|---|---|---|---|
-| — | — | — | — |
+| 日期 | 执行者 | 变更摘要 | 自测结果 | commit |
+|---|---|---|---|---|
+| — | — | — | — | — |

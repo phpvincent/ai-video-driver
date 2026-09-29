@@ -29,17 +29,19 @@
 | 09-30 | 变更 | 开工前审视发现 6 个工程漏洞，2 个修入 spec：**H1 多 P 课程**（videoId 必须为 bvid_p{n}，教程主流形态，修入 SPEC-02 A3b）；**H2 SW 生命周期**（30s 空闲被杀 → 保活+断点续跑，修入 SPEC-03 A4b）；H3 幻觉时间戳阈值（修入 SPEC-03 A2）；H4 固定回归测试集 fixtures（修入 SPEC-02 §4b）；H5 成本熔断（修入 SPEC-03 A4c）；H6 字幕覆盖率预检 <60% 触发云 ASR 提前决策（修入 SPEC-02 A3c） | ✅ 两个 spec 已修订 |
 | 09-30 | 决策 | 产品 idea 评审：新增高优进化项——薄弱章节自动标记（qaHistory 数据已有）、信息密度预警（直击原始痛点）；中优——进度续看、双语翻译、导图导出；远期——Anki 化、课程编排、预习模式。评论区精华/画面理解进 v0.2 候选 | ✅ 全部落入 EVOLUTION-ROADMAP.md |
 | 09-30 | 决策 | 两个高优 idea 的 v0.1 取舍拍板：**信息密度预警轻量版进 v0.1**（Section.density 字段 + 大纲章节标记，SPEC-03 新增子任务 3.5 与验收 A5b，工期 +0.5d；主动提示交互留 v0.1.x）；**薄弱章节标记放 v0.1.x**（依赖真实问答数据积累），但 SPEC-05 新增 A7b 锁死 qaHistory 可聚合数据结构（videoId/timestampMs/章节 id/交互类型），将来零迁移追加 | ✅ SPEC-03/05 与罗盘已同步 |
-
----
-
-| 09-30 | 审计 | 开工前全量审计（逐份重读 + 核实文件系统事实），报告 `reviews/AUDIT-2026-09-30.md`：P0 6 项（无 git 仓库致 G3/回滚落空；父 agent 无法执行联调类验收；Side Panel 不能自动打开；Panel 缺字幕视图致划词落空；pipeline 宿主应从 SW 改为 panel + API key 禁入 content script；文档间 9 处漂移）、P1 7 项（缺 MVP 验证判定标准 → 拟增 SPEC-07；大纲质量无验收；双维护 diff 不可执行 → 改单一事实源；红线无检查脚本；缺离线回放测试；并行共享文件冲突 → 契约先行；缺子 agent 派发模板）、P2 6 项 | ⏸ 待用户确认处置方案，确认前 SPEC-01 暂缓开工 |
+| 09-30 | 审计 | 开工前全量审计（逐份重读 + 核实文件系统事实），报告 `reviews/AUDIT-2026-09-30.md`：P0 6 项（无 git 仓库致 G3/回滚落空；父 agent 无法执行联调类验收；Side Panel 不能自动打开；Panel 缺字幕视图致划词落空；pipeline 宿主应从 SW 改为 panel + API key 禁入 content script；文档间 9 处漂移）、P1 7 项（缺 MVP 验证判定标准；大纲质量无验收；双维护 diff 不可执行；红线无检查脚本；缺离线回放测试；并行共享文件冲突；缺子 agent 派发模板）、P2 6 项 | ✅ 用户确认全部采纳（见下一条） |
+| 09-30 | 施工 | 关联代码仓库 `git@github.com:phpvincent/ai-video-driver.git`：`git init -b main`，远程原为空仓库；HTTPS 无凭据，改用本机 SSH key（身份 phpvincent）推送；新增 `.gitignore`（含 `tests/fixtures/raw/`）；基线提交 850a1d9 已推送 | ✅ main 跟踪 origin/main |
+| 09-30 | 调研 | 测试课程登记：BV1YG7G6eEPR（59 个分 P，全集约 17 小时），用户指定 01~10 集 = P2~P11（P1 为 63 秒导读），合计约 5 小时；匿名 wbi 探测 P1~P11 均返回空字幕列表且 `need_login_subtitle: true`；本机代理隧道连 B 站超时，脚本需 `--noproxy` | ✅ `tests/fixtures/bv-cases.md`；登录态覆盖率待 SPEC-02 A6 |
+| 09-30 | 变更 | 按审计全部采纳修订：CONSTITUTION v1.1（用户为最终验收人、验收三级标注、§5 版本控制、共享契约仅父 agent 可改、红线 6/7 改写、新增红线 10 与检查方式列、决策扇出检查）；TECH-DESIGN r3（字幕 Tab、videoId=bvid_p{n}、运行上下文职责、prompt 单一事实源、Section.terms/density 算法、QaRecord、两层缓存、trace、错误分类表含 need_login 优先、跳播链接格式、manifest 去 YouTube、§10 质量保障、§12 M7）；SPEC-01~06 按模板重写；新增 SPEC-07 MVP 验证期、`_SPEC_TEMPLATE.md`、`_DISPATCH_TEMPLATE.md` | ✅ 受影响文档：CONSTITUTION / TECH-DESIGN / SPEC-01~07 / 两份模板 / EVOLUTION-ROADMAP（章节引用与 SPEC 编号同步）/ AUDIT 报告（追加处置结果）/ bv-cases.md，逐个已确认 |
 
 ---
 
 ## 待办（下一迭代）
 
-- [ ] 用户确认审计处置方案（AUDIT-2026-09-30）
-- [ ] 按确认结果修订宪法 / TECH-DESIGN / SPEC-01~06，新增 SPEC-07 与两份模板
-- [ ] 用户提供 10 个真实学习目标视频链接（覆盖率预检 + fixtures + 黄金样例）
-- [ ] 开工 SPEC-01（工程骨架），父 agent 派发 + 验收
-- [x] ~~用户确认三个开放问题~~（09-30 已全部拍板，见上）
+- [ ] 开工 SPEC-01：父 agent 先完成子任务 1.2（共享契约），再派发 1.1/1.3/1.4/1.5
+- [ ] SPEC-02 开工首日：用户在已登录 Chrome 中执行 A6 覆盖率预检（P2~P11）
+- [ ] SPEC-03 开工前：用户提供 DeepSeek API key
+- [x] ~~用户确认审计处置方案~~（09-30 全部采纳）
+- [x] ~~修订宪法 / TECH-DESIGN / SPEC-01~06，新增 SPEC-07 与两份模板~~
+- [x] ~~用户提供真实学习目标视频~~（BV1YG7G6eEPR 01~10 集）
+- [x] ~~用户确认三个开放问题~~（09-30 已全部拍板）

@@ -3,46 +3,51 @@
 - 状态：待开工
 - 依赖：SPEC-03（可与 SPEC-05 并行）
 - 对应里程碑：M4
-- 执行者：（派发时填写）
+- 验收 tag：`spec-04-accepted`
 
 ## 1. 目标与范围
 
 **做**：
-- `panel/MindmapTab.tsx`：markmap 渲染大纲 Markdown（Section → 两级树）
-- 节点交互：点击携带 startMs 的节点 → 回调 content script 跳播
-- 播放跟随：content script 监听 `video.timeupdate`（节流 500ms）→ background 二分查找当前 Section → panel 高亮 + `scrollIntoView({block:'nearest'})` + 导图节点聚焦
-- 双向同步：大纲 Tab 与导图 Tab 共享当前章节状态
+- `panel/MindmapTab.tsx`：Section[] 组装为两级 Markdown（标题 + 要点），markmap 渲染，可缩放折叠
+- 节点点击跳播（通过 messages.ts 协议发给 content script）
+- 统一播放跟随：侧边栏维护"当前播放位置"单一状态，字幕 Tab、大纲 Tab、导图 Tab 共享；二分查找当前 Cue 与 Section
+- 导图中高密度章节节点带醒目标记
+- videoId 变化（切 P）时导图按当前分 P 重建
 
-**不做**：导图编辑、导出 XMind（v0.2 候选）、多分 P 视频导图（跟随主 P）。
+**不做**：导图编辑；导出 XMind / HTML（v0.1.x，见 EVOLUTION-ROADMAP §2）。
 
 ## 2. 前置条件
 
-- SPEC-03 已验收（有稳定 Section[] 与跳播回调链路）
+- SPEC-03 已验收
 
-## 3. 执行方案（可拆为 2 个子任务派发）
+## 3. 执行方案
 
-| # | 子任务 | 交付物 | 预估 |
-|---|---|---|---|
-| 4.1 | markmap 渲染与跳播 | MindmapTab、Markdown 组装（章节→节点）、onClick 跳播 | 1d |
-| 4.2 | 播放跟随同步 | timeupdate 节流监听、二分查找、双 Tab 高亮同步 | 1d |
+| # | 子任务 | 交付物 | 允许修改的路径 | 预估 |
+|---|---|---|---|---|
+| 4.1 | 导图渲染与跳播 | Markdown 组装（纯函数 + 单测）、MindmapTab、节点跳播 | `src/panel/MindmapTab.tsx`、`src/panel/mindmap/`、单测 | 1d |
+| 4.2 | 统一播放跟随 | 播放位置状态、二分查找（纯函数 + 单测）、三 Tab 同步高亮 | `src/panel/state/`、`src/panel/*Tab.tsx` 中的跟随逻辑 | 1d |
 
-## 4. 验收标准（父 agent 逐条执行）
+并行约束：SPEC-05 同时修改 `src/panel/ChatTab.tsx`；本 spec 不得修改 ChatTab 与 `src/core/pipeline/explain.ts`。
 
-- [ ] A1 联调：播放视频，当前章节在大纲 Tab 高亮且自动滚动；导图对应节点同步聚焦，**高亮延迟 ≤ 500ms**（人工秒表 + performance.mark 埋点双重验证）
-- [ ] A2 联调：点击导图任意节点，视频跳转到对应时间，误差 ≤ 2s
-- [ ] A3 联调：快进跨章节（拖进度条跳跃 3+ 章节），高亮目标章节正确无闪烁抖动
-- [ ] A4 性能：长视频（100+ 章节候选）导图初次渲染 ≤ 1s，播放中无可感知卡顿（React Profiler 验证无长任务）
-- [ ] A5 B 站 SPA 切换视频后，导图随新 videoId 重建，无残留旧数据
-- [ ] A6 G1/G2/G3 门禁全过；执行记录已追加
+## 4. 验收标准
+
+- [ ] A1 [自动] Markdown 组装单测：章节顺序、时间前缀、密度标记、空 bullets 处理
+- [ ] A2 [自动] 二分查找单测：边界（第一句前、最后一句后、恰好落在 startMs 上）、跨多章跳跃
+- [ ] A3 [半自动] 用录制的 P2 大纲数据渲染导图，节点数与章节数一致，点击节点发出正确的跳播消息
+- [ ] A4 [人工] 播放 P2：字幕句、大纲章节、导图节点同步高亮，延迟 ≤ 500ms（肉眼观察 + performance.mark 日志）
+- [ ] A5 [人工] 拖动进度条一次跨越 3 个以上章节，三处高亮直接落到目标位置，无闪烁
+- [ ] A6 [人工] P4（66:45）导图首次渲染 ≤ 1s，播放过程中侧边栏无明显卡顿
+- [ ] A7 [人工] 从 P2 切到 P3，导图随之重建，无 P2 残留
+- [ ] A8 [自动] G1/G2/G3 门禁全过；执行记录已追加；打 tag `spec-04-accepted`
 
 ## 5. 风险与回滚
 
-- 风险：markmap 全量重渲染性能 → 数据驱动 diff，仅更新变更节点
-- 风险：timeupdate 与 SPA 路由竞争 → 监听器绑定与解绑配对（MutationObserver 管理 video 生命周期）
-- 回滚：MindmapTab 独立 Tab，可隐藏入口回退纯大纲模式
+- markmap 全量重渲染开销 → 高亮通过节点样式更新实现，不重建树
+- 跟随状态分散导致三处不一致 → 单一播放位置状态，Tab 只订阅
+- 回滚：导图 Tab 可隐藏入口，退回大纲模式
 
 ## 6. 执行记录（append-only）
 
-| 日期 | 执行者 | 变更摘要 | 自测结果 |
-|---|---|---|---|
-| — | — | — | — |
+| 日期 | 执行者 | 变更摘要 | 自测结果 | commit |
+|---|---|---|---|---|
+| — | — | — | — | — |
