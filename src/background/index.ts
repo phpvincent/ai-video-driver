@@ -143,7 +143,7 @@ async function executeActions(actions: Action[], sendResponse: (response?: unkno
         await persistTabVideoMap();
         break;
       case 'enableSidePanel':
-        await chrome.sidePanel.setOptions({ tabId: action.tabId, enabled: true });
+        await chrome.sidePanel.setOptions({ tabId: action.tabId, path: 'panel.html', enabled: true });
         console.info('[vsc] side panel enabled for tab', action.tabId);
         break;
       case 'forwardToPanel':
@@ -192,10 +192,16 @@ function bootstrap(): void {
     const tabId = tab.id;
     if (typeof tabId !== 'number') return;
     console.info('[vsc] action clicked (behavior miss), enabling + opening for tab', tabId);
-    void chrome.sidePanel.setOptions({ tabId, enabled: true });
-    chrome.sidePanel.open({ tabId }).catch((err: unknown) => {
-      console.error('[vsc] sidePanel.open failed:', err);
-    });
+    // path 必须显式绑定：关闭面板后 per-tab "active" 条目被清空，
+    // 不带 path 的 setOptions 无法重建，open 会报 "No active side panel for tab"
+    void chrome.sidePanel.setOptions({ tabId, path: 'panel.html', enabled: true });
+    chrome.sidePanel
+      .open({ tabId })
+      .catch((err: unknown) => {
+        console.error('[vsc] sidePanel.open failed, falling back to tab:', err);
+        return chrome.tabs.create({ url: 'panel.html' });
+      })
+      .catch((err2: unknown) => console.error('[vsc] tab fallback failed:', err2));
   });
 
   // SW 重启恢复 tab → video 映射
