@@ -18,6 +18,8 @@ export interface SubtitleTabProps {
   loadSubtitles: (videoId: string) => Promise<FetchResult>;
   /** 手动粘贴解析回调（接线前缺省，按钮禁用并显示"待接线"） */
   onManualPaste?: (text: string) => void;
+  /** 划词解释回调（SPEC-05 追加：选区确认后触发；接线前 sticky 条显示"待接线"） */
+  onExplainTerm?: (text: string) => void;
 }
 
 type Phase = 'idle' | 'loading' | 'ready' | 'degraded' | 'empty';
@@ -80,21 +82,35 @@ export function sourceLabel(source: SubtitleSource): string {
   }
 }
 
-/** ready 态主体：字幕列表 + approximate 一次性提示条 + 跟随高亮滚动 + 点句跳播 */
+/**
+ * 选区文本提取（SPEC-05 划词集成，纯函数）：trim、纯空白返回 null、限长 40 字（超出截断）。
+ */
+export function extractSelectionText(selection: string): string | null {
+  const trimmed = selection.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, 40);
+}
+
+/** ready 态主体：字幕列表 + approximate 一次性提示条 + 跟随高亮滚动 + 点句跳播 + 划词 sticky 条（SPEC-05 追加） */
 export function SubtitleList({
   cues,
   activeIndex,
   onSeek,
+  onExplainTerm,
 }: {
   cues: Cue[];
   /** 当前高亮 Cue.index；-1 表示无 */
   activeIndex: number;
   onSeek: (targetMs: number) => void;
+  /** 划词解释回调（可选，接线前 sticky 条显示"待接线"） */
+  onExplainTerm?: (text: string) => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   /** 上一次滚动到的目标，防止每次 positionMs 更新都触发滚动抖动 */
   const lastScrolledRef = useRef<number>(-1);
   const [bannerHidden, setBannerHidden] = useState(false);
+  /** 划词选中的术语（选区清空后归 null，sticky 条消失） */
+  const [selectedTerm, setSelectedTerm] = useState<string | null>(null);
   const approximate = cues.some((c) => c.approximate);
 
   useEffect(() => {
@@ -106,8 +122,24 @@ export function SubtitleList({
     }
   }, [activeIndex]);
 
+  /** 划词捕获：选区非空且锚点在字幕列表内 → sticky 条；否则清空 */
+  const handleMouseUp = (): void => {
+    const sel = typeof window !== 'undefined' ? window.getSelection() : null;
+    const text = sel ? extractSelectionText(sel.toString()) : null;
+    const node = sel?.anchorNode ?? null;
+    const inside = text !== null && node !== null && !!wrapRef.current && wrapRef.current.contains(node);
+    setSelectedTerm(inside ? text : null);
+  };
+
+  const clearSelection = (): void => {
+    setSelectedTerm(null);
+    if (typeof window !== 'undefined') {
+      window.getSelection()?.removeAllRanges();
+    }
+  };
+
   return (
-    <div className="subtitle-list-wrap" ref={wrapRef}>
+    <div className="subtitle-list-wrap" ref={wrapRef} onMouseUp={handleMouseUp}>
       {approximate && !bannerHidden && (
         <div className="subtitle-banner">
           <span>字幕时间为估算</span>
@@ -116,6 +148,52 @@ export function SubtitleList({
             className="subtitle-banner-close"
             aria-label="关闭提示"
             onClick={() => setBannerHidden(true)}
+          >
+            ×
+          </button>
+        </div>
+      )}
+      {selectedTerm && (
+        <div
+          className="subtitle-select-bar"
+          style={{
+            position: 'sticky',
+            top: 0,
+            zIndex: 10,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '6px 10px',
+            background: '#f0f7ff',
+            borderBottom: '1px solid #cfe3f7',
+          }}
+        >
+          <span
+            className="subtitle-select-text"
+            style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          >
+            解释「{selectedTerm}」
+          </span>
+          {onExplainTerm ? (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                onExplainTerm(selectedTerm);
+                clearSelection();
+              }}
+            >
+              解释
+            </button>
+          ) : (
+            <span style={{ color: '#888', fontSize: 12 }}>待接线</span>
+          )}
+          <button
+            type="button"
+            className="subtitle-select-close"
+            aria-label="取消划词"
+            onClick={clearSelection}
+            style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 14 }}
           >
             ×
           </button>
@@ -139,7 +217,7 @@ export function SubtitleList({
 }
 
 export function SubtitleTab(props: SubtitleTabProps) {
-  const { videoId, positionMs, onRequestSeek, onManualPaste } = props;
+  const { videoId, positionMs, onRequestSeek, onManualPaste, onExplainTerm } = props;
   const [phase, setPhase] = useState<Phase>('idle');
   const [result, setResult] = useState<FetchResult | null>(null);
   /** loadSubtitles 抛异常（瀑布约定不抛，占位/接线期兜底） */
@@ -256,7 +334,12 @@ export function SubtitleTab(props: SubtitleTabProps) {
         {source && <span className="subtitle-source-tag">{sourceLabel(source)}</span>}
         {result.lang && <span className="subtitle-lang">{result.lang}</span>}
       </div>
-      <SubtitleList cues={result.cues} activeIndex={activeCue ? activeCue.index : -1} onSeek={onRequestSeek} />
+      <SubtitleList
+        cues={result.cues}
+        activeIndex={activeCue ? activeCue.index : -1}
+        onSeek={onRequestSeek}
+        onExplainTerm={onExplainTerm}
+      />
     </div>
   );
 }

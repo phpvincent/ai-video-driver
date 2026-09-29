@@ -28,6 +28,8 @@ export interface OutlineTabProps {
   generateOutline: (videoId: string, opts?: { onProgress?: () => void }) => Promise<OutlineResult>;
   /** 单章重生成（SPEC-03 3c） */
   regenerateOne: (videoId: string, section: Section, feedback?: string) => Promise<OutlineResult>;
+  /** 大纲章节变化时通知 App（导图/问答消费；可选） */
+  onSectionsChanged?: (sections: Section[]) => void;
   /** App 传：settings 已配置 apiKey */
   modelReady: boolean;
   /** 跳设置页（modelReady=false 时显示入口按钮） */
@@ -291,11 +293,18 @@ export function OutlineTab(props: OutlineTabProps) {
     loadOutlineCached,
     generateOutline,
     regenerateOne,
+  onSectionsChanged,
     modelReady,
     onOpenSettings,
   } = props;
   const [phase, setPhase] = useState<Phase>('idle');
   const [result, setResult] = useState<OutlineResult | null>(null);
+
+  /** 大纲结果变化 → 通知 App（导图与问答 Tab 消费 sections） */
+  useEffect(() => {
+    if (result?.sections) onSectionsChanged?.(result.sections);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result]);
   /** loadOutline 抛错摘要（degraded 兜底文案之外的具体原因） */
   const [errorText, setErrorText] = useState('');
   /** 单章重生成：进行中的章节 id / 失败信息 */

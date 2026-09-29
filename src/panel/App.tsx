@@ -11,6 +11,8 @@ import { OutlineTab } from './OutlineTab';
 import { generateOutline, loadOutlineCached, regenerateOne } from './outlineLoader';
 import { SettingsPage } from './settings/SettingsPage';
 import { SubtitleTab } from './SubtitleTab';
+import { currentVideoIdRef, explain as explainFn } from './explainLoader';
+import type { Section } from '../types';
 import { loadSubtitles as runWaterfall, loadSubtitlesManual } from './subtitleLoader';
 
 type TabKey = 'subtitle' | 'outline' | 'mindmap' | 'chat';
@@ -42,6 +44,10 @@ export function App() {
   const [showSettings, setShowSettings] = useState(false);
   /** 手动粘贴版本号：递增触发 SubtitleTab 重载（key 变化） */
   const [pasteVersion, setPasteVersion] = useState(0);
+  /** 大纲章节（OutlineTab 通知；导图/问答消费） */
+  const [sections, setSections] = useState<Section[]>([]);
+  /** 划词待解释术语（SubtitleTab → ChatTab 联动） */
+  const [pendingTerm, setPendingTerm] = useState<{ term: string; consumed: () => void } | null>(null);
   /** 设置中的模型配置（modelReady 判断用；生成时 loadOutlineForVideo 会实时重读） */
   const [modelConfig, setModelConfig] = useState<ModelConfig | null>(null);
 
@@ -65,6 +71,12 @@ export function App() {
         // background 未就绪时保持空配置（modelReady=false）
       });
   };
+
+  useEffect(() => {
+    currentVideoIdRef.value = video?.videoId ?? null;
+    setSections([]);
+    setPendingTerm(null);
+  }, [video?.videoId]);
 
   useEffect(() => {
     refreshModelConfig();
@@ -109,6 +121,24 @@ export function App() {
     } catch {
       // 扩展上下文异常时静默
     }
+  };
+
+  /** 提问自动暂停（ChatTab 调用）：panel -> background -> content */
+  const handlePause = () => {
+    if (!video) return;
+    try {
+      void chrome.runtime
+        .sendMessage({ type: MSG.PAUSE, payload: { videoId: video.videoId } })
+        .catch(() => {});
+    } catch {
+      /* 静默 */
+    }
+  };
+
+  /** 划词联动：字幕 Tab 选中术语 → 切问答 Tab 自动解释 */
+  const handleExplainTerm = (term: string) => {
+    setPendingTerm({ term, consumed: () => setPendingTerm(null) });
+    setTab('chat');
   };
 
   // TODO(接线)：cid/url 待 background 视频信息补全，字幕 Tab 当前仅消费 title/duration
@@ -192,6 +222,7 @@ export function App() {
                 onRequestSeek={handleRequestSeek}
                 loadSubtitles={handleLoadSubtitles}
                 onManualPaste={handleManualPaste}
+                onExplainTerm={handleExplainTerm}
               />
             )}
             {tab === 'outline' && (
@@ -204,11 +235,31 @@ export function App() {
                 generateOutline={generateOutline}
                 regenerateOne={regenerateOne}
                 modelReady={!!modelConfig?.apiKey}
+                onSectionsChanged={setSections}
                 onOpenSettings={() => setShowSettings(true)}
               />
             )}
-            {tab === 'mindmap' && <MindmapTab />}
-            {tab === 'chat' && <ChatTab />}
+            {tab === 'mindmap' && (
+              <MindmapTab
+                sections={sections}
+                positionMs={playback?.positionMs ?? 0}
+                onRequestSeek={handleRequestSeek}
+                onGoOutline={() => setTab('outline')}
+              />
+            )}
+            {tab === 'chat' && (
+              <ChatTab
+                videoId={video?.videoId ?? null}
+                sections={sections}
+                positionMs={playback?.positionMs ?? 0}
+                onRequestSeek={handleRequestSeek}
+                onPause={handlePause}
+                modelReady={!!modelConfig?.apiKey}
+                onOpenSettings={() => setShowSettings(true)}
+                explain={explainFn}
+                pendingTerm={pendingTerm ?? undefined}
+              />
+            )}
           </main>
         </>
       )}
