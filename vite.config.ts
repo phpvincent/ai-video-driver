@@ -6,8 +6,9 @@
  *
  * Rollup 不支持多入口 IIFE，故 content 由 closeBundle 钩子以编程 API 二次构建，
  * `npm run build` / `npm run dev` 仍为单命令。
- * manifest.json 由子任务 1.4 负责，本期不写。
+ * 构建收尾时将仓库根 manifest.json 复制进 dist/（Chrome 加载 dist 的清单来源）。
  */
+import { copyFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
@@ -38,13 +39,15 @@ async function buildContentScript(): Promise<void> {
   });
 }
 
-/** 主构建（background + panel）收尾后触发 content 的 IIFE 构建 */
+/** 主构建（background + panel）收尾后触发 content 的 IIFE 构建，并把 manifest.json 复制进 dist */
 function contentScriptPlugin(): Plugin {
   return {
     name: 'vsc:content-script-iife',
     apply: 'build',
     closeBundle() {
-      return buildContentScript();
+      return buildContentScript().then(() => {
+        copyFileSync(r('manifest.json'), r('dist/manifest.json'));
+      });
     },
   };
 }
