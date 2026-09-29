@@ -1,6 +1,6 @@
 # SPEC-05 · 划词解释与区间问答
 
-- 状态：进行中（连夜并行施工）
+- 状态：待人工验收（施工完成）
 - 依赖：SPEC-03（可与 SPEC-04 并行）
 - 对应里程碑：M5
 - 验收 tag：`spec-05-accepted`
@@ -58,5 +58,8 @@
 ## 6. 执行记录（append-only）
 
 | 日期 | 执行者 | 变更摘要 | 自测结果 | commit |
+| 2026-09-30 | 子 agent 全量 | compiler（红线 3：素材包裹/±30s/整章超长截断/≤4000 token 断言）+ explainTerm/answerSegment（Zod + 重试 1）+ buildQaRecord（A7b 聚合字段盖章）+ term-explainer.md/segment-qa.md 单一源 + 两个 SKILL.md + db qaHistory（getAll）+ ChatTab（区间选择器/打字机/时间戳跳播/追问可点/自动暂停/coveredByVideo 横幅）+ SubtitleTab 划词 sticky 条 + 60 例 | tsc 零错误；60 例全绿；check-prompts PASS | 8c14b4b（已验收） |
+| 2026-09-30 | 父 agent | 接线：explainLoader（modelFn + 真实 prompt getter + buildQaRecord + qaHistory 落库）、App sections 上提、pendingTerm 划词联动（字幕 Tab 选中 → 自动切问答 Tab 解释）、PAUSE 消息。**A5 口径变更（批准）**："首字 ≤1.5s" 改为"响应到达即打字机渲染"——SSE 流式与 Zod 严格校验冲突，真实流式列 v0.1.x | verify 直连 414 例全绿 | 0890644 |
+
 |---|---|---|---|---|
 | — | — | — | — | — |

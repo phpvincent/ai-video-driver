@@ -1,6 +1,6 @@
 # SPEC-04 · 思维导图与播放跟随
 
-- 状态：进行中（连夜并行施工）
+- 状态：待人工验收（施工完成）
 - 依赖：SPEC-03（可与 SPEC-05 并行）
 - 对应里程碑：M4
 - 验收 tag：`spec-04-accepted`
@@ -49,5 +49,8 @@
 ## 6. 执行记录（append-only）
 
 | 日期 | 执行者 | 变更摘要 | 自测结果 | commit |
+| 2026-09-30 | 子 agent 全量 | MindmapTab：buildMindmapMarkdown（## mm:ss 标题（score分）→ ### mm:ss 要点）、parseNodeTimestamp（累计分钟/00:00 合法）、svg 点击委托跳播（折叠点忽略）、findActiveSectionIndex 二分跟随高亮 + 防抖滚动、markmap 动态 import（空大纲引导不加载引擎）+ 19 例 | tsc 零错误；19 例全绿 | 98b8859（已验收） |
+| 2026-09-30 | 父 agent | App 接线：sections 状态上提（OutlineTab onSectionsChanged → 导图/问答共享）、onGoOutline 跳转；npm run verify 直连验收（414 例全绿 + 红线 + build） | ✅ A1~A4 自动/半自动项具备验收条件；A1/A2/A3/A5 待用户人工验收 | 0890644 |
+
 |---|---|---|---|---|
 | — | — | — | — | — |
