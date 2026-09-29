@@ -1,6 +1,199 @@
 /**
  * B 站 content script 入口：videoId 识别、SPA 路由与 <video> 生命周期监听、进度上报。
- * 占位骨架，业务逻辑由 SPEC-01 子任务 1.5 填充。
- * 红线 10：本文件禁止 import 模型配置 / API key / 模型调用模块（types/messages 契约可以）。
+ * 纯函数（parseVideoId / toVideoId）可脱离浏览器测试；副作用编排仅在浏览器环境启动。
+ * 红线 10：本文件禁止 import 模型配置 / 密钥 / 模型调用模块（types/messages 契约与播放阈值可以）。
  */
-export {};
+import { BILI_URL_PATTERN, BVID_REGEXES, PLAYBACK } from '../config/shared';
+import { MSG, type PlaybackPayload, type RuntimeMessage, type VideoIdPayload, type VideoInfoPayload } from '../messages';
+import { initPlayer } from './player';
+
+// ---------- 纯函数（单测覆盖） ----------
+
+/** 从 B 站视频页 URL 提取 bvid 与分 P 号；非 B 站域名或无 bvid 返回 null */
+export function parseVideoId(url: string): { bvid: string; page: number } | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.hostname !== 'bilibili.com' && !parsed.hostname.endsWith('.bilibili.com')) {
+    return null;
+  }
+  let bvid: string | null = null;
+  for (const regex of BVID_REGEXES) {
+    const match = parsed.pathname.match(regex);
+    if (match) {
+      bvid = match[1];
+      break;
+    }
+  }
+  if (!bvid) return null;
+  // p 参数：正整数；缺失或非法默认 1
+  let page = 1;
+  const pRaw = parsed.searchParams.get('p');
+  if (pRaw !== null && /^\d+$/.test(pRaw)) {
+    const n = Number(pRaw);
+    if (n >= 1) page = n;
+  }
+  return { bvid, page };
+}
+
+/** videoId = `{bvid}_p{page}`（TECH-DESIGN §2.2） */
+export function toVideoId(bvid: string, page: number): string {
+  return `${bvid}_p${page}`;
+}
+
+// ---------- B 站页面初态（window.__INITIAL_STATE__ 的最小形状） ----------
+
+interface BiliPageInfo {
+  page: number;
+  /** 分 P 标题 */
+  part: string;
+  /** 秒 */
+  duration: number;
+}
+
+interface BiliInitialState {
+  videoData?: {
+    title?: string;
+    /** 秒 */
+    duration?: number;
+    pages?: BiliPageInfo[];
+  };
+}
+
+function getInitialState(): BiliInitialState | undefined {
+  return (window as unknown as { __INITIAL_STATE__?: BiliInitialState }).__INITIAL_STATE__;
+}
+
+// ---------- 运行时状态 ----------
+
+let currentVideoId: string | null = null;
+let currentVideo: HTMLVideoElement | null = null;
+let lastProgressAt = 0;
+
+function post(message: RuntimeMessage): void {
+  try {
+    void chrome.runtime.sendMessage(message).catch(() => {
+      // 扩展上下文失效（更新 / 重载）时静默
+    });
+  } catch {
+    // 同上
+  }
+}
+
+// ---------- 视频信息组装 ----------
+
+function collectVideoInfo({ bvid, page }: { bvid: string; page: number }): VideoInfoPayload {
+  const videoData = getInitialState()?.videoData;
+  const pageEntry = videoData?.pages?.find((p) => p.page === page);
+  const title =
+    pageEntry?.part || videoData?.title || document.title || '';
+  let durationMs =
+    (pageEntry?.duration ?? videoData?.duration ?? 0) * 1000;
+  if (!Number.isFinite(durationMs) || durationMs <= 0) {
+    const video = document.querySelector('video');
+    if (video && Number.isFinite(video.duration)) {
+      durationMs = Math.round(video.duration * 1000);
+    }
+  }
+  return {
+    videoId: toVideoId(bvid, page),
+    bvid,
+    page,
+    title,
+    durationMs: Math.round(durationMs),
+  };
+}
+
+// ---------- SPA 路由监听 ----------
+
+function patchHistory(onChange: () => void): void {
+  const wrap = <A extends unknown[]>(fn: (...args: A) => void) => (...args: A) => {
+    fn(...args);
+    onChange();
+  };
+  history.pushState = wrap(history.pushState.bind(history));
+  history.replaceState = wrap(history.replaceState.bind(history));
+}
+
+function watchNavigation(onChange: () => void): void {
+  patchHistory(onChange);
+  window.addEventListener('popstate', onChange);
+  // 兜底轮询：B 站切分 P 改 query 可能不触发上述任何事件
+  let lastHref = location.href;
+  window.setInterval(() => {
+    if (location.href !== lastHref) {
+      lastHref = location.href;
+      onChange();
+    }
+  }, 800);
+}
+
+function handleUrlChange(): void {
+  const parsed = BILI_URL_PATTERN.test(location.href) ? parseVideoId(location.href) : null;
+  if (parsed) {
+    const videoId = toVideoId(parsed.bvid, parsed.page);
+    if (videoId === currentVideoId) return;
+    currentVideoId = videoId;
+    post({ type: MSG.VIDEO_DETECTED, payload: collectVideoInfo(parsed) });
+  } else if (currentVideoId) {
+    const leftPayload: VideoIdPayload = { videoId: currentVideoId };
+    currentVideoId = null;
+    post({ type: MSG.VIDEO_LEFT, payload: leftPayload });
+  }
+}
+
+// ---------- <video> 元素生命周期与进度上报 ----------
+
+function onTimeUpdate(): void {
+  const video = currentVideo;
+  if (!video || !currentVideoId) return;
+  const now = Date.now();
+  if (now - lastProgressAt < PLAYBACK.progressThrottleMs) return;
+  lastProgressAt = now;
+  const payload: PlaybackPayload = {
+    videoId: currentVideoId,
+    positionMs: Math.round(video.currentTime * 1000),
+    playing: !video.paused,
+  };
+  post({ type: MSG.PLAYBACK_PROGRESS, payload });
+}
+
+function bindVideo(video: HTMLVideoElement): void {
+  if (currentVideo === video) return;
+  if (currentVideo) {
+    currentVideo.removeEventListener('timeupdate', onTimeUpdate);
+  }
+  currentVideo = video;
+  video.addEventListener('timeupdate', onTimeUpdate);
+}
+
+function observeVideos(): void {
+  const scan = () => {
+    if (currentVideo && !currentVideo.isConnected) {
+      currentVideo.removeEventListener('timeupdate', onTimeUpdate);
+      currentVideo = null;
+    }
+    const video = document.querySelector('video');
+    if (video) bindVideo(video);
+  };
+  scan();
+  const observer = new MutationObserver(scan);
+  observer.observe(document.documentElement, { childList: true, subtree: true });
+}
+
+// ---------- 启动 ----------
+
+function initContentScript(): void {
+  watchNavigation(handleUrlChange);
+  observeVideos();
+  initPlayer(() => currentVideoId, () => currentVideo);
+  handleUrlChange();
+}
+
+// 浏览器环境自动启动；Node 单测环境仅使用纯函数
+if (typeof window !== 'undefined' && typeof chrome !== 'undefined' && chrome.runtime) {
+  initContentScript();
+}
