@@ -5,7 +5,8 @@
  * - finalizeOutline：按 startMs 排序、剔除重叠、补齐覆盖、计算 endMs/cueRange、重编 id；
  * - validateOutline：覆盖校验（startMs 严格递增且 ∈ Cue.startMs 集合，红线 2）。
  */
-import type { Cue } from '../../types';
+import type { Cue, Section } from '../../types';
+import { attachDensity } from './density';
 import type { SnappedSection } from './snap';
 import type { OutlineSection } from './types';
 
@@ -67,9 +68,10 @@ export class IncrementalMerger {
 
 /**
  * 全局校正：排序 → 剔除重叠（同 startMs 只保留先确认者）→ 首章回补到第一条 Cue（补齐覆盖）
- * → endMs 链（下一章 startMs - 1，末章 = 末条 Cue.endMs）→ cueRange → 重编 id → 覆盖校验。
+ * → endMs 链（下一章 startMs - 1，末章 = 末条 Cue.endMs）→ cueRange → 重编 id → 覆盖校验
+ * → 密度补全（子任务 3.5，返回完整 Section[]）。
  */
-export function finalizeOutline(sections: SnappedSection[], cues: Cue[]): OutlineSection[] {
+export function finalizeOutline(sections: SnappedSection[], cues: Cue[]): Section[] {
   if (sections.length === 0 || cues.length === 0) return [];
   const sortedCues = [...cues].sort((a, b) => a.startMs - b.startMs);
 
@@ -114,7 +116,7 @@ export function finalizeOutline(sections: SnappedSection[], cues: Cue[]): Outlin
   }
 
   validateOutline(out, sortedCues);
-  return out;
+  return attachDensity(out);
 }
 
 /** 覆盖校验：不满足内部不变量时 throw（构造逻辑保证不应触发，触发即 bug） */
