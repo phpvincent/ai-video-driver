@@ -5,11 +5,10 @@
 import { useEffect, useState } from 'react';
 import { MSG, type PlaybackPayload, type RuntimeMessage, type VideoInfoPayload } from '../messages';
 import type { FetchResult, ModelConfig, VideoMeta } from '../types';
-import type { OutlineResult } from '../core/pipeline/outline';
 import { ChatTab } from './ChatTab';
 import { MindmapTab } from './MindmapTab';
 import { OutlineTab } from './OutlineTab';
-import { loadOutlineForVideo } from './outlineLoader';
+import { generateOutline, loadOutlineCached, regenerateOne } from './outlineLoader';
 import { SettingsPage } from './settings/SettingsPage';
 import { SubtitleTab } from './SubtitleTab';
 import { loadSubtitles as runWaterfall, loadSubtitlesManual } from './subtitleLoader';
@@ -131,10 +130,6 @@ export function App() {
       });
   };
 
-  /** 大纲生成（SPEC-03 3.4）：读设置与字幕缓存 → runOutline，异常由 OutlineTab 状态机呈现 */
-  const handleLoadOutline = (videoId: string): Promise<OutlineResult> =>
-    loadOutlineForVideo(videoId);
-
   return (
     <div className="app">
       <header className="info-bar">
@@ -205,7 +200,9 @@ export function App() {
                 meta={meta}
                 positionMs={playback?.positionMs ?? 0}
                 onRequestSeek={handleRequestSeek}
-                loadOutline={handleLoadOutline}
+                loadOutlineCached={loadOutlineCached}
+                generateOutline={generateOutline}
+                regenerateOne={regenerateOne}
                 modelReady={!!modelConfig?.apiKey}
                 onOpenSettings={() => setShowSettings(true)}
               />

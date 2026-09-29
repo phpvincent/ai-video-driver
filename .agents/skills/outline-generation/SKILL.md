@@ -22,7 +22,7 @@ description: 需要生成、调整或排查 B 站视频预读大纲时使用：�
 
 ## 输出 Schema
 
-- 严格 JSON：`{"sections":[{"title","startSec","summary","bullets","terms"}]}`，经 Zod（`SectionCandidateSchema` / `OutlineChunkSchema`）校验。
+- 严格 JSON：`{"sections":[{"title","startSec","summary","bullets（对象 {text, startSec}）","terms"}]}`，经 Zod（`SectionCandidateSchema` / `OutlineChunkSchema`）校验。
 - 标题 8-20 字；`startSec` 取自字幕中真实出现的时间戳；terms 只做事实抽取，不做难度判断。
 
 ## 输入安全
