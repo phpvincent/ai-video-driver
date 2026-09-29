@@ -4,11 +4,13 @@
  */
 import { useEffect, useState } from 'react';
 import { MSG, type PlaybackPayload, type RuntimeMessage, type VideoInfoPayload } from '../messages';
+import type { FetchResult, VideoMeta } from '../types';
 import { ChatTab } from './ChatTab';
 import { MindmapTab } from './MindmapTab';
 import { OutlineTab } from './OutlineTab';
 import { SettingsPage } from './settings/SettingsPage';
 import { SubtitleTab } from './SubtitleTab';
+import { loadSubtitles as runWaterfall, loadSubtitlesManual } from './subtitleLoader';
 
 type TabKey = 'subtitle' | 'outline' | 'mindmap' | 'chat';
 
@@ -30,11 +32,15 @@ function formatDuration(ms: number): string {
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
+
+
 export function App() {
   const [video, setVideo] = useState<VideoInfoPayload | null>(null);
   const [playback, setPlayback] = useState<PlaybackPayload | null>(null);
   const [tab, setTab] = useState<TabKey>('subtitle');
   const [showSettings, setShowSettings] = useState(false);
+  /** 手动粘贴版本号：递增触发 SubtitleTab 重载（key 变化） */
+  const [pasteVersion, setPasteVersion] = useState(0);
 
   useEffect(() => {
     // 打开侧边栏时拉取当前 tab 的视频信息
@@ -62,6 +68,39 @@ export function App() {
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
   }, []);
+
+  /** 字幕 Tab 点句跳播：panel -> background -> content */
+  const handleRequestSeek = (targetMs: number) => {
+    if (!video) return;
+    try {
+      void chrome.runtime
+        .sendMessage({ type: MSG.SEEK, payload: { videoId: video.videoId, targetMs } })
+        .catch(() => {
+          // content/background 未就绪时静默
+        });
+    } catch {
+      // 扩展上下文异常时静默
+    }
+  };
+
+  // TODO(接线)：cid/url 待 background 视频信息补全，字幕 Tab 当前仅消费 title/duration
+  const meta: VideoMeta | null = video ? { ...video, cid: 0, url: '' } : null;
+
+  /** 字幕加载：经瀑布（缓存 → B 站一级通道；红线 8 保证不抛） */
+  const handleLoadSubtitles = (videoId: string): Promise<FetchResult> =>
+    meta
+      ? runWaterfall(videoId, meta)
+      : Promise.resolve({ cues: [], status: 'no_subtitle', error: '无视频元信息' });
+
+  /** 手动粘贴解析：走瀑布手动直达通道并落缓存，成功后递增版本号触发重载 */
+  const handleManualPaste = (text: string) => {
+    if (!meta) return;
+    void loadSubtitlesManual(meta.videoId, meta, text)
+      .then(() => setPasteVersion((v) => v + 1))
+      .catch(() => {
+        /* 红线 8：瀑布不抛；此处兜底 */
+      });
+  };
 
   return (
     <div className="app">
@@ -110,7 +149,17 @@ export function App() {
             </button>
           </nav>
           <main className="tab-body">
-            {tab === 'subtitle' && <SubtitleTab />}
+            {tab === 'subtitle' && (
+              <SubtitleTab
+                key={`${video?.videoId ?? 'none'}-${pasteVersion}`}
+                videoId={video?.videoId ?? null}
+                meta={meta}
+                positionMs={playback?.positionMs ?? 0}
+                onRequestSeek={handleRequestSeek}
+                loadSubtitles={handleLoadSubtitles}
+                onManualPaste={handleManualPaste}
+              />
+            )}
             {tab === 'outline' && <OutlineTab />}
             {tab === 'mindmap' && <MindmapTab />}
             {tab === 'chat' && <ChatTab />}

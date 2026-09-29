@@ -199,3 +199,175 @@ body {
   color: #fff;
   cursor: not-allowed;
 }
+
+/* 字幕 Tab（SPEC-02 2.4） */
+.subtitle-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+}
+
+.subtitle-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.subtitle-source-tag {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #e8f3ff;
+  color: #165dff;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.subtitle-lang {
+  font-size: 12px;
+  color: #86909c;
+}
+
+.subtitle-list-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.subtitle-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  padding: 5px 10px;
+  border: 1px solid #ffd591;
+  border-radius: 6px;
+  background: #fff7e8;
+  color: #d46b08;
+  font-size: 12px;
+}
+
+.subtitle-banner-close {
+  border: none;
+  background: transparent;
+  color: #d46b08;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.subtitle-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.subtitle-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.subtitle-row:hover {
+  background: #f2f3f5;
+}
+
+.subtitle-row.active {
+  background: #e8f3ff;
+}
+
+.subtitle-row.active .subtitle-text {
+  color: #165dff;
+  font-weight: 500;
+}
+
+.subtitle-time {
+  flex-shrink: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: #86909c;
+}
+
+.subtitle-text {
+  flex: 1;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+/* 降级 / 空态 */
+.subtitle-degraded {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #fde2e2;
+  border-radius: 8px;
+  background: #fff1f0;
+  font-size: 13px;
+  color: #4e5969;
+}
+
+.subtitle-degraded.need-login {
+  border-color: #ffd591;
+  background: #fff7e8;
+  color: #d46b08;
+}
+
+.subtitle-degraded-text {
+  margin: 0;
+}
+
+.subtitle-empty {
+  padding: 12px;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 13px;
+  color: #86909c;
+}
+
+/* 手动粘贴入口 */
+.subtitle-paste {
+  padding: 8px 12px;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.subtitle-paste summary {
+  font-size: 13px;
+  color: #4e5969;
+  cursor: pointer;
+}
+
+.subtitle-paste-hint {
+  margin: 8px 0;
+  font-size: 12px;
+  color: #86909c;
+}
+
+.subtitle-paste-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #e5e6eb;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.subtitle-paste-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.subtitle-paste-pending {
+  font-size: 12px;
+  color: #86909c;
+}
