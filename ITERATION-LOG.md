@@ -35,6 +35,7 @@
 | 09-30 | 变更 | 按审计全部采纳修订：CONSTITUTION v1.1（用户为最终验收人、验收三级标注、§5 版本控制、共享契约仅父 agent 可改、红线 6/7 改写、新增红线 10 与检查方式列、决策扇出检查）；TECH-DESIGN r3（字幕 Tab、videoId=bvid_p{n}、运行上下文职责、prompt 单一事实源、Section.terms/density 算法、QaRecord、两层缓存、trace、错误分类表含 need_login 优先、跳播链接格式、manifest 去 YouTube、§10 质量保障、§12 M7）；SPEC-01~06 按模板重写；新增 SPEC-07 MVP 验证期、`_SPEC_TEMPLATE.md`、`_DISPATCH_TEMPLATE.md` | ✅ 受影响文档：CONSTITUTION / TECH-DESIGN / SPEC-01~07 / 两份模板 / EVOLUTION-ROADMAP（章节引用与 SPEC 编号同步）/ AUDIT 报告（追加处置结果）/ bv-cases.md，逐个已确认 |
 | 09-30 | 决策 | 字幕术语澄清：一级通道抓取的是播放器字幕轨列表（UP 主上传字幕 + 平台 AI 字幕同在 player wbi/v2 的 subtitles 数组，UP 主优先、AI 次之），"博主自己配的字幕"本就是主要抓取对象；AI 字幕无标点/同音字问题 → "顺句"列为条件触发进化项 | ✅ 受影响文档：TECH-DESIGN §1.3/§7.1、EVOLUTION-ROADMAP §2、MEMORY，逐个已改 |
 | 09-30 | 施工 | **SPEC-01 开工**：父 agent 完成子任务 1.2 共享契约（types/messages/config，commit 5ecc048）；派发子任务 1.1 工程脚手架，子 agent 交付（commit 904a548），父 agent 复跑 G1（build/test/check 全绿）与 G3（content 占位零 import、config 外无敏感串）验收通过 | ✅ 已推送；剩余 1.3/1.4/1.5 待派发 |
+| 09-30 | 施工 | SPEC-01 子任务 1.3/1.4/1.5 **并行派发并全部验收**（aa524f6 / e982d73 / dc2f488）：manifest+background 路由、红线与 prompt 检查脚本、content+panel 壳；并行冲突一处由父 agent 裁决——**config 拆 shared 层**（content 唯一合法配置入口，模型端点彻底隔离出 content 上下文），1.3 的检查脚本在真实仓库扫描中抓出 2 条违规并已修复。当前全套：tsc 零错误、vitest 47 例全绿、check 全 PASS、build 成功 | ✅ A1~A4 自动验收通过；**A5/A6 待用户人工验收**（装 Chrome 验证 videoId 显示与分 P 切换） |
 
 ---
 

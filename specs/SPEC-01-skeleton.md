@@ -1,6 +1,6 @@
 # SPEC-01 · 工程骨架、共享契约与质量工具链
 
-- 状态：进行中（1.2 已完成，1.1 已派发）
+- 状态：进行中（1.1~1.5 全部完成并验收，待人工验收 A5/A6）
 - 依赖：无
 - 对应里程碑：M1
 - 验收 tag：`spec-01-accepted`
@@ -63,3 +63,8 @@
 |---|---|---|---|---|
 | 2026-09-30 | 父 agent | 子任务 1.2 共享契约完成：`src/types.ts`（TECH-DESIGN §4 全量类型）、`src/messages.ts`（10 类消息）、`src/config/index.ts`（端点与阈值） | 编译随 1.1 构建验证 | 5ecc048 |
 | 2026-09-30 | 子 agent 1.1 | 工程初始化：package.json / tsconfig / vitest / vite 三入口配置（background ES + panel HTML/ES，content IIFE 经 closeBundle 二次构建）、panel.html 与 background/content/panel 占位入口、check 双脚本占位 | `npm run build` 零错误，dist 含 background.js / content.js / panel.html / panel.js；`npm test` 与双 check exit 0；`tsc --noEmit` 零错误 | 904a548（父 agent 复跑 G1/G3 通过，已验收） |
+| 2026-09-30 | 父 agent | 契约补充：messages.ts 增加 CURRENT_VIDEO_GET（panel 打开时拉取当前视频） | tsc 零错误 | 7249eed |
+| 2026-09-30 | 子 agent 1.4 | manifest.json（TECH-DESIGN §9 逐字段）+ background 路由（纯函数 routeBackgroundMessage 十类 Action + chrome 执行器 + tab→video 映射 storage.session 持久化与重启恢复 + setPanelBehavior）；manifest 快照测试与路由单测共 18 例；偏差：manifest 测试用 import.meta.glob('?raw') 替代 node:fs（依赖白名单无 @types/node），语义不变 | tsc 零错误；vitest 18 例全绿 | aa524f6（已验收） |
+| 2026-09-30 | 子 agent 1.3 | check-redlines.mjs（R9 受管控端点/密钥扫描、R10 content 禁词与 config import 检查、汇总子进程）+ check-prompts.mjs（SKILL 引用校验）+ 19 例内存驱动单测；**实战抓出 2 条并行任务引入的真实违规**（详见父 agent 修复行） | vitest 19 例全绿；修复后真实仓库扫描全 PASS | e982d73（已验收） |
+| 2026-09-30 | 子 agent 1.5 | content（parseVideoId/toVideoId 纯函数 9 例单测、SPA pushState/popstate/轮询双保险、__INITIAL_STATE__ 三级 fallback、video 生命周期 MutationObserver、500ms 节流进度上报、player seek/pause/resume）+ panel（App 四 Tab 壳、信息栏、CURRENT_VIDEO_GET 拉取、设置页壳） | tsc 零错误；vitest 9 例全绿；红线 10 grep 零命中 | dc2f488（已验收） |
+| 2026-09-30 | 父 agent | 裁决并修复并行冲突：① 1.5 设置页硬编码 `127.0.0.1:27124`（R9 违规）→ 改用 OBSIDIAN 常量；② 派发包冲突裁决——config 拆两层：新增 `src/config/shared.ts`（BILI_URL_PATTERN/BVID_REGEXES/PLAYBACK，content 唯一合法配置入口），index.ts re-export 保持兼容，content 改 import shared，R10 补 shared 放行用例。根因：config 混装模型端点与通用阈值，content import 整包会把端点文本带入 content 上下文 | 全套复跑：tsc 零错误、vitest 47 例全绿、check:redlines/check:prompts 全 PASS、build 成功 | dc2f488（含修复） |
