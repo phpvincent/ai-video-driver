@@ -61,6 +61,9 @@
 
 连带变更：SectionCandidateSchema bullets → `{text, startSec}` 对象数组（吸附到 Cue 边界）、新增 `importance` 字段、Section 类型新增 importance/score、promptVersion 0.1.0 → 0.2.0（**旧缓存按红线 7 自动失效**，用户需重新生成）、新增 src/prompts/outline-regenerate.md。
 ## 4. 验收标准
+| 2026-09-30 | 子 agent UI | 范围变更 UI 层：OutlineTab 挂载自动读缓存（修复切 Tab 状态丢失）、章节时间范围显示、bullets 带时间戳可点跳播（approximate 标 ~）、分数徽标（0-100 + 分档配色）、每章独立重生成（内联反馈输入 + 生成中骨架 + 失败重试）；loader 增 loadOutlineCached/generateOutline/regenerateOne（applyRegenerated 替换 + rescoreOutline 重算 + 缓存更新）+ 15 例 | tsc 零错误；342 例全绿 | 77f5246（已验收） |
+| 2026-09-30 | 父 agent | SKILL.md schema 段同步 bullets 对象格式与 importance/score；prompts 检查 PASS | ✅ | 77f5246 |
+
 
 - [ ] A1 [自动] 切片单测：空字幕、单 Cue、单条超长 Cue、恰好 1800 字、切点均落在 Cue 边界
 - [ ] A2 [自动] 吸附单测：偏移 ±5s 内吸附后 startMs 严格等于某 Cue.startMs；偏移 > 5s 的章节被丢弃并计入 trace（红线 2）
