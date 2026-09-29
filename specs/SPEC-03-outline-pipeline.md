@@ -36,6 +36,14 @@
 | 3.5 | 设置页与大纲 Tab | ModelConfig 持久化、连通性测试、trace 导出、OutlineTab | `src/panel/`、`src/storage/db.ts` | 1d |
 | 3.6 | 回放录制与质量基线 | 模型响应录制、回放测试、黄金样例评分表 | `tests/fixtures/recorded/`、`tests/replay/` | 0.5d |
 
+## 3b. 执行记录（append-only）
+
+| 日期 | 执行者 | 变更摘要 | 自测结果 | commit |
+|---|---|---|---|---|
+| 2026-09-30 | 子 agent 3.1 | modelClient（OpenAI 兼容、注入 fetch、URL 规范化、JSON 模式、usage 映射、结构化 throw）+ 设置页激活（GET/SET_SETTINGS 持久化、校验、测试连接按钮、apiKey 脱敏）+ 15 例单测（假域名 + test-key） | tsc 零错误；34 例（harness 15 + panel 19）全绿 | 31127bd（已验收） |
+| 2026-09-30 | 子 agent 3.2+3.3 | pipeline 核心：chunkCues（1800/200、Cue 边界切点、超长独立）+ runOutline（工作池并发 3、30s 超时、重试 1、吸附 >5s 幻觉丢弃、增量尾合并、finalize、预算熔断 chars/2 估算）+ 47 例单测（红线 2 集合断言 + 确定性检查）；偏差已裁决：skipped 块用扩展 ChunkState、OutlineSection 省略 density（3.5）、mergeAdjacentMs=60s 可配 | tsc 零错误；47 例全绿 | 725d530（已验收） |
+| 2026-09-30 | 父 agent | 3.1/3.2+3.3 并行验收：全套复跑 tsc 零错误、233 例全绿（+62）、红线 R9/R10 PASS、G3 抽查（core 无 URL/密钥字面量）通过 | ✅ | 725d530 |
+
 ## 4. 验收标准
 
 - [ ] A1 [自动] 切片单测：空字幕、单 Cue、单条超长 Cue、恰好 1800 字、切点均落在 Cue 边界
