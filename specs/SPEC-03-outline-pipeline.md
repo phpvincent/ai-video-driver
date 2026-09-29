@@ -43,6 +43,9 @@
 | 2026-09-30 | 子 agent 3.1 | modelClient（OpenAI 兼容、注入 fetch、URL 规范化、JSON 模式、usage 映射、结构化 throw）+ 设置页激活（GET/SET_SETTINGS 持久化、校验、测试连接按钮、apiKey 脱敏）+ 15 例单测（假域名 + test-key） | tsc 零错误；34 例（harness 15 + panel 19）全绿 | 31127bd（已验收） |
 | 2026-09-30 | 子 agent 3.2+3.3 | pipeline 核心：chunkCues（1800/200、Cue 边界切点、超长独立）+ runOutline（工作池并发 3、30s 超时、重试 1、吸附 >5s 幻觉丢弃、增量尾合并、finalize、预算熔断 chars/2 估算）+ 47 例单测（红线 2 集合断言 + 确定性检查）；偏差已裁决：skipped 块用扩展 ChunkState、OutlineSection 省略 density（3.5）、mergeAdjacentMs=60s 可配 | tsc 零错误；47 例全绿 | 725d530（已验收） |
 | 2026-09-30 | 父 agent | 3.1/3.2+3.3 并行验收：全套复跑 tsc 零错误、233 例全绿（+62）、红线 R9/R10 PASS、G3 抽查（core 无 URL/密钥字面量）通过 | ✅ | 725d530 |
+| 2026-09-30 | 子 agent 3.4 | prompts/outline.md 单一事实源（promptVersion 0.1.0，解析器剥头注释，红线 6）+ outlineLoader（modelClient↔runOutline 组装、buildPrompts 注入正式 system prompt、调用时实时读 settings）+ OutlineTab 五态状态机/章节列表/点章跳播/findActiveSection 跟随高亮/密度占位/未配置模型跳设置 + SKILL.md（只引用不复制）+ 31 例；偏差已裁决：测试用 import.meta.glob('?raw')（沿先例）、SKILL 措辞避"禁止"字样兼容 check-prompts | tsc 零错误；31 例全绿；check-prompts PASS | 8b0c82f（已验收） |
+| 2026-09-30 | 子 agent 3.5 | density.ts（computeDensity/attachDensity：术语 trim+小写去重、new/分钟 rate、0.1 分钟 clamp、≥4 章分位数 R-7 分档 / <4 章绝对阈值 3/1、退化情形）+ finalizeOutline 返回升级为 Section[]（方案 a，协变兼容）+ 19 例（含确定性双跑断言，红线 1） | tsc 零错误；19 例全绿；pipeline 套件 66 例无回归 | fc7db80（已验收） |
+| 2026-09-30 | 父 agent | 3.4/3.5 并行验收：全套复跑 tsc 零错误、**283 例全绿（+50）**、红线全 PASS（prompts 检查首次实跑：SKILL.md→outline.md 引用校验通过）、build 成功 | ✅ 剩余：OutlineRecord 缓存接线（含 SW 宿主验证 A4b）、进度钩子、A4/A5/A13 联调待用户 | fc7db80 |
 
 ## 4. 验收标准
 
