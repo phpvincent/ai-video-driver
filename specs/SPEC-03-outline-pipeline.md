@@ -46,6 +46,7 @@
 | 2026-09-30 | 子 agent 3.4 | prompts/outline.md 单一事实源（promptVersion 0.1.0，解析器剥头注释，红线 6）+ outlineLoader（modelClient↔runOutline 组装、buildPrompts 注入正式 system prompt、调用时实时读 settings）+ OutlineTab 五态状态机/章节列表/点章跳播/findActiveSection 跟随高亮/密度占位/未配置模型跳设置 + SKILL.md（只引用不复制）+ 31 例；偏差已裁决：测试用 import.meta.glob('?raw')（沿先例）、SKILL 措辞避"禁止"字样兼容 check-prompts | tsc 零错误；31 例全绿；check-prompts PASS | 8b0c82f（已验收） |
 | 2026-09-30 | 子 agent 3.5 | density.ts（computeDensity/attachDensity：术语 trim+小写去重、new/分钟 rate、0.1 分钟 clamp、≥4 章分位数 R-7 分档 / <4 章绝对阈值 3/1、退化情形）+ finalizeOutline 返回升级为 Section[]（方案 a，协变兼容）+ 19 例（含确定性双跑断言，红线 1） | tsc 零错误；19 例全绿；pipeline 套件 66 例无回归 | fc7db80（已验收） |
 | 2026-09-30 | 父 agent | 3.4/3.5 并行验收：全套复跑 tsc 零错误、**283 例全绿（+50）**、红线全 PASS（prompts 检查首次实跑：SKILL.md→outline.md 引用校验通过）、build 成功 | ✅ 剩余：OutlineRecord 缓存接线（含 SW 宿主验证 A4b）、进度钩子、A4/A5/A13 联调待用户 | fc7db80 |
+| 2026-09-30 | 父 agent | 收尾接线（3.1~3.5 之后的父 agent 亲自部分）：① runOutline 增 onProgress 进度钩子（增量合并阶段按块下标顺序触发、回调异常吞掉）+ 3 例钩子单测；② db 层 outlines store get/save（键 [videoId, promptVersion, model]，红线 7 定向失效；chunkState 断点随存）；③ outlineLoader 接缓存（命中短路、结果落库写失败不阻断）+ 进度透传；④ OutlineResult.sections 升级为 Section[]（与 3.5 finalize 对齐） | tsc 零错误；286 例全绿；红线全 PASS；build 成功 | 3408a28（已验收） |
 
 ## 4. 验收标准
 
