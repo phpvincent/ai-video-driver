@@ -64,5 +64,8 @@
 | 日期 | 执行者 | 变更摘要 | 自测结果 | commit |
 |---|---|---|---|---|
 | 2026-09-30 | 子 agent 2.1 | normalize.ts（无效项过滤/<800ms+间隙<500ms 合并/语气词词表过滤/rolling caption 去重/index 重排）+ parsers.ts（bili JSON/SRT/VTT/纯文本估算 approximate/detectAndParse）+ 43 例单测 | tsc 零错误；43 例全绿；父 agent 裁决：去重语义=丢弃重复条、幸存条时间不变（时间窗共享，扩展 endMs 会超出真实字幕时间） | 9e492ec（已验收） |
+| 2026-09-30 | 子 agent 2.3 | waterfall.ts（手动直达→缓存→B 站→normalize→落缓存；失败透传不落缓存；deps 全注入，红线 8 全路径单测覆盖）+ manual-paste.ts + storage/db.ts（惰性幂等 open、clock 注入）+ 27 例单测；父 agent 裁决：normalize 后为空返回 no_subtitle 不落缓存 | tsc 零错误；27 例全绿 | 24b0ff7（已验收） |
+| 2026-09-30 | 子 agent 2.4 | SubtitleTab 完整状态机（idle/loading/ready/degraded/empty）、全量 Cue 列表 + mm:ss、二分 findActiveCue 跟随高亮 + 滚动防抖、点句跳播、按 status 的降级文案（need_login 优先）、手动粘贴入口、来源标签 + 19 例单测 | tsc 零错误；19 例全绿 | a53bab9 前半（已验收） |
+| 2026-09-30 | 父 agent | 接线完成：subtitleLoader.ts 组装瀑布真实依赖（fetchBiliSubtitles + createSubtitleDb + runSubtitleWaterfall）；App.tsx 替换占位 loadSubtitles、接通 onManualPaste（粘贴成功递增版本号重挂载 SubtitleTab）；接线中自纠两处（状态声明前置、孤儿 import 还原） | 全套复跑：tsc 零错误、171 例全绿、红线 PASS、build 成功 | a53bab9（已验收） |
 | 2026-09-30 | 子 agent 2.2 | wbi.ts（mixin 表/签名/同步 md5，RFC 向量通过）+ errors.ts（§7.1 顺序分类，5xx=network、4xx=api_changed、need_login 优先）+ bilibili.ts（注入式 fetch 编排：view→nav 按日缓存 mixin→playerWbiV2→UP 主轨优先选轨→https: 补全，永不 throw）+ 35 例单测；偏差已裁决：FetchResult 的 meta 出口留 2.3 接线 | tsc 零错误；35 例全绿；父 agent 全套复跑 125 例全绿 + 红线检查 PASS + G3 抽查（无 URL 字面量/无 throw/SRT 多行合并正当） | ac71d11（已验收） |
 | 2026-09-30 | 父 agent | 开工前匿名探测：wbi 签名有效；测试课程 P1~P11 均返回空字幕列表且 need_login_subtitle=true | 确认错误分类需优先判定登录要求；登录态覆盖率待 A6 | — |
