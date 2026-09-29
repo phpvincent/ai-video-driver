@@ -178,8 +178,23 @@ async function executeActions(actions: Action[], sendResponse: (response?: unkno
 }
 
 function bootstrap(): void {
+  console.info('[vsc] background boot');
+
   // 点击工具栏图标打开侧边栏（Chrome 不允许无用户手势自动打开）
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+  chrome.sidePanel
+    .setPanelBehavior({ openPanelOnActionClick: true })
+    .then(() => console.info('[vsc] openPanelOnActionClick enabled'))
+    .catch((err: unknown) => console.error('[vsc] setPanelBehavior failed:', err));
+
+  // 双保险：若 behavior 未生效（注册失败 / 被其他设置覆盖），点击图标时手动打开。
+  // behavior 生效时 onClicked 不会触发，两者互补不冲突。
+  chrome.action.onClicked.addListener((tab) => {
+    if (typeof tab.id !== 'number') return;
+    console.info('[vsc] action clicked, opening side panel for tab', tab.id);
+    chrome.sidePanel
+      .open({ tabId: tab.id })
+      .catch((err: unknown) => console.error('[vsc] sidePanel.open failed:', err));
+  });
 
   // SW 重启恢复 tab → video 映射
   void restoreTabVideoMap();
