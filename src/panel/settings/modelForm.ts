@@ -185,6 +185,24 @@ export function presetShortLabel(preset: PresetKey): string {
   }
 }
 
+/**
+ * 内置方案种子：modelProfiles 为空时，从 MODEL_PRESETS 生成带名称的方案
+ * （Key 为空，用户在设置页填好后以同名保存即可覆盖）。幂等：已有方案不重复注入。
+ */
+export function seedProfilesIfEmpty(settings: Settings): Settings {
+  if ((settings.modelProfiles ?? []).length > 0) return settings;
+  const profiles = (Object.keys(MODEL_PRESETS) as Array<keyof typeof MODEL_PRESETS>).map(
+    (key) => ({
+      ...MODEL_PRESETS[key],
+      name: `内置 · ${presetShortLabel(key)}`,
+      supportsVision: presetVisionDefault(key),
+      temperature: { outline: 0.3, qa: 0.3 },
+      maxTokens: 4096,
+    }),
+  );
+  return { ...settings, modelProfiles: profiles as never };
+}
+
 /** 当前表单的接口地址匹配哪个预设（用于高亮显示"当前选用"） */
 export function activePreset(baseUrl: string): PresetKey | null {
   const normalized = (baseUrl ?? '').trim().replace(/\/+$/, '');

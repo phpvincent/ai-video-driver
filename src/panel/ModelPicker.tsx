@@ -18,6 +18,8 @@ export interface PickerOption {
   label: string;
   /** 三要素是否齐全（方案无 Key 时 UI 提示回退默认） */
   hasKey: boolean;
+  /** 该方案声明支持图像输入（下拉项绿色显示，提示可用于抽帧） */
+  vision: boolean;
 }
 
 export interface ModelPickerProps {
@@ -38,14 +40,26 @@ export function buildPickerOptions(settings: Settings): PickerOption[] {
     ? `默认（${defaultModel.model.trim()}）`
     : '默认（未配置）';
   const options: PickerOption[] = [
-    { value: '', label: defaultLabel, hasKey: isModelConfigured(defaultModel) },
+    {
+      value: '',
+      label: defaultLabel,
+      hasKey: isModelConfigured(defaultModel),
+      vision: defaultModel?.supportsVision === true,
+    },
   ];
   const seen = new Set<string>(['']);
   for (const p of (settings.modelProfiles ?? []) as ModelConfig[]) {
     const name = p?.name?.trim();
     if (!name || seen.has(name)) continue;
     seen.add(name);
-    options.push({ value: name, label: name, hasKey: Boolean(p.apiKey?.trim()) });
+    const vision = p.supportsVision === true;
+    options.push({
+      value: name,
+      // 多模态方案在标签中显式标注（下拉列表里绿色渲染，闭合同样可见后缀）
+      label: vision ? `${name} · 多模态` : name,
+      hasKey: Boolean(p.apiKey?.trim()),
+      vision,
+    });
   }
   return options;
 }
@@ -116,7 +130,7 @@ export function ModelPicker({ module }: ModelPickerProps) {
   const matched = options.find((o) => o.value === selected);
   const displayOptions =
     selected && !matched
-      ? [...options, { value: selected, label: selected, hasKey: false }]
+      ? [...options, { value: selected, label: selected, hasKey: false, vision: false }]
       : options;
   const missingKey = selected !== '' && (matched ? !matched.hasKey : true);
 
@@ -130,7 +144,11 @@ export function ModelPicker({ module }: ModelPickerProps) {
           onChange={(e) => handleChange(e.target.value)}
         >
           {displayOptions.map((o) => (
-            <option key={o.value || 'default'} value={o.value}>
+            <option
+              key={o.value || 'default'}
+              value={o.value}
+              className={o.vision ? 'picker-opt-vision' : undefined}
+            >
               {o.label}
             </option>
           ))}

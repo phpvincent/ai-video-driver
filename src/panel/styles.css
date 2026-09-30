@@ -771,3 +771,34 @@ body {
 .model-profile-delete:hover {
   background: #fef1f0;
 }
+
+/* ===== 工具栏布局修复：换行不重叠、按钮不折行、下拉限宽 ===== */
+.outline-header {
+  flex-wrap: wrap;
+  gap: 8px;
+  row-gap: 6px;
+}
+.outline-header .btn,
+.outline-header button {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.outline-header .model-picker {
+  flex: 1 1 180px;
+  min-width: 160px;
+  max-width: 320px;
+}
+.model-picker-select {
+  max-width: 100%;
+  text-overflow: ellipsis;
+}
+/* 多模态方案在下拉列表中绿色显示（Chromium 支持 option 着色） */
+.model-picker-select option.picker-opt-vision {
+  color: #0a7d38;
+  font-weight: 600;
+}
+.mm-view-switch,
+.chat-persona-row {
+  flex-wrap: wrap;
+  gap: 8px;
+}

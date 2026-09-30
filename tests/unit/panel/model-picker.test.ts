@@ -26,11 +26,11 @@ function textConfig(overrides: Partial<ModelConfig> = {}): ModelConfig {
 describe('buildPickerOptions', () => {
   it('首项为默认：value 空串 + label 含默认模型名 + hasKey=true', () => {
     const options = buildPickerOptions({ model: textConfig() });
-    expect(options[0]).toEqual({
-      value: '',
-      label: `默认（${MODEL_PRESETS.deepseek.model}）`,
-      hasKey: true,
-    });
+    // 逐字段断言（vision 为后续新增字段，首项默认模型未声明多模态时为 false）
+    expect(options[0].value).toBe('');
+    expect(options[0].label).toBe(`默认（${MODEL_PRESETS.deepseek.model}）`);
+    expect(options[0].hasKey).toBe(true);
+    expect(options[0].vision).toBe(false);
   });
 
   it('默认模型未配置 → 「默认（未配置）」且 hasKey=false', () => {
@@ -89,5 +89,21 @@ describe('ModelPicker renderToString 冒烟', () => {
 
   it('缺 Key 提示文案常量导出（供 UI 与测试共用）', () => {
     expect(PICKER_MISSING_KEY_HINT).toBe('该方案缺少 Key，将回退默认');
+  });
+  it('buildPickerOptions：多模态方案标签带「· 多模态」且 vision=true', () => {
+    const settings = {
+      model: { ...DEFAULT_MODEL },
+      modelProfiles: [
+        { name: 'Qwen 视觉', apiKey: 'k', supportsVision: true },
+        { name: 'DeepSeek 文本', apiKey: 'k', supportsVision: false },
+      ],
+    } as never;
+    const opts = buildPickerOptions(settings);
+    const qwen = opts.find((o) => o.value === 'Qwen 视觉');
+    const ds = opts.find((o) => o.value === 'DeepSeek 文本');
+    expect(qwen?.vision).toBe(true);
+    expect(qwen?.label).toContain('多模态');
+    expect(ds?.vision).toBe(false);
+    expect(ds?.label).not.toContain('多模态');
   });
 });

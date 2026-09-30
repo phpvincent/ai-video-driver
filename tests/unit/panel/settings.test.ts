@@ -21,6 +21,7 @@ import {
   normalizeModelConfig,
   presetShortLabel,
   activePreset,
+  seedProfilesIfEmpty,
 } from '../../../src/panel/settings/modelForm';
 import type { ModelConfig, Settings } from '../../../src/types';
 
@@ -563,5 +564,21 @@ describe('mergeSettings', () => {
     expect(activePreset(MODEL_PRESETS.qwenMaas.baseUrl + '/')).toBe('qwenMaas');
     expect(activePreset('https://example.com/v1')).toBeNull();
     expect(activePreset('')).toBeNull();
+  });
+  it('seedProfilesIfEmpty：空方案时注入三个内置方案（多模态标记正确）', () => {
+    const seeded = seedProfilesIfEmpty({});
+    const profiles = seeded.modelProfiles as never[];
+    expect(profiles.length).toBe(3);
+    const names = profiles.map((x) => (x as { name: string }).name);
+    expect(names.some((n) => n.includes('DeepSeek'))).toBe(true);
+    expect(names.filter((n) => n.includes('Qwen')).length).toBe(2);
+    // DeepSeek 不支持图像；Qwen 方案支持
+    const ds = profiles.find((x) => (x as { name: string }).name.includes('DeepSeek')) as unknown as { supportsVision?: boolean };
+    const qw = profiles.find((x) => (x as { name: string }).name.includes('maas')) as unknown as { supportsVision?: boolean };
+    expect(ds.supportsVision).toBe(false);
+    expect(qw.supportsVision).toBe(true);
+    // 已有方案时不覆盖（幂等）
+    const existing = { modelProfiles: [{ name: '我的方案', apiKey: 'k' }] };
+    expect((seedProfilesIfEmpty(existing as never).modelProfiles as never[]).length).toBe(1);
   });
 });
