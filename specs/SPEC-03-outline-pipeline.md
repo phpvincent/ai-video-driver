@@ -71,6 +71,11 @@
 1. prompt v0.2.1：章节数约束从上限改为目标区间——「每章时长目标 2.5~5 分钟；章节数 ≈ 视频时长 ÷ 3.5 分钟（上下浮动 1 章）；单个分块通常包含 1~3 个自然章节，按内容边界划分」
 2. 设置页新增「当前策略」摘要（describeModelStrategy 纯函数 + UI）：当前文本模型 / 视觉模型 / 抽帧状态 / 路由规则说明（带画面的请求 → 视觉模型；术语解释、自由提问、未开抽帧 → 文本模型）
 
+
+### 范围变更六次迭代（2026-09-30 傍晚，用户建议：各 Tab 单独选择模型）
+
+全局单模型改为**按模块选择**：设置页维护"默认模型 + 命名模型方案（profiles）"；大纲/导图/问答三个 Tab 各有下拉框选择本模块使用的方案（默认=全局默认模型）。视觉能力（supportsVision）随方案存储（修此前全局勾选的语义错位——换模型时能力声明不跟随）。loader 在生成时解析本模块的模型；方案被删或 Key 缺失时回退默认模型。
+
 ## 4. 验收标准
 | 2026-09-30 | 子 agent UI | 范围变更 UI 层：OutlineTab 挂载自动读缓存（修复切 Tab 状态丢失）、章节时间范围显示、bullets 带时间戳可点跳播（approximate 标 ~）、分数徽标（0-100 + 分档配色）、每章独立重生成（内联反馈输入 + 生成中骨架 + 失败重试）；loader 增 loadOutlineCached/generateOutline/regenerateOne（applyRegenerated 替换 + rescoreOutline 重算 + 缓存更新）+ 15 例 | tsc 零错误；342 例全绿 | 77f5246（已验收） |
 | 2026-09-30 | 父 agent | SKILL.md schema 段同步 bullets 对象格式与 importance/score；prompts 检查 PASS | ✅ | 77f5246 |
