@@ -58,5 +58,8 @@
 ## 6. 执行记录（append-only）
 
 | 日期 | 执行者 | 变更摘要 | 自测结果 | commit |
+| 2026-09-30 | 子 agent 实现 | metrics/usage（UsageRecord + applyUsageEvent 不可变）+ metrics/report（computeStats/逐项判定/整体结论/Markdown 报告）+ storage usage store（DB v2）+ ValidationReportView（指标表/判定徽标/主观回顾/复制下载）+ 61 例 | tsc 零错误；61 例全绿 | 65f6db3（已验收） |
+| 2026-09-30 | 父 agent | App 埋点接线（seek/字幕/大纲/概念图四类事件）+ 报告入口；**真实使用验证（1~2 周）由用户执行** | verify 直连 651 例全绿 | de21270 |
+
 |---|---|---|---|---|
 | — | — | — | — | — |

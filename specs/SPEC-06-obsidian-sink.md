@@ -64,5 +64,9 @@
 ## 6. 执行记录（append-only）
 
 | 日期 | 执行者 | 变更摘要 | 自测结果 | commit |
+| 2026-09-30 | 子 agent 全量 | sinks/obsidian（put/get/testConnection 可操作错误文案）+ capture（视频笔记/术语卡 Markdown、frontmatter §4.7、≤200 字预览、_meta/index.json + _索引.md 双链 MOC、确定性去重）+ obsidianLoader（配置/存库/索引维护/terms store）+ 设置激活（key 脱敏/测试连接）+ 大纲与问答存库按钮；78 例 | tsc 零错误；651 例全绿（含回归）；check-prompts/redlines PASS | 29ff5a0（已验收） |
+| 2026-09-30 | 子 agent 检索 | 知识库二次检索接入问答：retriever（章节术语优先+停用词、加权打分、top-K 预览截断）+ compiler 知识库分区（预算优先级 区间>知识库>章节）+ segment-qa prompt 0.2.0（引用 knowledgeSources、不得编造、冲突以视频为准）+ ChatTab 参考来源行 + 设置开关；28 例 | tsc 零错误；56 例（含回归）全绿 | 4f00c79（已验收） |
+| 2026-09-30 | 父 agent | App 接线：存库按钮（大纲视频笔记/问答术语卡，重复提示原样展示）、DB 版本升 v2 建 usage 表、报告入口；接线中自纠三处（锚点错位/JSX fragment/重复 import） | verify 直连 651 例全绿 | de21270（已验收） |
+
 |---|---|---|---|---|
 | — | — | — | — | — |
