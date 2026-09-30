@@ -39,6 +39,8 @@
 ## 3b. 执行记录（append-only）
 
 | 日期 | 执行者 | 变更摘要 | 自测结果 | commit |
+| 2026-09-30 | 子 agent + 父 agent | prompt 0.2.1（章节密度从上限改目标区间：每章 2.5~5 分钟、≈时长÷3.5、单块 1~3 自然章）+ 设置页「当前策略」摘要（describeModelStrategy：文本/视觉模型、抽帧状态、路由规则说明）| tsc 零错误；92 例（三套件）+ verify 直连全绿；promptVersion 0.2.1 自动失效旧缓存（用户重新生成） | <随提交回填> |
+
 |---|---|---|---|---|
 | 2026-09-30 | 子 agent 3.1 | modelClient（OpenAI 兼容、注入 fetch、URL 规范化、JSON 模式、usage 映射、结构化 throw）+ 设置页激活（GET/SET_SETTINGS 持久化、校验、测试连接按钮、apiKey 脱敏）+ 15 例单测（假域名 + test-key） | tsc 零错误；34 例（harness 15 + panel 19）全绿 | 31127bd（已验收） |
 | 2026-09-30 | 子 agent 3.2+3.3 | pipeline 核心：chunkCues（1800/200、Cue 边界切点、超长独立）+ runOutline（工作池并发 3、30s 超时、重试 1、吸附 >5s 幻觉丢弃、增量尾合并、finalize、预算熔断 chars/2 估算）+ 47 例单测（红线 2 集合断言 + 确定性检查）；偏差已裁决：skipped 块用扩展 ChunkState、OutlineSection 省略 density（3.5）、mergeAdjacentMs=60s 可配 | tsc 零错误；47 例全绿 | 725d530（已验收） |
