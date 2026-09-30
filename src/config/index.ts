@@ -208,6 +208,14 @@ export const FRAME_PLAN: Record<
   },
 };
 
+/** AI 字幕顺句（SPEC-08 8.5）：手动触发，仅 bili_ai 来源 */
+export const PUNCTUATE = {
+  /** 单块累计字符数（约 60~80 句 ASR 短句） */
+  chunkChars: 2_000,
+  /** 单句去标点后允许的最大字符改动比例（同音错字远低于此，改写必超过） */
+  maxChangeRatio: 0.3,
+} as const;
+
 /** 知识密集时的密度系数（各段 secPerFrame 除以该值 → 帧数约 ×1.5） */
 export const FRAME_DENSE_BOOST = 1.5;
 

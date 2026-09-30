@@ -140,6 +140,11 @@ export interface SubtitleRecord {
   status: SubtitleStatus;
   cues: Cue[];
   fetchedAt: string;
+  /**
+   * 顺句后的标记（SPEC-08 8.5）：cues 已是整理后的文本，rawCues 保留 ASR 原文
+   * 供"切回原文"。缺省 = 未整理过。
+   */
+  punctuated?: { promptVersion: string; rawCues: Cue[] };
 }
 
 /** IndexedDB outlines store 记录，键 [videoId, promptVersion, model] */

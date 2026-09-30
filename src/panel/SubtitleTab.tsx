@@ -19,6 +19,10 @@ export interface SubtitleTabProps {
   loadSubtitles: (videoId: string) => Promise<FetchResult>;
   /** 字幕加载成功后向父级上报（App 存给 ChatTab 吸附时间戳，SPEC-08 8.4a） */
   onCues?: (cues: Cue[]) => void;
+  /** AI 字幕顺句（SPEC-08 8.5；仅 bili_ai 来源时按钮可见） */
+  punctuate?: (videoId: string) => Promise<{ cues: Cue[]; chunks: number; fallbackChunks: number }>;
+  /** 切回 ASR 原文 */
+  restoreRaw?: (videoId: string) => Promise<Cue[]>;
   /** 手动粘贴解析回调（接线前缺省，按钮禁用并显示"待接线"） */
   onManualPaste?: (text: string) => void;
   /** 划词解释回调（SPEC-05 追加：选区确认后触发；接线前 sticky 条显示"待接线"） */
@@ -234,13 +238,17 @@ function downloadTextFile(content: string, filename: string): void {
 }
 
 export function SubtitleTab(props: SubtitleTabProps) {
-  const { videoId, positionMs, onRequestSeek, onManualPaste, onExplainTerm, onCues } = props;
+  const { videoId, positionMs, onRequestSeek, onManualPaste, onExplainTerm, onCues, punctuate, restoreRaw } = props;
   const [phase, setPhase] = useState<Phase>('idle');
   const [result, setResult] = useState<FetchResult | null>(null);
   /** loadSubtitles 抛异常（瀑布约定不抛，占位/接线期兜底） */
   const [loadFailed, setLoadFailed] = useState(false);
   const [retryTick, setRetryTick] = useState(0);
   const [pasteText, setPasteText] = useState('');
+  /** 顺句进行中 / 结果反馈（SPEC-08 8.5） */
+  const [punctuating, setPunctuating] = useState(false);
+  const [punctuateNote, setPunctuateNote] = useState<string | null>(null);
+  const [isPunctuated, setIsPunctuated] = useState(false);
 
   // 最新 ref：父组件每次渲染重建 loadSubtitles 时不重触发加载
   const loadRef = useRef(props.loadSubtitles);
@@ -262,6 +270,7 @@ export function SubtitleTab(props: SubtitleTabProps) {
       .then((r) => {
         if (cancelled) return;
         setResult(r);
+        setIsPunctuated(false);
         if (r.cues.length > 0) onCues?.(r.cues);
         // 有 cues 即渲染（manual_pasted 也算）；无 cues 且无降级信息 → empty
         setPhase(
@@ -367,6 +376,57 @@ export function SubtitleTab(props: SubtitleTabProps) {
           borderTop: '1px solid #e5e6eb',
         }}
       >
+        {source === 'bili_ai' && punctuate && !isPunctuated && (
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={punctuating}
+            onClick={() => {
+              if (!videoId) return;
+              setPunctuating(true);
+              setPunctuateNote(null);
+              punctuate(videoId)
+                .then((r) => {
+                  setIsPunctuated(true);
+                  setResult((prev) => (prev ? { ...prev, cues: r.cues } : prev));
+                  onCues?.(r.cues);
+                  setPunctuateNote(
+                    r.fallbackChunks > 0
+                      ? `已整理（${r.chunks - r.fallbackChunks}/${r.chunks} 块生效，其余保留原文）`
+                      : '已整理：加标点并修正同音字',
+                  );
+                })
+                .catch((err) => {
+                  setPunctuateNote(err instanceof Error ? err.message : `整理失败：${String(err)}`);
+                })
+                .finally(() => setPunctuating(false));
+            }}
+          >
+            {punctuating ? '整理中…' : '整理字幕（加标点）'}
+          </button>
+        )}
+        {source === 'bili_ai' && restoreRaw && isPunctuated && (
+          <button
+            type="button"
+            className="btn"
+            onClick={() => {
+              if (!videoId) return;
+              restoreRaw(videoId)
+                .then((cues) => {
+                  setIsPunctuated(false);
+                  setResult((prev) => (prev ? { ...prev, cues } : prev));
+                  onCues?.(cues);
+                  setPunctuateNote('已切回 ASR 原文');
+                })
+                .catch((err) => {
+                  setPunctuateNote(err instanceof Error ? err.message : String(err));
+                });
+            }}
+          >
+            切回原文
+          </button>
+        )}
+        {punctuateNote && <span className="subtitle-punctuate-note">{punctuateNote}</span>}
         <button
           type="button"
           className="btn"

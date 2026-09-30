@@ -31,7 +31,12 @@ import {
 } from './mindmapLoader';
 import type { ConceptMapData, QaRecord } from '../types';
 import type { Section } from '../types';
-import { loadSubtitles as runWaterfall, loadSubtitlesManual } from './subtitleLoader';
+import {
+  loadSubtitles as runWaterfall,
+  loadSubtitlesManual,
+  punctuateSubtitles,
+  restoreRawSubtitles,
+} from './subtitleLoader';
 import type { Cue } from '../types';
 
 type TabKey = 'subtitle' | 'outline' | 'mindmap' | 'chat';
@@ -530,6 +535,8 @@ export function App() {
                 onManualPaste={handleManualPaste}
                 onExplainTerm={handleExplainTerm}
                 onCues={setCues}
+                punctuate={(vid) => punctuateSubtitles(vid)}
+                restoreRaw={(vid) => restoreRawSubtitles(vid)}
               />
             )}
             {effectiveTab === 'outline' && (

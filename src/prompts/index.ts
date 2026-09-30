@@ -13,6 +13,7 @@ import termExplainerMd from './term-explainer.md?raw';
 import knowledgeCaptureMd from './knowledge-capture.md?raw';
 import personaMd from './persona.md?raw';
 import framePlanMd from './frame-plan.md?raw';
+import subtitlePunctuateMd from './subtitle-punctuate.md?raw';
 
 export interface PromptHeader {
   promptVersion: string;
@@ -48,6 +49,7 @@ const SEGMENT_QA_HEADER = parsePromptHeader(segmentQaMd);
 const KNOWLEDGE_CAPTURE_HEADER = parsePromptHeader(knowledgeCaptureMd);
 const PERSONA_HEADER = parsePromptHeader(personaMd);
 const FRAME_PLAN_HEADER = parsePromptHeader(framePlanMd);
+const SUBTITLE_PUNCTUATE_HEADER = parsePromptHeader(subtitlePunctuateMd);
 
 /** 各 prompt 当前版本（来自文件头注释，单一事实源） */
 export const PROMPT_VERSIONS = {
@@ -59,6 +61,7 @@ export const PROMPT_VERSIONS = {
   knowledgeCapture: KNOWLEDGE_CAPTURE_HEADER.promptVersion,
   persona: PERSONA_HEADER.promptVersion,
   framePlan: FRAME_PLAN_HEADER.promptVersion,
+  subtitlePunctuate: SUBTITLE_PUNCTUATE_HEADER.promptVersion,
 } as const;
 
 /** 大纲生成 system prompt 正文（单一事实源：src/prompts/outline.md） */
@@ -108,4 +111,9 @@ export function getPersonaSystemPrompt(): string {
  */
 export function getFramePlanSystemPrompt(): string {
   return stripPromptHeaderComments(framePlanMd);
+}
+
+/** AI 字幕顺句 system prompt 正文（单一事实源：src/prompts/subtitle-punctuate.md，SPEC-08 8.5） */
+export function getSubtitlePunctuateSystemPrompt(): string {
+  return stripPromptHeaderComments(subtitlePunctuateMd);
 }
