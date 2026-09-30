@@ -60,6 +60,15 @@
 4. **Prompt 粒度优化**：prompt v0.2.0（章节粒度约束：全片章节数 ≤ max(3, ceil(分钟数/4))、单章 3-8 分钟、片头寒暄并入首章）+ 代码强制最短章节 90 秒（不足自动合并，finalize 后处理）
 
 连带变更：SectionCandidateSchema bullets → `{text, startSec}` 对象数组（吸附到 Cue 边界）、新增 `importance` 字段、Section 类型新增 importance/score、promptVersion 0.1.0 → 0.2.0（**旧缓存按红线 7 自动失效**，用户需重新生成）、新增 src/prompts/outline-regenerate.md。
+
+### 范围变更五次迭代（2026-09-30 中午，用户对 Qwen 生成质量的反馈）
+
+事实：切到 Qwen 视觉模型后 P12（20:53）只出 3 章（每章 7~11 分钟，过粗）。根因两个叠加：① prompt v0.2.0 的章节数约束是**上限**表述（"不超过 ceil(分钟/4)"），模型往少做；② 分块按 1800 字符（≈7 分钟/块），模型倾向一块一章。用户两次反馈正好框定合理区间：1.2 分钟/章太碎、7 分钟/章太粗 → **每章 2.5~5 分钟**。
+
+施工项：
+1. prompt v0.2.1：章节数约束从上限改为目标区间——「每章时长目标 2.5~5 分钟；章节数 ≈ 视频时长 ÷ 3.5 分钟（上下浮动 1 章）；单个分块通常包含 1~3 个自然章节，按内容边界划分」
+2. 设置页新增「当前策略」摘要（describeModelStrategy 纯函数 + UI）：当前文本模型 / 视觉模型 / 抽帧状态 / 路由规则说明（带画面的请求 → 视觉模型；术语解释、自由提问、未开抽帧 → 文本模型）
+
 ## 4. 验收标准
 | 2026-09-30 | 子 agent UI | 范围变更 UI 层：OutlineTab 挂载自动读缓存（修复切 Tab 状态丢失）、章节时间范围显示、bullets 带时间戳可点跳播（approximate 标 ~）、分数徽标（0-100 + 分档配色）、每章独立重生成（内联反馈输入 + 生成中骨架 + 失败重试）；loader 增 loadOutlineCached/generateOutline/regenerateOne（applyRegenerated 替换 + rescoreOutline 重算 + 缓存更新）+ 15 例 | tsc 零错误；342 例全绿 | 77f5246（已验收） |
 | 2026-09-30 | 父 agent | SKILL.md schema 段同步 bullets 对象格式与 importance/score；prompts 检查 PASS | ✅ | 77f5246 |
