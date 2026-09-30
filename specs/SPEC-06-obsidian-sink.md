@@ -84,3 +84,4 @@ v0.2 计划：视频播放结束自动提示沉淀、批量沉淀（本期不做
 
 |---|---|---|---|---|
 | — | — | — | — | — |
+| 10-01 | 父 agent 补课 | **SPEC-08 8.7 验收核对（[自动] 项）**：A1 capture.test（frontmatter 字段齐、YAML 回读）/ A2 capture.test（p 与 t 参数；**空 url 兜底本轮 8.2 已修**）/ A3 sanitizeFileName（中文/空格/特殊字符）/ A4 obsidian.test（连接拒绝 / 401 / 404 分类提示）/ A5 prompts PASS。A6~A9 [人工] 待用户冒烟（回链可点是冒烟第 6 条）。**tag 待人工项通过后打** | verify 57 文件 / 992 例全绿 | — |
