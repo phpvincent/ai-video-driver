@@ -21,6 +21,13 @@ import { nearestCueStartMs } from '../core/pipeline/snap';
 import type { Cue, KnowledgeHit, Persona, QaRecord, Section } from '../types';
 import { ModelPicker } from './ModelPicker';
 import { GenerationBanner } from './GenerationBanner';
+import {
+  UPLOAD_ACCEPT,
+  attachmentLabel,
+  compressImageFile,
+  validateUploadFile,
+  type UploadedImage,
+} from './uploadImage';
 import './chat.css';
 
 /** 划词/提问请求（父 agent 接线 loader 时组装 compiler + pipeline） */
@@ -30,6 +37,8 @@ export interface ExplainRequest {
   /** null = 自由提问（播放位置 ±30s，由 compiler 默认） */
   rangeMs: [number, number] | null;
   positionMs: number;
+  /** 学生上传的图片（题目 / 截图）；仅当模型支持多模态时由 ChatTab 附带 */
+  uploads?: UploadedImage[];
 }
 
 export interface ExplainResponse {
@@ -51,6 +60,8 @@ export interface ChatTabProps {
   /** 提问自动暂停 */
   onPause?: () => void;
   modelReady?: boolean;
+  /** 当前模型是否支持图像输入（决定上传按钮是否可用） */
+  visionReady?: boolean;
   onOpenSettings?: () => void;
   /** 注入（父 agent 接线）：loader 函数 */
   explain?: (args: ExplainRequest) => Promise<ExplainResponse>;
@@ -216,6 +227,8 @@ interface ChatMessage {
   sources?: WebSnippet[];
   /** 提问区间（历史恢复时来自 QaRecord.rangeMs） */
   rangeMs?: [number, number] | null;
+  /** 用户消息附带的上传图（只存缩略用的 data URI，不进历史库） */
+  attachments?: string[];
   /** 存库（存入 Obsidian）状态与行内结果（红线 8：失败不打断面板） */
   saving?: boolean;
   savedText?: string;
@@ -295,6 +308,11 @@ export function ChatTab(props: ChatTabProps) {
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
+  /** 待发送的上传图 */
+  const [uploads, setUploads] = useState<UploadedImage[]>([]);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const visionReady = props.visionReady ?? false;
   const [busy, setBusy] = useState(false);
   const [rangeMode, setRangeMode] = useState<RangeMode>('around');
   const [customStartText, setCustomStartText] = useState('00:00');
@@ -340,7 +358,12 @@ export function ChatTab(props: ChatTabProps) {
     busyRef.current = true;
     setBusy(true);
     props.onPause?.();
-    pushMessage({ id: nextId(), role: 'user', text: req.term ? `解释「${req.term}」` : req.question });
+    pushMessage({
+      id: nextId(),
+      role: 'user',
+      text: req.term ? `解释「${req.term}」` : req.question,
+      attachments: (req.uploads ?? []).map((u) => `data:${u.mime};base64,${u.dataBase64}`),
+    });
     try {
       const res = await props.explain(req);
       if (res.term) {
@@ -531,10 +554,52 @@ export function ChatTab(props: ChatTabProps) {
   const personaLine = formatPersonaLine(props.persona);
 
   const handleSend = (): void => {
-    const q = input.trim();
+    const hasUploads = uploads.length > 0;
+    // 只上传图片、不打字也能发：默认问题是"请讲解这道题"
+    const q = input.trim() || (hasUploads ? '请讲解图片中的这道题' : '');
     if (!q || busy || !props.explain) return;
     setInput('');
-    void ask({ question: q, rangeMs: requestRange(), positionMs });
+    const sending = visionReady ? uploads : [];
+    setUploads([]);
+    setUploadError(null);
+    void ask({ question: q, rangeMs: requestRange(), positionMs, uploads: sending });
+  };
+
+  /** 添加图片（文件选择 / 粘贴 / 拖拽共用）：逐张校验 + 压缩，失败给行内提示 */
+  const addFiles = async (files: File[]): Promise<void> => {
+    if (!visionReady) {
+      setUploadError('当前模型不支持图片，请在设置中切换到多模态模型（如 Qwen-VL）');
+      return;
+    }
+    setUploadError(null);
+    let count = uploads.length;
+    const added: UploadedImage[] = [];
+    for (const file of files) {
+      const err = validateUploadFile(file, count);
+      if (err) {
+        setUploadError(err);
+        continue;
+      }
+      try {
+        added.push(await compressImageFile(file, `up-${Date.now()}-${count}`));
+        count += 1;
+      } catch {
+        setUploadError(`图片读取失败：${file.name}`);
+      }
+    }
+    if (added.length > 0) setUploads((prev) => [...prev, ...added]);
+  };
+
+  /** 粘贴截图（Cmd/Ctrl+V）：学生最常见的用法是截图后直接粘贴 */
+  const handlePaste = (e: { clipboardData: DataTransfer | null; preventDefault: () => void }): void => {
+    const items = Array.from(e.clipboardData?.items ?? []);
+    const files = items
+      .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+      .map((it) => it.getAsFile())
+      .filter((f): f is File => f !== null);
+    if (files.length === 0) return;
+    e.preventDefault();
+    void addFiles(files);
   };
 
   /** 重判角色：失败不弹错（角色条保持原状，红线 8） */
@@ -564,7 +629,16 @@ export function ChatTab(props: ChatTabProps) {
           return (
           <div key={m.id} className={`chat-msg ${m.role}`}>
             {m.role === 'user' ? (
-              <div className="chat-bubble user">{m.text}</div>
+              <div className="chat-bubble user">
+                {m.text}
+                {m.attachments && m.attachments.length > 0 && (
+                  <div className="chat-attachments">
+                    {m.attachments.map((src, i) => (
+                      <img key={i} className="chat-attachment" src={src} alt={`上传图片 ${i + 1}`} />
+                    ))}
+                  </div>
+                )}
+              </div>
             ) : m.kind === 'error' ? (
               <div className="chat-error">{m.text}</div>
             ) : (
@@ -745,18 +819,81 @@ export function ChatTab(props: ChatTabProps) {
       <ModelPicker onOpenSettings={props.onOpenSettings} />
       <GenerationBanner module="qa" />
 
-      <div className="chat-input-bar">
+      {(uploads.length > 0 || uploadError) && (
+        <div className="chat-upload-strip">
+          {uploads.map((u) => (
+            <div key={u.id} className="chat-upload-item" title={u.name}>
+              <img src={`data:${u.mime};base64,${u.dataBase64}`} alt={u.name} />
+              <button
+                type="button"
+                className="chat-upload-remove"
+                aria-label={`移除 ${u.name}`}
+                onClick={() => setUploads((prev) => prev.filter((x) => x.id !== u.id))}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          {uploads.length > 0 && <span className="chat-upload-count">{attachmentLabel(uploads.length)}</span>}
+          {uploadError && <span className="chat-upload-error">{uploadError}</span>}
+        </div>
+      )}
+
+      <div
+        className="chat-input-bar"
+        onDragOver={(e) => {
+          if (visionReady) e.preventDefault();
+        }}
+        onDrop={(e) => {
+          const files = Array.from(e.dataTransfer?.files ?? []).filter((f) => f.type.startsWith('image/'));
+          if (files.length === 0) return;
+          e.preventDefault();
+          void addFiles(files);
+        }}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={UPLOAD_ACCEPT}
+          multiple
+          hidden
+          onChange={(e) => {
+            const files = Array.from(e.target.files ?? []);
+            e.target.value = '';
+            void addFiles(files);
+          }}
+        />
+        <button
+          type="button"
+          className="btn chat-upload-btn"
+          disabled={busy || !props.explain}
+          title={
+            visionReady
+              ? '上传题目或截图（也可直接粘贴 / 拖入）'
+              : '当前模型不支持图片：请在设置中切换到多模态模型'
+          }
+          onClick={() => {
+            if (!visionReady) {
+              setUploadError('当前模型不支持图片，请在设置中切换到多模态模型（如 Qwen-VL）');
+              return;
+            }
+            fileInputRef.current?.click();
+          }}
+        >
+          图片
+        </button>
         <textarea
           className="chat-input"
           rows={2}
-          placeholder="输入问题…"
+          placeholder={visionReady ? '输入问题，或粘贴 / 拖入题目截图…' : '输入问题…'}
           value={input}
           onChange={(e) => setInput(e.target.value)}
+          onPaste={handlePaste}
         />
         <button
           type="button"
           className="btn btn-primary chat-send"
-          disabled={busy || !input.trim() || !props.explain}
+          disabled={busy || (!input.trim() && uploads.length === 0) || !props.explain}
           onClick={handleSend}
         >
           发送

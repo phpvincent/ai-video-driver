@@ -563,6 +563,7 @@ export function App() {
                 onRequestSeek={handleRequestSeek}
                 onPause={handlePause}
                 modelReady={!!modelConfig?.apiKey}
+                visionReady={!!modelConfig?.apiKey && modelConfig?.supportsVision === true}
                 onOpenSettings={() => setShowSettings(true)}
                 explain={explainFn}
                 loadHistory={loadChatHistory}

@@ -4,7 +4,7 @@
  * ChatTab 的 explain props 由本模块实现。
  */
 import { findSectionAt } from '../core/context/compiler';
-import { resolveModel, visionActiveFor } from './settings/modelForm';
+import { modelSupportsVisionOf, resolveModel, visionActiveFor } from './settings/modelForm';
 import { setGenerationSource } from './generationTrace';
 import { VISION } from '../config';
 import { planFrames } from './framesClient';
@@ -37,6 +37,7 @@ import { buildWebContext, searchWeb, trimSnippets } from '../core/knowledge/webS
 import { CONTEXT } from '../config';
 import { frameBudgetFor } from '../core/vision/framePlanner';
 import { captionFrame } from '../core/vision/structuralCandidates';
+import { uploadCaption, uploadQuestionNote } from './uploadImage';
 import type { WebSnippet } from '../core/knowledge/webSearch';
 import type { CapturedFrame } from '../messages';
 
@@ -193,6 +194,13 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
 
   // 公开资料检索（内置 DuckDuckGo，免配置；与字幕/知识库共享预算）
   const web = await loadWeb(args.term ?? args.question);
+  // 学生上传的图：只要模型支持图像就发（与抽帧开关无关——用户显式上传，意图明确）
+  const uploads = modelSupportsVisionOf(model, settings) ? (args.uploads ?? []) : [];
+  if ((args.uploads?.length ?? 0) > 0 && uploads.length === 0) {
+    throw new Error('当前模型不支持图片输入：请在设置中切换到多模态模型（如 Qwen-VL）后重试');
+  }
+  const question = args.question + uploadQuestionNote(uploads.length);
+
   // 关键帧（可选：需多模态模型，deepseek-chat 不支持视觉）
   const frames = await loadFrames({
     enabled: visionActiveFor({ settings, module: 'qa' }),
@@ -215,13 +223,21 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
     videoMeta: currentVideoMetaRef.value ?? undefined,
     // 知识库与公开资料各自带独立分隔标记，合并进同一素材分区
     knowledgeContext: [knowledge.context, web.context].filter(Boolean).join('\n\n'),
-    images: frames.map((f, i) => ({
-      dataBase64: f.dataBase64,
-      mime: 'image/jpeg',
-      timeMs: f.actualMs,
-      caption: captionFrame(f.actualMs, i, frames.length, sections, cues),
-      ...(f.thumbBase64 ? { thumbBase64: f.thumbBase64 } : {}),
-    })),
+    images: [
+      // 学生上传的题目排在最前：它是本轮提问的主体，课程画面只是参考
+      ...uploads.map((u, i) => ({
+        dataBase64: u.dataBase64,
+        mime: u.mime,
+        caption: uploadCaption(i, uploads.length, u.name),
+      })),
+      ...frames.map((f, i) => ({
+        dataBase64: f.dataBase64,
+        mime: 'image/jpeg',
+        timeMs: f.actualMs,
+        caption: captionFrame(f.actualMs, i, frames.length, sections, cues),
+        ...(f.thumbBase64 ? { thumbBase64: f.thumbBase64 } : {}),
+      })),
+    ],
   };
 
   // 单模型口径：图片与文本一起发给同一个模型
@@ -268,7 +284,7 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
   }
 
   const answer = await answerSegment({
-    question: args.question,
+    question,
     input,
     modelFn,
     getSystemPrompt: getSegmentQaSystemPrompt,
@@ -278,7 +294,8 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
     videoId,
     interactionType: args.rangeMs ? 'segment' : 'free',
     input,
-    question: args.question,
+    // 历史只记原问题 + 附图张数（图像本身不落库，避免 IndexedDB 膨胀）
+    question: uploads.length > 0 ? `${args.question}（附 ${uploads.length} 张图片）` : args.question,
     answer: answer.answer,
     payload: answer,
   });
