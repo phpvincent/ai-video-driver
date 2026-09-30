@@ -337,8 +337,8 @@ export function resolveFlows(
   const out: ConceptFlow[] = [];
   const seen = new Set<string>();
   for (const f of raw) {
-    const fromId = idByLabel.get(f.from.trim().toLowerCase());
-    const toId = idByLabel.get(f.to.trim().toLowerCase());
+    const fromId = idByLabel.get(normalizeFlowLabel(f.from));
+    const toId = idByLabel.get(normalizeFlowLabel(f.to));
     if (!fromId || !toId || fromId === toId) continue;
     const key = `${fromId}->${toId}:${f.label ?? ''}`;
     if (seen.has(key)) continue;
@@ -346,6 +346,20 @@ export function resolveFlows(
     out.push({ fromId, toId, ...(f.label ? { label: f.label } : {}) });
   }
   return out.length > 0 ? out : undefined;
+}
+
+/**
+ * 关系边端点归一化（冒烟 3b 三轮）：模型常把清单编号前缀一并抄进 from/to
+ * （实测 qwen3.5-flash 返回 "S1-2 实线含义"），剥掉常见前缀再做精确匹配。
+ * 前缀形态：S1-2 / 1-2 / 1. / 1、 / 1) / - / • 等。
+ */
+function normalizeFlowLabel(s: string): string {
+  return s
+    .trim()
+    .toLowerCase()
+    .replace(/^s?\d+(?:-\d+)?(?:\s*[.、)）]\s*|\s+)/, '')
+    .replace(/^[\-•·]\s+/, '')
+    .trim();
 }
 
 // ---------------------------------------------------------------------------

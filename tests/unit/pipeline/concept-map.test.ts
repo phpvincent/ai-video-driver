@@ -16,9 +16,10 @@ import {
   findOverviewSectionIndices,
   parseConceptStages,
   shortenLabel,
+  resolveFlows,
 } from '../../../src/core/pipeline/conceptMap';
 import type { ConceptModelFn, PipelineImage } from '../../../src/core/pipeline/types';
-import type { Section } from '../../../src/types';
+import type { ConceptStage, Section } from '../../../src/types';
 
 const section = (
   id: string,
@@ -594,5 +595,59 @@ describe('shortenLabel', () => {
     expect(shortenLabel(cjk12)).toBe(cjk12);
     // 13 个汉字截为 11 字 + 省略号
     expect(shortenLabel('一二三四五六七八九十一二三')).toBe('一二三四五六七八九十一…');
+  });
+});
+
+
+describe('resolveFlows 端点归一化（冒烟 3b 三轮：模型抄了清单编号前缀）', () => {
+  const stages: ConceptStage[] = [
+    {
+      id: 'st_01',
+      label: '题型识别与基础理论',
+      concepts: [
+        { id: 'cm_0001', label: '立体视图判定', importance: 5, anchors: [], primaryAnchorTMs: -1, details: [] },
+        { id: 'cm_0002', label: '实线含义', importance: 4, anchors: [], primaryAnchorTMs: -1, details: [] },
+        { id: 'cm_0003', label: '虚线含义', importance: 4, anchors: [], primaryAnchorTMs: -1, details: [] },
+      ],
+    },
+    {
+      id: 'st_02',
+      label: '真题实战演练',
+      concepts: [
+        { id: 'cm_0004', label: '正面平视图判断', importance: 4, anchors: [], primaryAnchorTMs: -1, details: [] },
+      ],
+    },
+  ];
+
+  it('回归：qwen3.5-flash 实际输出——from/to 带 "S1-2 " 编号前缀也能解析', () => {
+    const raw = {
+      flows: [
+        { from: 'S1-2 实线含义', to: 'S3-1 正面平视图判断', label: '应用' },
+        { from: 'S1-3 虚线含义', to: 'S3-1 正面平视图判断', label: '应用' },
+      ],
+    };
+    const out = resolveFlows(raw.flows, stages);
+    expect(out).toBeDefined();
+    expect(out).toHaveLength(2);
+    expect(out![0]).toMatchObject({ fromId: 'cm_0002', toId: 'cm_0004', label: '应用' });
+    expect(out![1]).toMatchObject({ fromId: 'cm_0003', toId: 'cm_0004' });
+  });
+
+  it('常见编号/项目符号前缀都被剥掉；裸 label 不受影响', () => {
+    const cases = [
+      ['1. 实线含义', 'cm_0002'],
+      ['1、实线含义', 'cm_0002'],
+      ['1) 实线含义', 'cm_0002'],
+      ['- 实线含义', 'cm_0002'],
+      ['实线含义', 'cm_0002'],
+    ] as const;
+    for (const [from, id] of cases) {
+      const out = resolveFlows([{ from, to: '虚线含义' }], stages);
+      expect(out?.[0]?.fromId).toBe(id);
+    }
+  });
+
+  it('剥前缀后仍不匹配（编造概念）→ 照旧丢弃', () => {
+    expect(resolveFlows([{ from: 'S9-9 不存在的概念', to: '实线含义' }], stages)).toBeUndefined();
   });
 });
