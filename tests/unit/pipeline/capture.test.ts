@@ -18,6 +18,7 @@ import {
   INDEX_MD_NAME,
   joinVaultPath,
   playbackUrl,
+  timestampLink,
   sanitizeFileName,
   SUMMARY_PREVIEW_MAX,
   termSimilarity,
@@ -164,6 +165,26 @@ describe('playbackUrl / videoPageUrl（跳播链接）', () => {
     expect(videoPageUrl(meta({ url: 'https://www.bilibili.com/video/BV1/?x=1' }))).toBe(
       'https://www.bilibili.com/video/BV1/?x=1&p=2',
     );
+  });
+
+  it('SPEC-08 A2：url 为空时按 bvid + page 兜底（笔记回链不再产出空串）', () => {
+    const m = meta({ url: '' });
+    expect(videoPageUrl(m)).toBe('https://www.bilibili.com/video/BV1YG7G6eEPR?p=2');
+    expect(playbackUrl(m, 75_000)).toBe('https://www.bilibili.com/video/BV1YG7G6eEPR?p=2&t=75');
+  });
+
+  it('SPEC-08 A2：url 已带 p 参数时不重复追加；分 P 与秒数正确', () => {
+    const m = meta({ url: 'https://www.bilibili.com/video/BV1YG7G6eEPR/?p=2' });
+    expect(playbackUrl(m, 61_500)).toBe('https://www.bilibili.com/video/BV1YG7G6eEPR/?p=2&t=61');
+    // url 带的 p 与 meta.page 冲突时以 url 为准（用户实际所在页）
+    expect(videoPageUrl(meta({ url: 'https://www.bilibili.com/video/BV1/?p=5', page: 2 }))).toBe(
+      'https://www.bilibili.com/video/BV1/?p=5',
+    );
+  });
+
+  it('url 与 bvid 都缺失才返回空串（timestampLink 降级为纯文本）', () => {
+    expect(videoPageUrl(meta({ url: '', bvid: '' }))).toBe('');
+    expect(timestampLink(meta({ url: '', bvid: '' }), 5_000)).toBe('00:05');
   });
 });
 

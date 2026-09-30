@@ -53,6 +53,8 @@ interface BiliPageInfo {
   part: string;
   /** 秒 */
   duration: number;
+  /** 分 P 的 cid（页面初态里有；拿不到由调用方兜底 0） */
+  cid?: number;
 }
 
 interface BiliInitialState {
@@ -60,6 +62,8 @@ interface BiliInitialState {
     title?: string;
     /** 秒 */
     duration?: number;
+    /** 单 P 视频时 cid 在 videoData 顶层 */
+    cid?: number;
     pages?: BiliPageInfo[];
   };
 }
@@ -105,6 +109,10 @@ function collectVideoInfo({ bvid, page }: { bvid: string; page: number }): Video
     page,
     title,
     durationMs: Math.round(durationMs),
+    // SPEC-08 8.2：笔记回链的数据源。url 只保留 origin+path（+p 参数），
+    // 去掉分享追踪参数；cid 供后续弹幕/字幕直连接口用，链接生成不依赖它
+    url: `${location.origin}${location.pathname}${page > 1 ? `?p=${page}` : ''}`,
+    cid: pageEntry?.cid ?? videoData?.cid ?? 0,
   };
 }
 

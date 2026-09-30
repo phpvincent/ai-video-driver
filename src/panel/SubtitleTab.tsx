@@ -9,7 +9,7 @@ import { toPlainText, toSrt } from '../core/subtitle/serialize';
 
 export interface SubtitleTabProps {
   videoId: string | null;
-  /** 来自 App 现有 videoInfo（cid/url 为占位，待 background 补全） */
+  /** 来自 App 现有 videoInfo（url/cid 已由 content 上报，SPEC-08 8.2） */
   meta: VideoMeta | null;
   /** 来自 App 现有 playback 状态 */
   positionMs: number;

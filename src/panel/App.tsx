@@ -396,8 +396,10 @@ export function App() {
     setTab('chat');
   };
 
-  // TODO(接线)：cid/url 待 background 视频信息补全，字幕 Tab 当前仅消费 title/duration
-  const meta: VideoMeta | null = video ? { ...video, cid: 0, url: '' } : null;
+  // SPEC-08 8.2：url/cid 由 content 上报（VideoInfoPayload）；旧版本 payload 缺字段时兜底
+  const meta: VideoMeta | null = video
+    ? { ...video, url: video.url ?? '', cid: video.cid ?? 0 }
+    : null;
 
   /** 字幕加载：经瀑布（缓存 → B 站一级通道；红线 8 保证不抛） */
   const handleLoadSubtitles = async (videoId: string): Promise<FetchResult> => {

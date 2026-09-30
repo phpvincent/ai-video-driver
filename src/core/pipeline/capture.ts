@@ -96,12 +96,25 @@ export function formatDate(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-/** 视频页 URL 带分 P 参数（已有 `?` 时用 `&`） */
+/**
+ * 视频页 URL 带分 P 参数。
+ * - url 存在：解析后补齐缺失的 p 参数（已带则不重复追加）；
+ * - url 为空（旧 content / 数据缺失）：**按 bvid + page 兜底拼接**——
+ *   SPEC-08 8.2 之前这里直接返回空串，导致 Obsidian 里所有时间戳都只是纯文本。
+ */
 export function videoPageUrl(meta: VideoMeta): string {
-  const base = meta.url;
-  if (!base) return '';
-  const sep = base.includes('?') ? '&' : '?';
-  return `${base}${sep}p=${meta.page}`;
+  const base = (meta.url ?? '').trim();
+  if (base) {
+    try {
+      const u = new URL(base);
+      if (!u.searchParams.has('p')) u.searchParams.set('p', String(meta.page));
+      return u.toString();
+    } catch {
+      // 非法 URL 走兜底
+    }
+  }
+  if (!meta.bvid) return '';
+  return `https://www.bilibili.com/video/${meta.bvid}?p=${meta.page}`;
 }
 
 /**
@@ -112,7 +125,8 @@ export function playbackUrl(meta: VideoMeta, tMs: number): string {
   const sec = Number.isFinite(tMs) && tMs > 0 ? Math.floor(tMs / 1000) : 0;
   const base = videoPageUrl(meta);
   if (!base) return '';
-  return `${base}&t=${sec}`;
+  const sep = base.includes('?') ? '&' : '?';
+  return `${base}${sep}t=${sec}`;
 }
 
 /** markdown 链接：`[mm:ss](url)`；url 为空时只返回文本（无链接可跳时不造死链） */

@@ -40,6 +40,13 @@ export interface VideoInfoPayload {
   /** 分 P 标题 */
   title: string;
   durationMs: number;
+  /**
+   * 视频页 URL（content 上报，用于笔记回链；缺省时由 bvid+page 兜底拼接）。
+   * SPEC-08 8.2：此前恒为空串，Obsidian 时间戳链接全部不可点。
+   */
+  url?: string;
+  /** 分 P 的 cid（content 从页面初态读取；拿不到为 0，不参与链接生成） */
+  cid?: number;
 }
 
 export interface PlaybackPayload {
