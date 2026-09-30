@@ -4,6 +4,8 @@
  * ChatTab 的 explain props 由本模块实现。
  */
 import { findSectionAt } from '../core/context/compiler';
+import { visionActiveFor } from './settings/modelForm';
+import { VISION } from '../config';
 import { chatCompletion } from '../core/harness/modelClient';
 import {
   buildKnowledgeContext,
@@ -125,7 +127,7 @@ async function loadFrames(args: {
   const [start, end] = args.rangeMs ?? [args.positionMs - 30_000, args.positionMs + 30_000];
   const targets = [start, Math.round((start + end) / 2), args.positionMs]
     .filter((t) => Number.isFinite(t) && t >= 0)
-    .slice(0, 3);
+    .slice(0, VISION.qaFrames);
   if (targets.length === 0) return [];
   try {
     const response = (await sendRuntimeMessage({
@@ -170,7 +172,7 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
   });
   // 关键帧（可选：需多模态模型，deepseek-chat 不支持视觉）
   const frames = await loadFrames({
-    enabled: settings.visionEnabled === true,
+    enabled: visionActiveFor({ settings, module: 'qa' }),
     videoId,
     rangeMs: args.rangeMs,
     positionMs: args.positionMs,
@@ -194,13 +196,16 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
     })),
   };
 
-  const modelFn: ExplainModelFn = ({ systemPrompt, userPrompt, images }) =>
-    chatCompletion({
-      baseUrl: model.baseUrl,
-      apiKey: model.apiKey,
-      model: model.model,
-      temperature: model.temperature.qa,
-      maxTokens: model.maxTokens,
+  const visionModel = (settings.visionModel as ModelConfig | undefined) ?? null;
+  const modelFn: ExplainModelFn = ({ systemPrompt, userPrompt, images }) => {
+    // 带图的请求走视觉模型（用户可另配 Qwen 等），不带图仍走文本模型
+    const cfg = images && images.length > 0 && visionModel?.apiKey ? visionModel : model;
+    return chatCompletion({
+      baseUrl: cfg.baseUrl,
+      apiKey: cfg.apiKey,
+      model: cfg.model,
+      temperature: cfg.temperature.qa,
+      maxTokens: cfg.maxTokens,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
@@ -209,6 +214,7 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
       // 多模态：图像由 explain 层透传（需模型支持，如未支持会返回错误由重试逻辑处理）
       images: images?.map((i) => ({ dataBase64: i.dataBase64, mime: i.mime })),
     }).then((res) => ({ content: res.content }));
+  };
 
   if (args.term) {
     const term = await explainTerm({

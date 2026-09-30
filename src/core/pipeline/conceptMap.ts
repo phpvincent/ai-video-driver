@@ -15,10 +15,12 @@
  */
 import { CONCEPT_MAP } from '../../config';
 import type { ConceptAnchor, ConceptItem, ConceptStage, Section } from '../../types';
+import { formatTimecode } from './prompts';
 import type {
   ConceptModelFn,
   ConceptRaw,
   ConceptStagesRaw,
+  PipelineImage,
 } from './types';
 import { z } from 'zod';
 
@@ -119,6 +121,20 @@ export function buildConceptMapUserPrompt(sections: Section[], videoTitle: strin
 // ---------------------------------------------------------------------------
 // 预告章节识别与锚点构造（确定性，红线 1）
 // ---------------------------------------------------------------------------
+
+/**
+ * 全片关键帧的画面说明行（确定性拼接，红线 1；图像是独立模态，不占章节文本预算）。
+ * 时间点 = 帧的 timeMs（mm:ss）；无 timeMs 时按序号标注。无图 → ''（旧行为不变）。
+ */
+export function describeMapImages(images?: PipelineImage[] | null): string {
+  if (!images || images.length === 0) return '';
+  const times = images.map((image, i) =>
+    typeof image.timeMs === 'number' && Number.isFinite(image.timeMs)
+      ? formatTimecode(image.timeMs)
+      : `第 ${i + 1} 张`,
+  );
+  return `以下附带 ${images.length} 张课程画面（时间点：${times.join('、')}），请结合画面中的标题、代码、图示理解内容结构。`;
+}
 
 /**
  * 预告章节识别（确定性，导出供单测）：对每个章节（仅前
@@ -239,6 +255,8 @@ export interface BuildConceptMapArgs {
   getSystemPrompt: () => string;
   /** 解析失败附错误重试次数，默认 CONCEPT_MAP.maxRetries（1） */
   maxRetries?: number;
+  /** 全片抽样的教学画面关键帧（调用方注入；不传则 req.images 为 undefined） */
+  images?: PipelineImage[];
 }
 
 /** 生成成功结果（降级图用 degraded: true 区分，见 buildTermIndexMap） */
@@ -258,7 +276,9 @@ export async function buildConceptMap(
     throw new Error('无章节可用：请先生成大纲');
   }
   const maxRetries = args.maxRetries ?? CONCEPT_MAP.maxRetries;
-  const baseUserPrompt = buildConceptMapUserPrompt(args.sections, args.videoTitle);
+  const imageNote = describeMapImages(args.images);
+  const plainUserPrompt = buildConceptMapUserPrompt(args.sections, args.videoTitle);
+  const baseUserPrompt = imageNote ? `${plainUserPrompt}\n${imageNote}` : plainUserPrompt;
 
   let lastError = '';
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -270,6 +290,7 @@ export async function buildConceptMap(
       const res = await args.modelFn({
         systemPrompt: args.getSystemPrompt(),
         userPrompt,
+        images: args.images,
       });
       const raw = parseConceptStages(res.content);
       return {
@@ -350,4 +371,4 @@ export function buildTermIndexMap(sections: Section[]): TermIndexResult {
   return { stages, degraded: true };
 }
 
-export type { ConceptRaw, ConceptStagesRaw, ConceptStageRaw } from './types';
+export type { ConceptRaw, ConceptStagesRaw, ConceptStageRaw, PipelineImage } from './types';

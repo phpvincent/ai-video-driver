@@ -32,12 +32,27 @@ export const OutlineChunkSchema = z.object({
 });
 
 /**
+ * 传给模型客户端的教学画面（抽帧产物，pipeline 侧统一形状）。
+ * 与 explain 层的 ExplainImage 结构等价（dataBase64/mime/timeMs/caption），
+ * 两处可互相赋值；pipeline 只做透传与提示词说明，不自行抓帧。
+ */
+export interface PipelineImage {
+  dataBase64: string;
+  mime?: string;
+  /** 该帧对应的时间点（毫秒），用于提示词里生成 mm:ss 标注 */
+  timeMs?: number;
+  caption?: string;
+}
+
+/**
  * 模型调用注入接口：content 应为 JSON 字符串 {sections: [...]}。
  * 后续接线时由调用方适配到 core/harness/modelClient，本模块不直接依赖 harness。
+ * images 为可选增量（与 ExplainModelFn 同形），旧 stub 不传也能工作。
  */
 export type OutlineModelFn = (req: {
   systemPrompt: string;
   userPrompt: string;
+  images?: PipelineImage[];
 }) => Promise<{ content: string }>;
 
 /** finalize 后的章节：density/score 由 density.ts 填充（importance 来自模型） */
@@ -78,6 +93,11 @@ export interface RunOutlineOptions {
   targetChars?: number;
   overlapChars?: number;
   /**
+   * 每个分块的教学画面（抽帧产物，由调用方注入；pipeline 不自行抓帧）。
+   * 返回空数组视为无图；不传则该块的 req.images 为 undefined（旧行为）。
+   */
+  imagesForChunk?: (chunk: Cue[], chunkIndex: number) => PipelineImage[];
+  /**
    * 进度钩子：每确认完一个块的章节后回调（增量合并阶段，按块下标顺序）。
    * confirmed 为当前已合并章节快照（已吸附到真实 Cue 边界，但未 finalize，
    * 无 density/endMs 终值与 id）；回调异常被吞掉（进度提示非关键路径）。
@@ -101,6 +121,8 @@ export interface RunOutlineOptions {
 export type ConceptModelFn = (req: {
   systemPrompt: string;
   userPrompt: string;
+  /** 全片抽样的关键帧（可选增量，与 OutlineModelFn 同形） */
+  images?: PipelineImage[];
 }) => Promise<{ content: string }>;
 
 /** 模型输出的单个概念（原始形状，Schema 校验后） */

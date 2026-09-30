@@ -15,6 +15,10 @@ import type { ConceptModelFn } from '../core/pipeline/types';
 import { DB } from '../config';
 import { MSG } from '../messages';
 import { getConceptMapSystemPrompt, PROMPT_VERSIONS } from '../prompts';
+import { VISION } from '../config';
+import { requestFrames, toPipelineImage } from './framesClient';
+import { visionActiveFor } from './settings/modelForm';
+import type { Settings } from '../types';
 import { createSubtitleDb } from '../storage/db';
 import type { ConceptMapData, ModelConfig, Section } from '../types';
 
@@ -56,6 +60,12 @@ function sendRuntimeMessage(message: unknown): Promise<unknown> {
 }
 
 /** 读设置中的 ModelConfig；未配置返回 null */
+async function fetchSettings(): Promise<Settings> {
+  const response = await sendRuntimeMessage({ type: MSG.GET_SETTINGS });
+  const stored = (response ?? {}) as Settings;
+  return stored && typeof stored === 'object' ? stored : {};
+}
+
 async function fetchModelConfig(): Promise<ModelConfig | null> {
   const response = await sendRuntimeMessage({ type: MSG.GET_SETTINGS });
   const stored = (response ?? {}) as { model?: ModelConfig };
@@ -79,19 +89,35 @@ export async function generateConceptMap(
     throw new Error('无章节可用：请先生成大纲');
   }
 
-  const modelFn: ConceptModelFn = ({ systemPrompt, userPrompt }) =>
-    chatCompletion({
-      baseUrl: model.baseUrl,
-      apiKey: model.apiKey,
-      model: model.model,
-      temperature: model.temperature.qa,
-      maxTokens: model.maxTokens,
+  // 抽帧（可选）：按章节锚点均匀取 VISION.mindmapFrames 帧
+  const settings = (await fetchSettings()) as Settings;
+  const useVision = visionActiveFor({ settings, module: 'mindmap' });
+  const visionModel = settings.visionModel ?? null;
+  let images: ReturnType<typeof toPipelineImage>[] = [];
+  if (useVision) {
+    const anchors = sections.map((s) => s.startMs);
+    const step = Math.max(1, Math.ceil(anchors.length / VISION.mindmapFrames));
+    const targets = anchors.filter((_, i) => i % step === 0).slice(0, VISION.mindmapFrames);
+    images = (await requestFrames({ videoId, targetsMs: targets })).map(toPipelineImage);
+  }
+
+  const modelFn: ConceptModelFn = ({ systemPrompt, userPrompt, images: imgs }) => {
+    const withImages = imgs && imgs.length > 0;
+    const cfg = withImages && visionModel?.apiKey ? visionModel : model;
+    return chatCompletion({
+      baseUrl: cfg.baseUrl,
+      apiKey: cfg.apiKey,
+      model: cfg.model,
+      temperature: cfg.temperature.qa,
+      maxTokens: cfg.maxTokens,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
       responseFormatJson: true,
+      images: imgs?.map((i) => ({ dataBase64: i.dataBase64, mime: i.mime ?? 'image/jpeg' })),
     }).then((res) => ({ content: res.content }));
+  };
 
   const { stages } = await buildConceptMap({
     sections,
@@ -99,6 +125,7 @@ export async function generateConceptMap(
     modelFn,
     // 红线 6：system prompt 单一事实源
     getSystemPrompt: getConceptMapSystemPrompt,
+    images,
   });
 
   const data: ConceptMapData = {

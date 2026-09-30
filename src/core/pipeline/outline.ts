@@ -9,7 +9,7 @@ import { OUTLINE } from '../../config';
 import type { Cue, Section } from '../../types';
 import { chunkCues } from './chunk';
 import { finalizeOutline, IncrementalMerger } from './merge';
-import { buildOutlinePrompts } from './prompts';
+import { buildOutlinePrompts, formatTimecode } from './prompts';
 import { snapCandidates } from './snap';
 import {
   OutlineChunkSchema,
@@ -17,6 +17,7 @@ import {
   type OutlineModelFn,
   type OutlineResult,
   type OutlineSection,
+  type PipelineImage,
   type RunOutlineOptions,
   type SectionCandidate,
 } from './types';
@@ -40,9 +41,39 @@ export {
   type OutlineModelFn,
   type OutlineResult,
   type OutlineSection,
+  type PipelineImage,
   type RunOutlineOptions,
   type SectionCandidate,
 } from './types';
+
+/** 帧时间点落在分块内哪条字幕上（吸附到字幕起点，与 explain 层同语义） */
+function snapToCueStart(ms: number, cues: Cue[]): number {
+  for (const cue of cues) {
+    if (cue.startMs <= ms && ms < cue.endMs) return cue.startMs;
+  }
+  return ms;
+}
+
+/** 单帧的时间标注：timeMs → mm:ss（吸附分块内字幕起点）；无 timeMs → 按序号 */
+function imageTimeLabel(image: PipelineImage, index: number, chunk: Cue[]): string {
+  if (typeof image.timeMs === 'number' && Number.isFinite(image.timeMs)) {
+    return formatTimecode(snapToCueStart(image.timeMs, chunk));
+  }
+  return `第 ${index + 1} 张`;
+}
+
+/**
+ * 分块 prompt 的画面说明行（红线 1：纯确定性拼接，无随机；红线 3：图像是独立
+ * 模态不占字幕文本预算，提示词侧只追加一行）。无图 → ''（旧行为不变）。
+ */
+export function describeChunkImages(
+  images?: PipelineImage[] | null,
+  chunk: Cue[] = [],
+): string {
+  if (!images || images.length === 0) return '';
+  const times = images.map((image, i) => imageTimeLabel(image, i, chunk));
+  return `以下附带 ${images.length} 张教学画面（对应本段内容的时间点：${times.join('、')}）；画面中的文字、代码、界面也是讲解内容的一部分，可与字幕互相印证。`;
+}
 
 /**
  * 解析并校验单块模型输出（红线 4）：JSON.parse + OutlineChunkSchema（Zod）。
@@ -120,9 +151,13 @@ export async function runOutline(
     const chunk = chunks[i];
     const st = chunkState[i];
     const prompts = buildPrompts(chunk);
+    // 本块的教学画面（调用方注入；未提供时为 undefined，旧行为不变）
+    const images = opts.imagesForChunk?.(chunk, i);
+    const imageNote = describeChunkImages(images, chunk);
+    const baseUserPrompt = imageNote ? `${prompts.userPrompt}\n${imageNote}` : prompts.userPrompt;
 
     // 预算熔断：块启动前检查，超预算则不启动，标记 skipped（已完成块不受影响）
-    const firstEst = estTokens(prompts.systemPrompt + prompts.userPrompt);
+    const firstEst = estTokens(prompts.systemPrompt + baseUserPrompt);
     if (usedTokens + firstEst > budget) {
       budgetHit = true;
       st.skipped = true;
@@ -137,8 +172,8 @@ export async function runOutline(
       // 失败附错误信息重试（红线 4 的"重试"落在本层）
       const userPrompt =
         attempt === 0
-          ? prompts.userPrompt
-          : `${prompts.userPrompt}\n\n[重试] 上一次输出未通过校验：${lastError}\n请重新输出严格符合要求的 JSON，不要包含任何其他文字。`;
+          ? baseUserPrompt
+          : `${baseUserPrompt}\n\n[重试] 上一次输出未通过校验：${lastError}\n请重新输出严格符合要求的 JSON，不要包含任何其他文字。`;
       if (attempt > 0) {
         const est = estTokens(prompts.systemPrompt + userPrompt);
         usedTokens += est;
@@ -147,7 +182,7 @@ export async function runOutline(
       }
       try {
         const res = await withTimeout(
-          modelFn({ systemPrompt: prompts.systemPrompt, userPrompt }),
+          modelFn({ systemPrompt: prompts.systemPrompt, userPrompt, images }),
           chunkTimeoutMs,
           `分块 ${i}`,
         );

@@ -1,22 +1,34 @@
 /**
  * 设置页（SPEC-03 3.1 激活）：
  * - 挂载读 GET_SETTINGS，无值用 src/config DEFAULT_MODEL 填默认
- * - 保存：校验后经 SET_SETTINGS 持久化 ModelConfig
+ * - 保存：校验后经 SET_SETTINGS 持久化（各分区共用 mergeSettings 合并写，互不覆盖）
  * - 测试连接：用当前表单值直接调 chatCompletion（ping, maxTokens 1），期间按钮禁用
  * - apiKey 仅存于表单状态与 storage，任何提示/日志不输出其值
+ * 分区顺序：文本模型 → 视觉模型（多模态）→ 抽帧开关 → Obsidian → 公开资料检索 → 验证期报告。
+ * 文本/视觉模型区均提供 DeepSeek / Qwen 预设一键填入（只覆盖 baseUrl 与 model，不清空已填 Key；
+ * 端点与模型标识的唯一来源是 src/config 的 MODEL_PRESETS，红线 9）。
  * Obsidian 区（SPEC-06）：接口地址 / API Key / 笔记根目录三字段，保存经
  * SET_SETTINGS 只合并 obsidian 段（不动 model），测试连接显示根目录条目数；
  * apiKey 用 password 输入，任何提示不输出明文。
  * 公开资料检索区（问答增强，仅追加）：endpoint / API Key / 开关；未配置时明确提示
  * 模型将依赖自身知识并标注未核实（检索执行在 src/core/knowledge/webSearch.ts）。
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { chatCompletion } from '../../core/harness/modelClient';
-import { DEFAULT_MODEL, OBSIDIAN } from '../../config';
+import { DEFAULT_MODEL, MODEL_PRESETS, OBSIDIAN, VISION } from '../../config';
 import { MSG } from '../../messages';
 import { testObsidianConnection } from '../obsidianLoader';
+import {
+  applyPreset,
+  isModelConfigured,
+  mergeSettings,
+  validateModelForm,
+  type ModelFormErrors,
+  type PresetKey,
+  type VisionModule,
+} from './modelForm';
 import type { WebSearchConfig } from '../../core/knowledge/webSearch';
-import type { ModelConfig, ObsidianConfig } from '../../types';
+import type { ModelConfig, ObsidianConfig, Settings } from '../../types';
 
 /** 落盘的公开资料检索配置（开关与连接参数同段保存） */
 interface WebSearchSettings extends WebSearchConfig {
@@ -42,6 +54,19 @@ const INITIAL_MODEL_FORM: ModelFormState = {
   maxTokens: String(DEFAULT_MODEL.maxTokens),
 };
 
+/** 视觉模型表单：只暴露三要素，temperature / maxTokens 用 DEFAULT_MODEL 值补齐 */
+interface VisionFormState {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+const INITIAL_VISION_FORM: VisionFormState = {
+  baseUrl: '',
+  apiKey: '',
+  model: '',
+};
+
 interface ObsidianFormState {
   baseUrl: string;
   apiKey: string;
@@ -62,6 +87,19 @@ const INITIAL_WEB_SEARCH_FORM: WebSearchSettings = {
   enabled: false,
 };
 
+/** 抽帧模块开关（未配置视为开启） */
+const INITIAL_VISION_MODULES: Record<VisionModule, boolean> = {
+  outline: true,
+  mindmap: true,
+  qa: true,
+};
+
+const VISION_MODULE_LABELS: Record<VisionModule, string> = {
+  outline: '大纲',
+  mindmap: '导图',
+  qa: '问答',
+};
+
 type Feedback = { kind: 'ok' | 'error'; text: string } | null;
 
 /** chrome.runtime.sendMessage 的安全包装：上下文失效时静默返回 null */
@@ -73,24 +111,6 @@ function sendRuntimeMessage(message: unknown): Promise<unknown> {
   }
 }
 
-/** 表单校验：baseUrl / model / apiKey 非空，temperature 0-2，maxTokens ≥ 1 */
-function validateForm(form: ModelFormState): string | null {
-  if (!form.baseUrl.trim()) return '接口地址不能为空';
-  if (!form.model.trim()) return '模型不能为空';
-  if (!form.apiKey.trim()) return 'API Key 不能为空';
-  const tOutline = Number(form.temperatureOutline);
-  if (!Number.isFinite(tOutline) || tOutline < 0 || tOutline > 2) {
-    return 'temperature（大纲）需在 0-2 之间';
-  }
-  const tQa = Number(form.temperatureQa);
-  if (!Number.isFinite(tQa) || tQa < 0 || tQa > 2) {
-    return 'temperature（问答）需在 0-2 之间';
-  }
-  const maxTokens = Number(form.maxTokens);
-  if (!Number.isInteger(maxTokens) || maxTokens < 1) return 'maxTokens 需为 ≥ 1 的整数';
-  return null;
-}
-
 function formToModelConfig(form: ModelFormState, outlineTokenBudget: number): ModelConfig {
   return {
     baseUrl: form.baseUrl.trim(),
@@ -100,6 +120,29 @@ function formToModelConfig(form: ModelFormState, outlineTokenBudget: number): Mo
     maxTokens: Number(form.maxTokens),
     outlineTokenBudget,
   };
+}
+
+/** 视觉模型合成完整 ModelConfig（temperature / maxTokens / 预算沿用文本默认，不参与熔断） */
+function visionFormToModelConfig(form: VisionFormState): ModelConfig {
+  return {
+    baseUrl: form.baseUrl.trim(),
+    apiKey: form.apiKey.trim(),
+    model: form.model.trim(),
+    temperature: {
+      outline: DEFAULT_MODEL.temperature.outline,
+      qa: DEFAULT_MODEL.temperature.qa,
+    },
+    maxTokens: DEFAULT_MODEL.maxTokens,
+    outlineTokenBudget: DEFAULT_MODEL.outlineTokenBudget,
+  };
+}
+
+/** 校验结果里取第一条错误文案（表单逐字段提示之外给一行总提示） */
+function firstError(errors: ModelFormErrors | Record<string, string | undefined>): string | null {
+  for (const value of Object.values(errors)) {
+    if (value) return value;
+  }
+  return null;
 }
 
 export function SettingsPage({
@@ -116,6 +159,15 @@ export function SettingsPage({
   const [saveFeedback, setSaveFeedback] = useState<Feedback>(null);
   const [testFeedback, setTestFeedback] = useState<Feedback>(null);
   const [testing, setTesting] = useState(false);
+  /** 视觉模型区（独立于文本模型，未配置则自动跳过抽帧） */
+  const [visionForm, setVisionForm] = useState<VisionFormState>(INITIAL_VISION_FORM);
+  const [visionFeedback, setVisionFeedback] = useState<Feedback>(null);
+  const [visionTesting, setVisionTesting] = useState(false);
+  /** 抽帧开关（默认关闭：额外延迟与 token 消耗，且需模型支持图像输入） */
+  const [visionEnabled, setVisionEnabled] = useState(false);
+  const [visionModules, setVisionModules] = useState<Record<VisionModule, boolean>>(INITIAL_VISION_MODULES);
+  const [visionSwitchFeedback, setVisionSwitchFeedback] = useState<Feedback>(null);
+  const [visionSwitchSaving, setVisionSwitchSaving] = useState(false);
   /** Obsidian 区表单与提示（与模型区状态独立） */
   const [obsidian, setObsidian] = useState<ObsidianFormState>(INITIAL_OBSIDIAN_FORM);
   /** 问答时检索个人知识库（默认开启，与 Obsidian 配置一起保存） */
@@ -127,18 +179,20 @@ export function SettingsPage({
   const [webSearch, setWebSearch] = useState<WebSearchSettings>(INITIAL_WEB_SEARCH_FORM);
   const [webSearchFeedback, setWebSearchFeedback] = useState<Feedback>(null);
   const [webSearchSaving, setWebSearchSaving] = useState(false);
+  /** 最近一次读到的整份 settings：所有分区的合并写基线（避免分区互相覆盖） */
+  const savedRef = useRef<Settings>({});
 
   useEffect(() => {
     let cancelled = false;
     sendRuntimeMessage({ type: MSG.GET_SETTINGS })
       .then((response: unknown) => {
         if (cancelled) return;
-        const stored = (response ?? {}) as {
+        const stored = (response ?? {}) as Settings & {
           model?: Partial<ModelConfig>;
           obsidian?: Partial<ObsidianConfig>;
-          knowledgeSearch?: boolean;
           webSearch?: Partial<WebSearchSettings>;
         };
+        savedRef.current = stored;
         const merged = { ...DEFAULT_MODEL, ...(stored.model ?? {}) } as Partial<ModelConfig>;
         const obs = (stored.obsidian ?? {}) as Partial<ObsidianConfig>;
         setObsidian({
@@ -163,6 +217,19 @@ export function SettingsPage({
           temperatureQa: String(merged.temperature?.qa ?? DEFAULT_MODEL.temperature.qa),
           maxTokens: String(merged.maxTokens ?? DEFAULT_MODEL.maxTokens),
         });
+        const vision = stored.visionModel;
+        setVisionForm({
+          baseUrl: vision?.baseUrl ?? '',
+          apiKey: vision?.apiKey ?? '',
+          model: vision?.model ?? '',
+        });
+        // 全局抽帧开关默认关闭；模块开关默认全开（未配置视为开启）
+        setVisionEnabled(stored.visionEnabled === true);
+        setVisionModules({
+          outline: stored.visionModules?.outline !== false,
+          mindmap: stored.visionModules?.mindmap !== false,
+          qa: stored.visionModules?.qa !== false,
+        });
         if (typeof merged.outlineTokenBudget === 'number' && merged.outlineTokenBudget > 0) {
           setOutlineTokenBudget(merged.outlineTokenBudget);
         }
@@ -175,6 +242,20 @@ export function SettingsPage({
     };
   }, []);
 
+  /** 合并写：patch 覆盖目标分区，其余分区原样保留 */
+  const savePatch = (patch: Partial<Settings>): Promise<boolean> => {
+    const next = mergeSettings(savedRef.current, patch);
+    return sendRuntimeMessage({ type: MSG.SET_SETTINGS, payload: next })
+      .then((response: unknown) => {
+        if ((response as { ok?: boolean } | null)?.ok === true) {
+          savedRef.current = next;
+          return true;
+        }
+        return false;
+      })
+      .catch(() => false);
+  };
+
   const update = (field: keyof ModelFormState) => (
     e: React.ChangeEvent<HTMLInputElement>,
   ) => {
@@ -182,24 +263,143 @@ export function SettingsPage({
     setSaveFeedback(null);
   };
 
+  /** 预设一键填入：只覆盖 baseUrl 与 model，已填的 Key 与其他字段保留 */
+  const applyPresetToText = (preset: PresetKey) => {
+    const next = applyPreset(formToModelConfig(form, outlineTokenBudget), preset);
+    setForm({
+      baseUrl: next.baseUrl,
+      apiKey: next.apiKey,
+      model: next.model,
+      temperatureOutline: String(next.temperature.outline),
+      temperatureQa: String(next.temperature.qa),
+      maxTokens: String(next.maxTokens),
+    });
+    setSaveFeedback(null);
+  };
+
   const handleSave = () => {
-    const error = validateForm(form);
+    const model = formToModelConfig(form, outlineTokenBudget);
+    const errors = validateModelForm(model);
+    const error = firstError(errors);
     if (error) {
       setSaveFeedback({ kind: 'error', text: error });
       return;
     }
-    const model = formToModelConfig(form, outlineTokenBudget);
-    sendRuntimeMessage({ type: MSG.SET_SETTINGS, payload: { model } })
-      .then((response: unknown) => {
-        if ((response as { ok?: boolean } | null)?.ok === true) {
-          setSaveFeedback({ kind: 'ok', text: '已保存' });
-        } else {
-          setSaveFeedback({ kind: 'error', text: '保存失败：background 未确认' });
-        }
-      })
-      .catch(() => {
-        setSaveFeedback({ kind: 'error', text: '保存失败：无法连接 background' });
+    savePatch({ model })
+      .then((ok) => {
+        setSaveFeedback(
+          ok ? { kind: 'ok', text: '已保存' } : { kind: 'error', text: '保存失败：background 未确认' },
+        );
       });
+  };
+
+  const handleTestConnection = () => {
+    const model = formToModelConfig(form, outlineTokenBudget);
+    const error = firstError(validateModelForm(model));
+    if (error) {
+      setTestFeedback({ kind: 'error', text: error });
+      return;
+    }
+    setTesting(true);
+    setTestFeedback(null);
+    chatCompletion({
+      baseUrl: model.baseUrl,
+      apiKey: model.apiKey,
+      model: model.model,
+      temperature: model.temperature.outline,
+      maxTokens: 1,
+      messages: [{ role: 'user', content: 'ping' }],
+    })
+      .then(() => {
+        setTestFeedback({ kind: 'ok', text: `连接成功（模型 ${model.model}）` });
+      })
+      .catch((err: unknown) => {
+        // 错误摘要理论不含 key，此处再做一层脱敏兜底
+        const raw = err instanceof Error ? err.message : String(err);
+        setTestFeedback({ kind: 'error', text: raw.split(model.apiKey).join('***') });
+      })
+      .finally(() => {
+        setTesting(false);
+      });
+  };
+
+  const updateVision = (field: keyof VisionFormState) => (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    setVisionForm((prev) => ({ ...prev, [field]: e.target.value }));
+    setVisionFeedback(null);
+  };
+
+  const applyPresetToVision = (preset: PresetKey) => {
+    const next = applyPreset(visionFormToModelConfig(visionForm), preset);
+    setVisionForm({ baseUrl: next.baseUrl, apiKey: next.apiKey, model: next.model });
+    setVisionFeedback(null);
+  };
+
+  /** 保存视觉模型：只校验三要素（temperature / maxTokens 由代码补齐为默认值） */
+  const handleSaveVision = () => {
+    const cfg = visionFormToModelConfig(visionForm);
+    const errors = validateModelForm(cfg);
+    const error = firstError({
+      baseUrl: errors.baseUrl,
+      apiKey: errors.apiKey,
+      model: errors.model,
+    });
+    if (error) {
+      setVisionFeedback({ kind: 'error', text: error });
+      return;
+    }
+    savePatch({ visionModel: cfg })
+      .then((ok) => {
+        setVisionFeedback(
+          ok ? { kind: 'ok', text: '已保存' } : { kind: 'error', text: '保存失败：background 未确认' },
+        );
+      });
+  };
+
+  const handleTestVision = () => {
+    const cfg = visionFormToModelConfig(visionForm);
+    const errors = validateModelForm(cfg);
+    const error = firstError({
+      baseUrl: errors.baseUrl,
+      apiKey: errors.apiKey,
+      model: errors.model,
+    });
+    if (error) {
+      setVisionFeedback({ kind: 'error', text: error });
+      return;
+    }
+    setVisionTesting(true);
+    setVisionFeedback(null);
+    chatCompletion({
+      baseUrl: cfg.baseUrl,
+      apiKey: cfg.apiKey,
+      model: cfg.model,
+      temperature: cfg.temperature.outline,
+      maxTokens: 1,
+      messages: [{ role: 'user', content: 'ping' }],
+    })
+      .then(() => {
+        setVisionFeedback({ kind: 'ok', text: `连接成功（模型 ${cfg.model}）` });
+      })
+      .catch((err: unknown) => {
+        const raw = err instanceof Error ? err.message : String(err);
+        setVisionFeedback({ kind: 'error', text: raw.split(cfg.apiKey).join('***') });
+      })
+      .finally(() => setVisionTesting(false));
+  };
+
+  /** 保存抽帧开关（全局 + 三模块）；全局关闭时模块开关不生效 */
+  const handleSaveVisionSwitch = () => {
+    setVisionSwitchSaving(true);
+    setVisionSwitchFeedback(null);
+    savePatch({ visionEnabled, visionModules: { ...visionModules } })
+      .then((ok) => {
+        setVisionSwitchFeedback(
+          ok ? { kind: 'ok', text: '已保存' } : { kind: 'error', text: '保存失败：background 未确认' },
+        );
+      })
+      .finally(() => setVisionSwitchSaving(false));
   };
 
   /** Obsidian 表单字段更新（清空该区提示，避免与旧结果混淆） */
@@ -233,20 +433,12 @@ export function SettingsPage({
       rootDir: obsidian.rootDir.trim(),
     };
     // 与 Obsidian 配置一起保存 knowledgeSearch 开关（整份 settings 合并写，不动其他分区）
-    sendRuntimeMessage({ type: MSG.GET_SETTINGS })
-      .then((stored: unknown) =>
-        sendRuntimeMessage({
-          type: MSG.SET_SETTINGS,
-          payload: { ...((stored ?? {}) as Record<string, unknown>), obsidian: cfg, knowledgeSearch },
-        }),
-      )
-      .then(() => setObsidianFeedback({ kind: 'ok', text: '已保存' }))
-      .catch((err: unknown) =>
-        setObsidianFeedback({
-          kind: 'error',
-          text: `保存失败：${err instanceof Error ? err.message : String(err)}`,
-        }),
-      )
+    savePatch({ obsidian: cfg, knowledgeSearch })
+      .then((ok) => {
+        setObsidianFeedback(
+          ok ? { kind: 'ok', text: '已保存' } : { kind: 'error', text: '保存失败：background 未确认' },
+        );
+      })
       .finally(() => setObsidianSaving(false));
   };
 
@@ -304,52 +496,17 @@ export function SettingsPage({
       engine: webSearch.engine,
       enabled: webSearch.enabled,
     };
-    sendRuntimeMessage({ type: MSG.GET_SETTINGS })
-      .then((stored: unknown) =>
-        sendRuntimeMessage({
-          type: MSG.SET_SETTINGS,
-          payload: { ...((stored ?? {}) as Record<string, unknown>), webSearch: cfg },
-        }),
-      )
-      .then(() => setWebSearchFeedback({ kind: 'ok', text: '已保存' }))
-      .catch((err: unknown) =>
-        setWebSearchFeedback({
-          kind: 'error',
-          text: `保存失败：${err instanceof Error ? err.message : String(err)}`,
-        }),
-      )
+    savePatch({ webSearch: cfg })
+      .then((ok) => {
+        setWebSearchFeedback(
+          ok ? { kind: 'ok', text: '已保存' } : { kind: 'error', text: '保存失败：background 未确认' },
+        );
+      })
       .finally(() => setWebSearchSaving(false));
   };
 
-  const handleTestConnection = () => {
-    const error = validateForm(form);
-    if (error) {
-      setTestFeedback({ kind: 'error', text: error });
-      return;
-    }
-    setTesting(true);
-    setTestFeedback(null);
-    const model = formToModelConfig(form, outlineTokenBudget);
-    chatCompletion({
-      baseUrl: model.baseUrl,
-      apiKey: model.apiKey,
-      model: model.model,
-      temperature: model.temperature.outline,
-      maxTokens: 1,
-      messages: [{ role: 'user', content: 'ping' }],
-    })
-      .then(() => {
-        setTestFeedback({ kind: 'ok', text: `连接成功（模型 ${model.model}）` });
-      })
-      .catch((err: unknown) => {
-        // 错误摘要理论不含 key，此处再做一层脱敏兜底
-        const raw = err instanceof Error ? err.message : String(err);
-        setTestFeedback({ kind: 'error', text: raw.split(model.apiKey).join('***') });
-      })
-      .finally(() => {
-        setTesting(false);
-      });
-  };
+  const visionConfigured = isModelConfigured(visionForm);
+  const presetKeys = Object.keys(MODEL_PRESETS) as PresetKey[];
 
   return (
     <div className="settings">
@@ -360,8 +517,25 @@ export function SettingsPage({
         </button>
       </header>
 
+      {/* ① 文本模型：大纲、概念图、术语与区间问答 */}
       <section className="settings-section">
-        <h4>模型配置</h4>
+        <h4>文本模型（大纲 / 导图 / 问答）</h4>
+        <p className="settings-hint">
+          模型名可自填，按厂商文档填写当前可用版本；成本与能力由你选择——便宜的多模态与更强的多模态差异较大，按需填写
+        </p>
+        <div className="field-row">
+          {presetKeys.map((key) => (
+            <button
+              type="button"
+              className="btn"
+              key={`text-preset-${key}`}
+              onClick={() => applyPresetToText(key)}
+              title={MODEL_PRESETS[key].label}
+            >
+              {key === 'deepseek' ? 'DeepSeek' : 'Qwen'}
+            </button>
+          ))}
+        </div>
         <label className="field">
           <span>接口地址</span>
           <input
@@ -438,6 +612,129 @@ export function SettingsPage({
         {testFeedback && (
           <p className={testFeedback.kind === 'ok' ? 'settings-hint' : 'settings-hint settings-error'}>
             {testFeedback.text}
+          </p>
+        )}
+      </section>
+
+      {/* ② 视觉模型：未配置则自动跳过抽帧，不影响文本功能 */}
+      <section className="settings-section">
+        <h4>视觉模型（多模态，处理抽帧画面）</h4>
+        <p className="settings-hint">
+          模型名可自填，需支持图像输入；成本与能力由你选择（便宜的多模态更省，更强的多模态更准）。
+          {visionConfigured ? '已配置：开启抽帧后画面将随字幕一起交给视觉模型' : '未配置视觉模型：将自动跳过抽帧（不影响文本功能）'}
+        </p>
+        <div className="field-row">
+          {presetKeys.map((key) => (
+            <button
+              type="button"
+              className="btn"
+              key={`vision-preset-${key}`}
+              onClick={() => applyPresetToVision(key)}
+              title={MODEL_PRESETS[key].label}
+            >
+              {key === 'deepseek' ? 'DeepSeek' : 'Qwen'}
+            </button>
+          ))}
+        </div>
+        <label className="field">
+          <span>接口地址</span>
+          <input
+            type="text"
+            placeholder="https://…"
+            value={visionForm.baseUrl}
+            onChange={updateVision('baseUrl')}
+          />
+        </label>
+        <label className="field">
+          <span>API Key</span>
+          <input
+            type="password"
+            placeholder="粘贴 API Key"
+            value={visionForm.apiKey}
+            onChange={updateVision('apiKey')}
+          />
+        </label>
+        <label className="field">
+          <span>模型</span>
+          <input
+            type="text"
+            placeholder="支持图像输入的模型标识"
+            value={visionForm.model}
+            onChange={updateVision('model')}
+          />
+        </label>
+        <div className="field-row">
+          <button type="button" className="btn btn-primary" onClick={handleSaveVision}>
+            保存
+          </button>
+          <button type="button" className="btn" onClick={handleTestVision} disabled={visionTesting}>
+            {visionTesting ? '测试中…' : '测试连接'}
+          </button>
+        </div>
+        {visionFeedback && (
+          <p className={visionFeedback.kind === 'ok' ? 'settings-hint' : 'settings-hint settings-error'}>
+            {visionFeedback.text}
+          </p>
+        )}
+      </section>
+
+      {/* ③ 抽帧开关：全局默认关闭，模块开关随全局失效 */}
+      <section className="settings-section">
+        <h4>抽帧开关（结合视频画面理解）</h4>
+        <p className="settings-hint">
+          抽帧会带来额外延迟与 token 消耗，且需要视觉模型支持图像输入；全局关闭时所有模块一律不抽帧。
+          单次请求最多 {VISION.maxFramesPerRequest} 帧（大纲每分块 {VISION.outlineFramesPerChunk} 帧 /
+          导图 {VISION.mindmapFrames} 帧 / 问答 {VISION.qaFrames} 帧）
+        </p>
+        <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={visionEnabled}
+            onChange={(e) => {
+              setVisionEnabled(e.target.checked);
+              setVisionSwitchFeedback(null);
+            }}
+          />
+          <span>让模型结合视频画面理解（抽帧）</span>
+        </label>
+        {(Object.keys(VISION_MODULE_LABELS) as VisionModule[]).map((module) => (
+          <label
+            key={`vision-module-${module}`}
+            className="field"
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+          >
+            <input
+              type="checkbox"
+              checked={visionEnabled && visionModules[module]}
+              disabled={!visionEnabled}
+              onChange={(e) => {
+                setVisionModules((prev) => ({ ...prev, [module]: e.target.checked }));
+                setVisionSwitchFeedback(null);
+              }}
+            />
+            <span>
+              {VISION_MODULE_LABELS[module]}
+              {visionEnabled ? '' : '（随全局开关）'}
+            </span>
+          </label>
+        ))}
+        <div className="field-row">
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={handleSaveVisionSwitch}
+            disabled={visionSwitchSaving}
+          >
+            {visionSwitchSaving ? '保存中…' : '保存'}
+          </button>
+        </div>
+        {visionSwitchFeedback && (
+          <p
+            className={
+              visionSwitchFeedback.kind === 'ok' ? 'settings-hint' : 'settings-hint settings-error'
+            }
+          >
+            {visionSwitchFeedback.text}
           </p>
         )}
       </section>

@@ -22,6 +22,11 @@ import {
   getOutlineSystemPrompt,
   PROMPT_VERSIONS,
 } from '../prompts';
+import { chunkCues } from '../core/pipeline/chunk';
+import { VISION } from '../config';
+import { requestFrames, toPipelineImage } from './framesClient';
+import { visionActiveFor } from './settings/modelForm';
+import type { Settings } from '../types';
 import { createSubtitleDb, getOutline, getSubtitle, saveOutline } from '../storage/db';
 import type { ModelConfig, Section } from '../types';
 
@@ -73,19 +78,38 @@ export async function loadOutlineForVideo(
     return { sections: [], chunkState: [], droppedBySnap: 0, budgetHit: false, failedChunks: 0 };
   }
 
-  const modelFn: OutlineModelFn = ({ systemPrompt, userPrompt }) =>
-    chatCompletion({
-      baseUrl: model.baseUrl,
-      apiKey: model.apiKey,
-      model: model.model,
-      temperature: model.temperature.outline,
-      maxTokens: model.maxTokens,
+  // 抽帧（可选）：每个分块取 VISION.outlineFramesPerChunk 帧；失败降级为空
+  const settings = await fetchSettings();
+  const useVision = visionActiveFor({ settings, module: 'outline' });
+  const visionModel = settings.visionModel ?? null;
+  const chunkFrameMap = new Map<number, ReturnType<typeof toPipelineImage>>();
+  if (useVision) {
+    const chunks = chunkCues(cues);
+    const targets = chunks
+      .map((c) => c[0]?.startMs)
+      .filter((t): t is number => typeof t === 'number')
+      .slice(0, VISION.maxFramesPerRequest);
+    const frames = await requestFrames({ videoId, targetsMs: targets });
+    for (const f of frames) chunkFrameMap.set(f.targetMs, toPipelineImage(f));
+  }
+
+  const modelFn: OutlineModelFn = ({ systemPrompt, userPrompt, images }) => {
+    // 带图的请求走视觉模型，不带图的仍走文本模型（用户可分别配置）
+    const cfg = images && images.length > 0 && visionModel?.apiKey ? visionModel : model;
+    return chatCompletion({
+      baseUrl: cfg.baseUrl,
+      apiKey: cfg.apiKey,
+      model: cfg.model,
+      temperature: cfg.temperature.outline,
+      maxTokens: cfg.maxTokens,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
       responseFormatJson: true,
+      images: images?.map((i) => ({ dataBase64: i.dataBase64, mime: i.mime ?? 'image/jpeg' })),
     }).then((res) => ({ content: res.content }));
+  };
 
   const result = await runOutline(cues, modelFn, {
     tokenBudget: model.outlineTokenBudget,
@@ -96,6 +120,12 @@ export async function loadOutlineForVideo(
       userPrompt: buildOutlinePrompts(chunk).userPrompt,
     }),
     onProgress: opts.onProgress,
+    // 每块的帧（预抽后按块首时间查表；未开启时返回空数组）
+    imagesForChunk: (chunk) => {
+      const key = chunk[0]?.startMs;
+      const frame = typeof key === 'number' ? chunkFrameMap.get(key) : undefined;
+      return frame ? [frame] : [];
+    },
   });
 
   // 结果落缓存（含 chunkState 断点供续跑；写失败不阻断返回）
@@ -130,6 +160,12 @@ function sendRuntimeMessage(message: unknown): Promise<unknown> {
 }
 
 /** 读设置中的 ModelConfig；未配置返回 null */
+async function fetchSettings(): Promise<Settings> {
+  const response = await sendRuntimeMessage({ type: MSG.GET_SETTINGS });
+  const stored = (response ?? {}) as Settings;
+  return stored && typeof stored === 'object' ? stored : {};
+}
+
 async function fetchModelConfig(): Promise<ModelConfig | null> {
   const response = await sendRuntimeMessage({ type: MSG.GET_SETTINGS });
   const stored = (response ?? {}) as { model?: ModelConfig };

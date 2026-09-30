@@ -12,11 +12,12 @@ import {
   buildConceptMapUserPrompt,
   buildStagesFromRaw,
   buildTermIndexMap,
+  describeMapImages,
   findOverviewSectionIndices,
   parseConceptStages,
   shortenLabel,
 } from '../../../src/core/pipeline/conceptMap';
-import type { ConceptModelFn } from '../../../src/core/pipeline/types';
+import type { ConceptModelFn, PipelineImage } from '../../../src/core/pipeline/types';
 import type { Section } from '../../../src/types';
 
 const section = (
@@ -231,11 +232,14 @@ describe('buildConceptAnchors（锚点构造：预告过滤 + 主锚，确定性
 describe('buildConceptMap', () => {
   const getSystemPrompt = () => 'concept-map-test-system-prompt';
   /** 记录每次调用 prompt 的 stub modelFn（默认返回合法 JSON） */
-  const stubModelFn = (replies: string[]): { fn: ConceptModelFn; calls: Array<{ systemPrompt: string; userPrompt: string }> } => {
-    const calls: Array<{ systemPrompt: string; userPrompt: string }> = [];
+  const stubModelFn = (replies: string[]): {
+    fn: ConceptModelFn;
+    calls: Array<{ systemPrompt: string; userPrompt: string; images?: PipelineImage[] }>;
+  } => {
+    const calls: Array<{ systemPrompt: string; userPrompt: string; images?: PipelineImage[] }> = [];
     let i = 0;
     const fn: ConceptModelFn = async (req) => {
-      calls.push({ systemPrompt: req.systemPrompt, userPrompt: req.userPrompt });
+      calls.push({ systemPrompt: req.systemPrompt, userPrompt: req.userPrompt, images: req.images });
       const content = replies[Math.min(i, replies.length - 1)];
       i += 1;
       return { content };
@@ -427,6 +431,82 @@ describe('buildConceptMap', () => {
     expect(prompt).toContain('[2] 核心原理 | 无分数 | 重要性5');
     expect(prompt).toContain('术语：上下文窗口、Token');
     expect(prompt).toContain('知识流程');
+  });
+});
+
+describe('概念图的图像输入（全片关键帧）', () => {
+  const getSystemPrompt = () => 'concept-map-test-system-prompt';
+  const frames: PipelineImage[] = [
+    { dataBase64: 'QUFB', timeMs: 750_000 },
+    { dataBase64: 'QkJC', timeMs: 1_830_000 },
+  ];
+
+  it('describeMapImages：空 / undefined → ""', () => {
+    expect(describeMapImages([])).toBe('');
+    expect(describeMapImages()).toBe('');
+    expect(describeMapImages(null)).toBe('');
+  });
+
+  it('describeMapImages：含帧数与时间点，多帧按序拼接且只占一行', () => {
+    const line = describeMapImages(frames);
+    expect(line).toContain('以下附带 2 张课程画面');
+    expect(line.indexOf('12:30')).toBeLessThan(line.indexOf('30:30'));
+    expect(line.split('\n')).toHaveLength(1);
+  });
+
+  it('describeMapImages：无 timeMs → 按序号标注', () => {
+    expect(describeMapImages([{ dataBase64: 'QUFB' }])).toContain('第 1 张');
+  });
+
+  it('buildConceptMap 传 images：modelFn 收到帧，prompt 追加说明行', async () => {
+    const calls: Array<{ userPrompt: string; images?: PipelineImage[] }> = [];
+    const fn: ConceptModelFn = async (req) => {
+      calls.push({ userPrompt: req.userPrompt, images: req.images });
+      return { content: validJson };
+    };
+    const { degraded } = await buildConceptMap({
+      sections,
+      videoTitle: '大模型入门',
+      modelFn: fn,
+      getSystemPrompt,
+      images: frames,
+    });
+    expect(degraded).toBe(false);
+    expect(calls[0]?.images).toHaveLength(2);
+    expect(calls[0]?.images?.[0]?.dataBase64).toBe('QUFB');
+    expect(calls[0]?.userPrompt).toContain('以下附带 2 张课程画面');
+    expect(calls[0]?.userPrompt).toContain('12:30');
+  });
+
+  it('buildConceptMap 不传 images：req.images 为 undefined，prompt 无画面说明（旧行为不回归）', async () => {
+    const calls: Array<{ userPrompt: string; images?: PipelineImage[] }> = [];
+    const fn: ConceptModelFn = async (req) => {
+      calls.push({ userPrompt: req.userPrompt, images: req.images });
+      return { content: validJson };
+    };
+    await buildConceptMap({ sections, videoTitle: '大模型入门', modelFn: fn, getSystemPrompt });
+    expect(calls[0]?.images).toBeUndefined();
+    expect(calls[0]?.userPrompt).not.toContain('课程画面');
+  });
+
+  it('buildConceptMap 重试时仍带图（两次调用都带帧）', async () => {
+    const calls: Array<{ userPrompt: string; images?: PipelineImage[] }> = [];
+    let n = 0;
+    const fn: ConceptModelFn = async (req) => {
+      calls.push({ userPrompt: req.userPrompt, images: req.images });
+      n += 1;
+      return { content: n === 1 ? 'oops{' : validJson };
+    };
+    await buildConceptMap({
+      sections,
+      videoTitle: '大模型入门',
+      modelFn: fn,
+      getSystemPrompt,
+      images: frames,
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.images).toHaveLength(2);
+    expect(calls[1]?.userPrompt).toContain('以下附带 2 张课程画面');
   });
 });
 
