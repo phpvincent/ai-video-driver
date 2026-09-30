@@ -23,6 +23,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { chatCompletion } from '../../core/harness/modelClient';
 import { DEFAULT_MODEL, FRAME_PLAN, MODEL_PRESETS, OBSIDIAN, VISION } from '../../config';
+import { ensureHostPermission, originOfBaseUrl } from '../../platform';
 import { MSG } from '../../messages';
 import { testObsidianConnection } from '../obsidianLoader';
 import {
@@ -301,6 +302,26 @@ export function SettingsPage({
       return;
     }
     const preset = activePreset(model.baseUrl);
+    // SPEC-08 8.3：非预置端点按 origin 动态申请宿主权限（用户拒绝则不保存，
+    // 否则保存的配置一用就被 CORS 拦截，用户无从知道原因）
+    if (!preset) {
+      const origin = originOfBaseUrl(model.baseUrl);
+      if (origin) {
+        void ensureHostPermission(origin).then((result) => {
+          if (result === 'granted') doSave(model, preset, null);
+          else if (result === 'denied')
+            doSave(model, preset, '未授予访问权限：生成请求会被浏览器拦截。可在地址栏扩展图标中重新授权，或改用预置端点。');
+          else if (result === 'unsupported')
+            doSave(model, preset, '当前浏览器不支持按需授权，自定义端点可能被拦截（配置已保存）。');
+          else doSave(model, preset, '接口地址无法解析出域名，请检查后重试。');
+        });
+        return;
+      }
+    }
+    doSave(model, preset, null);
+  };
+
+  const doSave = (model: ModelConfig, preset: ReturnType<typeof activePreset>, warning: string | null) => {
     const withVision: ModelConfig = { ...model, supportsVision };
     const patch: Partial<Settings> = preset
       ? { model: withVision, disableThinking, modelSlots: writeSlot(savedRef.current, preset, withVision).modelSlots }
@@ -308,10 +329,18 @@ export function SettingsPage({
     // 保存成功即视为该预设不再是草稿
     if (preset) delete draftsRef.current[preset];
     savePatch(patch).then((ok) => {
+      if (!ok) {
+        setSaveFeedback({ kind: 'error', text: '保存失败：background 未确认' });
+        return;
+      }
+      if (warning) {
+        setSaveFeedback({ kind: 'error', text: `已保存（自定义端点），但 ${warning}` });
+        return;
+      }
       setSaveFeedback(
-        ok
-          ? { kind: 'ok', text: preset ? `已保存到 ${presetShortLabel(preset)}` : '已保存（自定义端点）' }
-          : { kind: 'error', text: '保存失败：background 未确认' },
+        preset
+          ? { kind: 'ok', text: `已保存到 ${presetShortLabel(preset)}` }
+          : { kind: 'ok', text: '已保存（自定义端点）' },
       );
     });
   };

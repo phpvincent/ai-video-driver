@@ -40,6 +40,10 @@ describe('manifest.json（TECH-DESIGN §9 可执行快照）', () => {
     ]);
   });
 
+  it('optional_host_permissions 支持任意 https/http（SPEC-08 8.3：自定义端点按 origin 动态申请）', () => {
+    expect(manifest.optional_host_permissions).toEqual(['https://*/*', 'http://*/*']);
+  });
+
   it('content_scripts：仅 B 站视频页，IIFE 单文件，document_idle', () => {
     expect(manifest.content_scripts).toEqual([
       {

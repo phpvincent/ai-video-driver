@@ -17,6 +17,10 @@
     "https://maas.qianwenaiapi.com/*",
     "https://api.duckduckgo.com/*"
   ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
   "background": {
     "service_worker": "background.js",
     "type": "module"
