@@ -46,6 +46,8 @@
 连带：新增 src/prompts/concept-map.md、core/pipeline/conceptMap.ts、ConceptNode 类型、db 概念图缓存。
 
 ## 4. 验收标准
+| 2026-09-30 | 子 agent | 概念知识图全量：concept-map.md 单一源（grounding 约束：概念必须出自素材术语/要点）+ conceptMap.ts（ConceptTree Zod、buildConceptMap 单次结构化调用含重试、buildTermIndexMap 确定性降级、shortenLabel）+ MindmapTab 重写（自绘 SVG d3-flextree 竖向树、短语节点、渐进揭示 domain 折叠、score 权重视觉、概念跟随高亮、章节时间轴保留为切换视图）+ mindmapLoader（缓存键 concept::videoId::ver::model）+ 48 例 | tsc 零错误；48 例全绿；check-prompts PASS | d084be8（已验收） |
+| 2026-09-30 | 父 agent | App 接线（缓存回填 effect/生成 handler 失败降级本地术语图/MindmapTab 全 props）；SSH 推送通道修复（22 端口被网络切断 → ~/.ssh/config 走 ssh.github.com:443 + 官方 ed25519 指纹预置）；npm run verify 直连 443 例全绿 | ✅ 人工验收项：概念图生成/概念跟随/降级图/时间轴切换（用户） | d084be8 |
 
 - [ ] A1 [自动] Markdown 组装单测：章节顺序、时间前缀、密度标记、空 bullets 处理
 - [ ] A2 [自动] 二分查找单测：边界（第一句前、最后一句后、恰好落在 startMs 上）、跨多章跳跃
