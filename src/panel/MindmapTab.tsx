@@ -10,12 +10,16 @@
  * - 概念跟随：matchConcepts 精确匹配（概念 label 归一化后 ∈ 当前章节 terms，
  *  且该 section 覆盖 positionMs；不命中不亮，修复 substring 过松亮起多个）
  *   → .concept-active 高亮（过渡动画）+ 滚出可视区时平滑滚动；
+ * - 三次迭代（知识路径）：域按最早时间锚排序（orderDomainsByEarliestAnchor）+
+ *   序号徽标（01/02…，formatDomainIndex）+ 域间垂直连接线（kp-connector，首卡无）
+ *   呈现"第一步 → 第二步"推进逻辑；卡内概念行左侧竖向 rail（节点圆点有语义：
+ *   = 该概念第一个锚点时间，hover 显示）；播放命中的概念所在域卡边框加重（domain-current）；
  * - 章节时间轴（次要视图）：markmap 实现整体保留为 ChronoView。
  * 组件完全 props 驱动。降级判定双手段并存（types.ts 不得加字段）：
  * props.degraded（App 生成 catch 路径设置）+ 根 label/model 约定（isTermIndexData）。
  * markmap 仅由 ChronoView 的 effect 内动态 import（概念视图不加载引擎）。
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type { Markmap } from 'markmap-view';
 import type { ConceptMapData, ConceptNode, Section } from '../types';
 import { TERM_INDEX_ROOT_LABEL, buildTermIndexMap } from '../core/pipeline/conceptMap';
@@ -188,6 +192,45 @@ export function importanceBadge(importance: number): string {
  */
 export function isTermIndexData(data: ConceptMapData): boolean {
   return data.model === 'term-index' || data.root.label === TERM_INDEX_ROOT_LABEL;
+}
+
+/**
+ * 域内最早时间锚（纯函数）：递归收集域下所有节点 anchors 的最小 tMs；
+ * 无任何锚返回 null。
+ */
+function earliestAnchorMs(domain: ConceptNode): number | null {
+  let earliest: number | null = null;
+  const walk = (n: ConceptNode): void => {
+    for (const a of n.anchors) {
+      if (earliest === null || a.tMs < earliest) earliest = a.tMs;
+    }
+    for (const child of n.children) walk(child);
+  };
+  walk(domain);
+  return earliest;
+}
+
+/**
+ * 域排序（三次迭代：知识路径的流程感，导出供单测）：
+ * root.children 中 kind='domain' 的域，按各域内所有概念 anchors 的最早 tMs 升序，
+ * 呈现"先学什么 → 再学什么"的推进逻辑；无锚的域排最后并保持原相对顺序（稳定排序）。
+ */
+export function orderDomainsByEarliestAnchor(root: ConceptNode): ConceptNode[] {
+  const keyed = root.children
+    .filter((n) => n.kind === 'domain')
+    .map((domain, i) => ({ domain, i, earliest: earliestAnchorMs(domain) }));
+  keyed.sort((a, b) => {
+    if (a.earliest === null && b.earliest === null) return a.i - b.i;
+    if (a.earliest === null) return 1;
+    if (b.earliest === null) return -1;
+    return a.earliest - b.earliest || a.i - b.i;
+  });
+  return keyed.map((k) => k.domain);
+}
+
+/** 域序号徽标（导出供单测）：排序后下标 + 1，两位数字符串（01/02/…，超过 99 自然进位） */
+export function formatDomainIndex(i: number): string {
+  return String(i + 1).padStart(2, '0');
 }
 
 /** 空大纲引导（独立导出：不依赖 markmap/DOM，renderToString 可测） */
@@ -430,7 +473,23 @@ function ConceptView({
     });
   };
 
-  const domains = root.children.filter((n) => n.kind === 'domain');
+  // 三次迭代（知识路径）：域按最早时间锚排序（无锚垫后，稳定），
+  // 卡片流呈现"第一步 → 第二步 → …"的学习推进逻辑
+  const domains = useMemo(() => orderDomainsByEarliestAnchor(root), [root]);
+
+  // 当前域高亮：播放位置命中的概念（matchConcepts 精确匹配）所在域卡边框加重
+  const activeDomainIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const domain of domains) {
+      for (const c of domain.children) {
+        if (c.kind === 'concept' && activeLabels.has(normalizeTerm(c.label))) {
+          ids.add(domain.id);
+          break;
+        }
+      }
+    }
+    return ids;
+  }, [domains, activeLabels]);
 
   return (
     <div className="cm-container" ref={containerRef}>
@@ -444,21 +503,35 @@ function ConceptView({
           )}
         </div>
       )}
-      {domains.map((domain) => (
-        <section className="cm-card" key={domain.id}>
-          <header className="cm-card-header">
-            <span className="cm-card-title">{domain.label}</span>
-            <span className="cm-card-count">{`${domain.children.length} 概念`}</span>
-          </header>
-          <div className="cm-card-body">
-            {domain.children
-              .filter((n) => n.kind === 'concept')
-              .map((concept) => {
-                const active = activeLabels.has(normalizeTerm(concept.label));
-                const open = openDetails.has(concept.id);
-                return (
-                  <div key={concept.id} className={`cm-concept${active ? ' concept-active' : ''}`}>
-                    <div className="cm-concept-main">
+      {domains.map((domain, di) => (
+        <Fragment key={domain.id}>
+          {/* 域间连接线：卡与卡之间垂直竖线 + 向下箭头（首卡无），呈现推进感 */}
+          {di > 0 && <div className="kp-connector" aria-hidden="true" />}
+          <section
+            className={`cm-card${activeDomainIds.has(domain.id) ? ' domain-current' : ''}`}
+          >
+            <header className="cm-card-header">
+              <span className="cm-domain-index">{formatDomainIndex(di)}</span>
+              <span className="cm-card-title">{domain.label}</span>
+              <span className="cm-card-count">{`${domain.children.length} 概念`}</span>
+            </header>
+            <div className="cm-card-body">
+              {domain.children
+                .filter((n) => n.kind === 'concept')
+                .map((concept) => {
+                  const active = activeLabels.has(normalizeTerm(concept.label));
+                  const open = openDetails.has(concept.id);
+                  return (
+                    <div key={concept.id} className={`cm-concept${active ? ' concept-active' : ''}`}>
+                      {/* rail 节点圆点：有语义——即该概念时间 chips 的第一个锚点时间，
+                          hover 显示（与已砍的"无语义圆点"不同；无锚概念不渲染圆点） */}
+                      {concept.anchors.length > 0 && (
+                        <span
+                          className="cm-rail-dot"
+                          title={`首次出现 ${formatTimestamp(concept.anchors[0].tMs)}`}
+                        />
+                      )}
+                      <div className="cm-concept-main">
                       <button
                         type="button"
                         className="cm-concept-label"
@@ -523,6 +596,7 @@ function ConceptView({
               })}
           </div>
         </section>
+        </Fragment>
       ))}
     </div>
   );

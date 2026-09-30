@@ -5,6 +5,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import type { Cue, FetchResult, SubtitleSource, SubtitleStatus, VideoMeta } from '../types';
+import { toPlainText, toSrt } from '../core/subtitle/serialize';
 
 export interface SubtitleTabProps {
   videoId: string | null;
@@ -216,6 +217,20 @@ export function SubtitleList({
   );
 }
 
+/**
+ * 浏览器下载壳（SPEC-04 三次迭代：字幕下载）：内容生成是纯函数
+ * （core/subtitle/serialize.ts 的 toSrt/toPlainText，单测覆盖），此处仅触发下载。
+ */
+function downloadTextFile(content: string, filename: string): void {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function SubtitleTab(props: SubtitleTabProps) {
   const { videoId, positionMs, onRequestSeek, onManualPaste, onExplainTerm } = props;
   const [phase, setPhase] = useState<Phase>('idle');
@@ -340,6 +355,30 @@ export function SubtitleTab(props: SubtitleTabProps) {
         onSeek={onRequestSeek}
         onExplainTerm={onExplainTerm}
       />
+      <div
+        className="subtitle-download"
+        style={{
+          display: 'flex',
+          gap: 8,
+          padding: '8px 10px',
+          borderTop: '1px solid #e5e6eb',
+        }}
+      >
+        <button
+          type="button"
+          className="btn"
+          onClick={() => downloadTextFile(toSrt(result.cues), `${videoId}.srt`)}
+        >
+          下载 SRT
+        </button>
+        <button
+          type="button"
+          className="btn"
+          onClick={() => downloadTextFile(toPlainText(result.cues), `${videoId}.txt`)}
+        >
+          下载 TXT
+        </button>
+      </div>
     </div>
   );
 }

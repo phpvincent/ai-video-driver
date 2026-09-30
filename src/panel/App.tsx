@@ -19,6 +19,18 @@ import { loadSubtitles as runWaterfall, loadSubtitlesManual } from './subtitleLo
 
 type TabKey = 'subtitle' | 'outline' | 'mindmap' | 'chat';
 
+/** 全屏模式：panel.html?view=xxx 单视图渲染（无 Tab 栏） */
+function parseStandaloneView(): TabKey | null {
+  try {
+    const v = new URLSearchParams(window.location.search).get('view');
+    return (STANDALONE_VIEWS as readonly string[]).includes(v ?? '') ? (v as TabKey) : null;
+  } catch {
+    return null;
+  }
+}
+
+const STANDALONE_VIEWS: readonly TabKey[] = ['subtitle', 'outline', 'mindmap', 'chat'];
+
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'subtitle', label: '字幕' },
   { key: 'outline', label: '大纲' },
@@ -43,6 +55,9 @@ export function App() {
   const [video, setVideo] = useState<VideoInfoPayload | null>(null);
   const [playback, setPlayback] = useState<PlaybackPayload | null>(null);
   const [tab, setTab] = useState<TabKey>('subtitle');
+  /** 全屏单视图模式（panel.html?view=xxx）；null=普通侧栏模式 */
+  const [standaloneView] = useState<TabKey | null>(parseStandaloneView);
+  const effectiveTab: TabKey = standaloneView ?? tab;
   const [showSettings, setShowSettings] = useState(false);
   /** 手动粘贴版本号：递增触发 SubtitleTab 重载（key 变化） */
   const [pasteVersion, setPasteVersion] = useState(0);
@@ -163,6 +178,15 @@ export function App() {
     }
   };
 
+  /** 一键全屏：当前视图在新标签页全窗口打开（Chrome 不允许扩展改侧栏宽度，此为替代） */
+  const handleOpenFullscreen = () => {
+    try {
+      void chrome.tabs.create({ url: chrome.runtime.getURL(`panel.html?view=${effectiveTab}`) });
+    } catch {
+      /* 静默 */
+    }
+  };
+
   /** 生成概念知识图；失败降级为本地术语关联图（零成本兜底） */
   const handleGenerateConceptMap = async (secs: Section[], title: string) => {
     setConceptGenerating(true);
@@ -213,6 +237,14 @@ export function App() {
             </div>
             <div className="info-meta">
               <span className="info-video-id">{video.videoId}</span>
+              <button
+                type="button"
+                className="btn fullscreen-btn"
+                title={standaloneView ? '关闭全屏标签页' : '全屏打开当前视图'}
+                onClick={standaloneView ? () => window.close() : handleOpenFullscreen}
+              >
+                {standaloneView ? '退出全屏' : '全屏'}
+              </button>
               <span>时长 {formatDuration(video.durationMs)}</span>
               {playback && (
                 <span>
@@ -236,27 +268,29 @@ export function App() {
         />
       ) : (
         <>
-          <nav className="tabs">
-            {TABS.map((t) => (
+{!standaloneView && (
+            <nav className="tabs">
+              {TABS.map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  className={tab === t.key ? 'tab active' : 'tab'}
+                  onClick={() => setTab(t.key)}
+                >
+                  {t.label}
+                </button>
+              ))}
               <button
-                key={t.key}
                 type="button"
-                className={tab === t.key ? 'tab active' : 'tab'}
-                onClick={() => setTab(t.key)}
+                className="tab settings-btn"
+                onClick={() => setShowSettings(true)}
               >
-                {t.label}
+                设置
               </button>
-            ))}
-            <button
-              type="button"
-              className="tab settings-btn"
-              onClick={() => setShowSettings(true)}
-            >
-              设置
-            </button>
-          </nav>
+            </nav>
+          )}
           <main className="tab-body">
-            {tab === 'subtitle' && (
+            {effectiveTab === 'subtitle' && (
               <SubtitleTab
                 key={`${video?.videoId ?? 'none'}-${pasteVersion}`}
                 videoId={video?.videoId ?? null}
@@ -268,7 +302,7 @@ export function App() {
                 onExplainTerm={handleExplainTerm}
               />
             )}
-            {tab === 'outline' && (
+            {effectiveTab === 'outline' && (
               <OutlineTab
                 videoId={video?.videoId ?? null}
                 meta={meta}
@@ -282,7 +316,7 @@ export function App() {
                 onOpenSettings={() => setShowSettings(true)}
               />
             )}
-            {tab === 'mindmap' && (
+            {effectiveTab === 'mindmap' && (
               <MindmapTab
                 sections={sections}
                 videoTitle={video?.title ?? ''}
@@ -297,7 +331,7 @@ export function App() {
                 onGoOutline={() => setTab('outline')}
               />
             )}
-            {tab === 'chat' && (
+            {effectiveTab === 'chat' && (
               <ChatTab
                 videoId={video?.videoId ?? null}
                 sections={sections}

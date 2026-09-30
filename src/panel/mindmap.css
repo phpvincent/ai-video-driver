@@ -120,8 +120,9 @@
   padding: 2px 0;
 }
 
-/* 概念行块（淡入 + 高亮过渡） */
+/* 概念行块（淡入 + 高亮过渡；relative 供 rail 节点圆点定位） */
 .cm-concept {
+  position: relative;
   padding: 6px 10px;
   border-bottom: 1px solid #f0f1f3;
   transition: background-color 0.25s ease, box-shadow 0.25s ease;
@@ -280,6 +281,90 @@
     animation: none;
   }
 }
+
+/* ---------------- 三次迭代：知识路径（流程感/逻辑感） ---------------- */
+
+/* 域序号徽标（01/02…，排序后下标 + 1） */
+.cm-domain-index {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 18px;
+  padding: 0 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: #165dff;
+  background: #e0eaff;
+  border-radius: 5px;
+}
+
+/* 域间连接线：卡与卡之间垂直竖线 + 向下箭头（约 20px 高，首卡无），
+   呈现"第一步 → 第二步 → …"的推进感（纯 CSS border 实现） */
+.kp-connector {
+  position: relative;
+  height: 20px;
+  margin: 0 8px;
+}
+
+.kp-connector::before {
+  content: '';
+  position: absolute;
+  left: 21px;
+  top: 0;
+  bottom: 5px;
+  width: 2px;
+  background: #94bfff;
+  border-radius: 1px;
+}
+
+.kp-connector::after {
+  content: '';
+  position: absolute;
+  left: 16px;
+  bottom: 0;
+  width: 0;
+  height: 0;
+  border: 6px solid transparent;
+  border-top-color: #94bfff;
+  border-bottom: none;
+}
+
+/* 当前域高亮：播放位置命中的概念所在域卡边框加重 */
+.cm-card.domain-current {
+  border-color: #165dff;
+  box-shadow: 0 0 0 1px #165dff;
+}
+
+/* 卡内概念行 rail：左侧竖向贯穿线（概念行的学习次序轴） */
+.cm-card-body {
+  margin-left: 14px;
+  border-left: 2px solid #dde3ee;
+  padding: 2px 0 2px 6px;
+}
+
+/* rail 节点圆点：有语义——该概念时间 chips 的第一个锚点时间（hover title 显示），
+   区别于二次迭代砍掉的"无语义圆点" */
+.cm-rail-dot {
+  position: absolute;
+  left: -11px;
+  top: 10px;
+  width: 8px;
+  height: 8px;
+  background: #94bfff;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px #d5e3ff;
+  cursor: help;
+}
+
+.cm-concept.concept-active .cm-rail-dot {
+  background: #165dff;
+}
+
+/* ---------------- 生成入口 / 骨架 ---------------- */
 
 /* 生成入口 / 设置引导 */
 .cm-gate {
