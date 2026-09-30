@@ -110,6 +110,8 @@ export async function loadOutlineForVideo(
         { role: 'user', content: userPrompt },
       ],
       responseFormatJson: true,
+      // 结构化任务禁用思考：推理会消耗输出 token 预算（用户可在设置中开启）
+      thinking: settings.disableThinking === false ? { type: 'enabled' } : { type: 'disabled' },
       images: images?.map((i) => ({ dataBase64: i.dataBase64, mime: i.mime ?? 'image/jpeg' })),
     }).then((res) => ({ content: res.content }));
   };
@@ -257,6 +259,7 @@ export async function regenerateOne(
   if (cues.length === 0) {
     throw new Error('没有可用字幕，无法重新生成本章');
   }
+  const settings = await fetchSettings();
 
   const modelFn: OutlineModelFn = ({ systemPrompt, userPrompt }) =>
     chatCompletion({
@@ -270,6 +273,8 @@ export async function regenerateOne(
         { role: 'user', content: userPrompt },
       ],
       responseFormatJson: true,
+      // 结构化任务禁用思考：推理会消耗输出 token 预算（用户可在设置中开启）
+      thinking: settings.disableThinking === false ? { type: 'enabled' } : { type: 'disabled' },
     }).then((res) => ({ content: res.content }));
 
   // 反馈仅方向性引导：空白视为未填写

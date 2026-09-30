@@ -119,7 +119,8 @@ export const MODEL_PRESETS = {
   deepseek: {
     label: 'DeepSeek（文本/结构化，便宜）',
     baseUrl: 'https://api.deepseek.com',
-    model: 'deepseek-chat',
+    // 官方已将 deepseek-chat 别名至 deepseek-flash（推理模型），此处用规范名
+    model: 'deepseek-flash',
   },
   qwen: {
     label: '通义千问 Qwen · 百炼官方（兼容模式，支持多模态）',

@@ -140,6 +140,8 @@ export function SettingsPage({
   const [testing, setTesting] = useState(false);
   /** 用户声明：当前模型是否支持图像输入（决定抽帧开关是否可用） */
   const [supportsVision, setSupportsVision] = useState(false);
+  /** 禁用模型思考过程（默认开启）：结构化任务更快更省，避免思考耗尽输出 token */
+  const [disableThinking, setDisableThinking] = useState(true);
   /** 抽帧开关（默认关闭：额外延迟与 token 消耗，且需模型支持图像输入） */
   const [visionEnabled, setVisionEnabled] = useState(false);
   const [visionModules, setVisionModules] = useState<Record<VisionModule, boolean>>(INITIAL_VISION_MODULES);
@@ -198,6 +200,8 @@ export function SettingsPage({
         });
         // 多模态能力以用户显式声明为准（未声明视为不支持 → 抽帧不可用）
         setSupportsVision(stored.modelSupportsVision === true);
+        // 禁用思考默认开启（未配置视为禁用）
+        setDisableThinking(stored.disableThinking !== false);
         // 全局抽帧开关默认关闭；模块开关默认全开（未配置视为开启）
         setVisionEnabled(stored.visionEnabled === true);
         setVisionModules({
@@ -266,7 +270,7 @@ export function SettingsPage({
       setSaveFeedback({ kind: 'error', text: error });
       return;
     }
-    savePatch({ model, modelSupportsVision: supportsVision })
+    savePatch({ model, modelSupportsVision: supportsVision, disableThinking })
       .then((ok) => {
         setSaveFeedback(
           ok ? { kind: 'ok', text: '已保存' } : { kind: 'error', text: '保存失败：background 未确认' },
@@ -500,6 +504,14 @@ export function SettingsPage({
             }}
           />
           <span>该模型支持图像输入（多模态，如 Qwen-VL 系列）</span>
+        </label>
+        <label className="field checkbox">
+          <input
+            type="checkbox"
+            checked={disableThinking}
+            onChange={(e) => setDisableThinking(e.target.checked)}
+          />
+          <span>禁用思考过程（推荐：大纲/导图/问答均为结构化任务，思考会消耗输出 token 甚至把正文挤空）</span>
         </label>
         <div className="field-row">
           <label className="field">

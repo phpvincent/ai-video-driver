@@ -114,6 +114,8 @@ export async function generateConceptMap(
         { role: 'user', content: userPrompt },
       ],
       responseFormatJson: true,
+      // 结构化任务禁用思考：推理会消耗输出 token 预算（用户可在设置中开启）
+      thinking: settings.disableThinking === false ? { type: 'enabled' } : { type: 'disabled' },
       images: imgs?.map((i) => ({ dataBase64: i.dataBase64, mime: i.mime ?? 'image/jpeg' })),
     }).then((res) => ({ content: res.content }));
   };

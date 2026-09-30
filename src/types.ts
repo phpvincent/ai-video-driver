@@ -248,6 +248,8 @@ export interface Settings {
   visionModel?: ModelConfig;
   /** 用户声明：当前模型是否支持图像输入（多模态）。未声明视为不支持 */
   modelSupportsVision?: boolean;
+  /** 禁用模型思考过程（默认开启禁用）：结构化任务更快更省，避免思考耗尽输出 token。设为 false 才启用思考 */
+  disableThinking?: boolean;
   /** 全局抽帧开关（默认 false，避免不必要的成本与延迟） */
   visionEnabled?: boolean;
   /** 各模块是否结合画面（默认随全局开关；未配置视为开启） */

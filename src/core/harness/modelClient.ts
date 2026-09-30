@@ -28,6 +28,12 @@ export interface ChatRequest {
   /** true 时请求体带 response_format: {type:'json_object'} */
   responseFormatJson?: boolean;
   /**
+   * 思考过程控制（OpenAI 兼容扩展，DeepSeek/Qwen 兼容端点均支持）。
+   * 结构化任务（大纲/概念图/问答 JSON）建议 disabled：推理模型的思考会
+   * 消耗输出 token 预算，极端时把 max_tokens 吃光导致正文为空。
+   */
+  thinking?: { type: 'enabled' | 'disabled' };
+  /**
    * 随本次请求附带的图像（教学画面关键帧）。非空时 user 消息的 content 变为
    * OpenAI 兼容的多模态数组（text + image_url data URI）。
    *
@@ -120,6 +126,9 @@ export async function chatCompletion(req: ChatRequest, fetchFn: FetchLike = fetc
   if (req.responseFormatJson) {
     body.response_format = { type: 'json_object' };
   }
+  if (req.thinking) {
+    body.thinking = req.thinking;
+  }
 
   let res: Response;
   try {
@@ -159,8 +168,14 @@ export async function chatCompletion(req: ChatRequest, fetchFn: FetchLike = fetc
   }
   const message = asRecord(asRecord(choices[0])?.message);
   const content = message?.content;
-  if (typeof content !== 'string') {
-    throw new Error('model response missing choices[0].message.content');
+  if (typeof content !== 'string' || content.trim() === '') {
+    const reasoning = typeof message?.reasoning_content === 'string' ? message.reasoning_content : '';
+    const burned = reasoning.length > 0;
+    throw new Error(
+      burned
+        ? '模型正文为空：思考过程耗尽了输出 token（可在设置中勾选「禁用思考过程」或调大 maxTokens）'
+        : 'model response missing choices[0].message.content',
+    );
   }
 
   const usage = asRecord(root?.usage);

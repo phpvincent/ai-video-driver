@@ -18,7 +18,7 @@ import { DB } from '../config';
 import { MSG } from '../messages';
 import { getPersonaSystemPrompt, PROMPT_VERSIONS } from '../prompts';
 import { createSubtitleDb, getSubtitle } from '../storage/db';
-import type { ModelConfig, Persona, Section } from '../types';
+import type { Settings, ModelConfig, Persona, Section } from '../types';
 
 /** 模块级单例 DB（惰性 open 由 db 层内部保证幂等） */
 const db = createSubtitleDb();
@@ -58,6 +58,12 @@ function sendRuntimeMessage(message: unknown): Promise<unknown> {
 }
 
 /** 读设置中的 ModelConfig；未配置返回 null */
+async function fetchSettings(): Promise<Settings> {
+  const response = await sendRuntimeMessage({ type: MSG.GET_SETTINGS });
+  const stored = (response ?? {}) as Settings;
+  return stored && typeof stored === 'object' ? stored : {};
+}
+
 async function fetchModelConfig(): Promise<ModelConfig | null> {
   const response = await sendRuntimeMessage({ type: MSG.GET_SETTINGS });
   const stored = (response ?? {}) as { model?: ModelConfig };
@@ -90,6 +96,7 @@ export async function generatePersona(args: {
       return defaultPersona(args.videoId, promptVersion, '');
     }
     const cfg = model;
+    const settings = await fetchSettings();
     const modelFn: PersonaModelFn = ({ systemPrompt, userPrompt }) =>
       chatCompletion({
         baseUrl: cfg.baseUrl,
@@ -102,6 +109,8 @@ export async function generatePersona(args: {
           { role: 'user', content: userPrompt },
         ],
         responseFormatJson: true,
+        // 结构化任务禁用思考：推理会消耗输出 token 预算
+        thinking: settings.disableThinking === false ? { type: 'enabled' } : { type: 'disabled' },
       }).then((res) => ({ content: res.content }));
 
     const judged = await judgePersona({

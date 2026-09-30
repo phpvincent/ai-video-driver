@@ -114,6 +114,19 @@ describe('chatCompletion', () => {
     await expect(chatCompletion(makeRequest(), again.fetchFn)).rejects.toThrow(/端点|Key/);
   });
 
+  it('thinking 字段 → body 含 thinking 参数', async () => {
+    const { fetchFn, calls } = mockFetch(okResponse({ choices: [{ message: { content: 'ok' } }] }));
+    await chatCompletion({ ...makeRequest(), thinking: { type: 'disabled' } }, fetchFn);
+    expect(parseBody(calls[0]?.init).thinking).toEqual({ type: 'disabled' });
+  });
+
+  it('content 为空且含 reasoning_content → 提示思考耗尽 token', async () => {
+    const { fetchFn } = mockFetch(
+      okResponse({ choices: [{ message: { content: '', reasoning_content: 'thinking...' } }] }),
+    );
+    await expect(chatCompletion(makeRequest(), fetchFn)).rejects.toThrow(/思考过程耗尽/);
+  });
+
   it('fetch 抛错（网络层失败）→ 提示未收到服务器响应与排查方向', async () => {
     const fetchFn = async (): Promise<Response> => {
       throw new TypeError('Failed to fetch');

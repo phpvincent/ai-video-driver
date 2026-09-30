@@ -211,6 +211,8 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
         { role: 'user', content: userPrompt },
       ],
       responseFormatJson: true,
+      // 结构化任务禁用思考：推理会消耗输出 token 预算（用户可在设置中开启）
+      thinking: settings.disableThinking === false ? { type: 'enabled' } : { type: 'disabled' },
       // 多模态：图像由 explain 层透传（需模型支持，如未支持会返回错误由重试逻辑处理）
       images: images?.map((i) => ({ dataBase64: i.dataBase64, mime: i.mime })),
     }).then((res) => ({ content: res.content }));
