@@ -56,6 +56,14 @@
 3. 时间轴视图保留；SVG/d3-flextree 代码移除
 4. 概念流程图（关系三元组抽取）列入 v0.1.x 候选（EVOLUTION-ROADMAP），本期不做
 
+
+### 范围变更三次迭代（2026-09-30 上午，用户目标澄清："目的是帮助理解，知识框架一目了然"）
+
+1. **流程感/逻辑感**：知识卡片流升级为"知识路径"——概念域按最早时间锚排序 + 序号（01/02…）+ 域间垂直连接线（CSS），卡片流呈现学习推进逻辑；卡内概念行加轻量竖向 rail
+2. **贴合侧边栏**：竖向流程为唯一主轴（不引入横向图）；注：Chrome 不允许扩展编程改侧栏宽度（用户可拖边缘），提供替代：
+3. **一键全屏**：每个 Tab 的视图可在新标签页全窗口打开（panel.html?view=xxx 单视图模式）——App 支持独立视图模式（无 Tab 栏），数据流经 background 广播照常工作（VIDEO_CHANGED/PLAYBACK_CHANGED 为 runtime 广播，全屏页可收到）
+4. **字幕下载**：SubtitleTab 增加下载按钮（SRT 带时间戳 / 纯文本），core/subtitle/serialize.ts 序列化器 + 单测
+
 ## 4. 验收标准
 | 2026-09-30 | 子 agent 二迭代 | 知识卡片流全量：zod label 放宽至 30（代码截 12，根治降级根因）+ degraded 横幅/重试（App 全链路接线）+ matchConcepts 精确匹配（正反例单测）+ importance 文字徽标（替换圆点）+ details 折叠（grid 过渡）+ 删除 SVG/d3-flextree（依赖同步移除）+ 63 例 | tsc 零错误；458 例全绿；check-prompts PASS；d3-flextree 零引用 | 885d9b6（已验收） |
 | 2026-09-30 | 子 agent | 概念知识图全量：concept-map.md 单一源（grounding 约束：概念必须出自素材术语/要点）+ conceptMap.ts（ConceptTree Zod、buildConceptMap 单次结构化调用含重试、buildTermIndexMap 确定性降级、shortenLabel）+ MindmapTab 重写（自绘 SVG d3-flextree 竖向树、短语节点、渐进揭示 domain 折叠、score 权重视觉、概念跟随高亮、章节时间轴保留为切换视图）+ mindmapLoader（缓存键 concept::videoId::ver::model）+ 48 例 | tsc 零错误；48 例全绿；check-prompts PASS | d084be8（已验收） |
