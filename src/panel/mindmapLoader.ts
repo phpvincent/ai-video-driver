@@ -22,7 +22,7 @@ import { resolveModel, visionActiveFor } from './settings/modelForm';
 import { setGenerationSource } from './generationTrace';
 import type { Settings } from '../types';
 import { createSubtitleDb, getSubtitle } from '../storage/db';
-import type { ConceptMapData, ModelConfig, Section } from '../types';
+import type { ConceptFlow, ConceptMapData, ModelConfig, Section } from '../types';
 
 /** 模块级单例 DB（惰性 open 由 db 层内部保证幂等） */
 const db = createSubtitleDb();
@@ -212,4 +212,55 @@ export function describeConceptMapFailure(err: unknown): string {
   if (raw.length === 0) return CONCEPT_FAILURE_NO_DETAIL;
   if (raw.includes('模型未配置') || raw.includes('无章节可用')) return raw;
   return `${raw}。${CONCEPT_FAILURE_HINT}`;
+}
+
+// ---------------------------------------------------------------------------
+// 概念关系边独立生成（冒烟 3b 二轮：与概念图分开调用，看流程图才花这份 token）
+// ---------------------------------------------------------------------------
+
+import { parseConceptFlows, resolveFlows } from '../core/pipeline/conceptMap';
+import { getConceptFlowsSystemPrompt } from '../prompts';
+
+/**
+ * 生成概念间关系边并写回缓存：输入是已有概念图的编号概念清单（很小），
+ * 输出 3~15 条有向边。成功后 flows 持久化，流程视图立即可用。
+ */
+export async function generateConceptFlows(videoId: string): Promise<ConceptFlow[]> {
+  const settings = (await fetchSettings()) as Settings;
+  const model = resolveModel(settings);
+  if (!model?.apiKey) throw new Error('模型未配置：请先在设置页配置模型');
+  const rec = await getConceptMapCached(videoId, model).catch(() => null);
+  if (!rec) throw new Error('请先生成概念图，再生成关系边');
+  if (rec.flows && rec.flows.length > 0) return rec.flows;
+
+  // 紧凑清单：按阶段分组编号（S1-1 / S1-2 …），输入只有 label，成本极低
+  const lines: string[] = ['概念清单（label 必须一字不差引用）：'];
+  rec.stages.forEach((s, si) => {
+    lines.push(`S${si + 1} ${s.label}`);
+    s.concepts.forEach((c, ci) => lines.push(`  S${si + 1}-${ci + 1} ${c.label}`));
+  });
+  const { content } = await chatCompletion({
+    baseUrl: model.baseUrl,
+    apiKey: model.apiKey,
+    model: model.model,
+    temperature: 0.1,
+    maxTokens: Math.min(model.maxTokens, 2_048),
+    messages: [
+      { role: 'system', content: getConceptFlowsSystemPrompt() },
+      { role: 'user', content: lines.join('\n') },
+    ],
+    responseFormatJson: true,
+    thinking: { type: 'disabled' },
+    label: 'concept-flows',
+  });
+  const flows = resolveFlows(parseConceptFlows(content), rec.stages);
+  if (!flows || flows.length === 0) {
+    throw new Error('模型未输出有效关系边（引用的概念不在清单中）——可重试一次');
+  }
+  // 写回缓存（同 key 覆盖，flows 随记录持久化）
+  await db.put(DB.stores.outlines, conceptMapCacheKey(videoId, rec.promptVersion, rec.model), {
+    ...rec,
+    flows,
+  });
+  return flows;
 }

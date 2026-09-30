@@ -38,7 +38,8 @@ import {
   punctuateSubtitles,
   restoreRawSubtitles,
 } from './subtitleLoader';
-import type { Cue } from '../types';
+import { generateConceptFlows } from './mindmapLoader';
+import type { ConceptFlow, Cue } from '../types';
 
 type TabKey = 'subtitle' | 'outline' | 'mindmap' | 'chat';
 
@@ -375,6 +376,14 @@ export function App() {
     }
   };
 
+  /** 关系边生成（流程图 Tab）：独立小请求，成功后更新 conceptMap 状态 */
+  const handleGenerateFlows = async (): Promise<ConceptFlow[]> => {
+    if (!video?.videoId) throw new Error('未检测到视频');
+    const flows = await generateConceptFlows(video.videoId);
+    setConceptMap((prev) => (prev ? { ...prev, flows } : prev));
+    return flows;
+  };
+
   /** 重判问答角色（用户点"重判角色"） */
   const handleRefreshPersona = async () => {
     if (!video || !modelConfig?.apiKey) return;
@@ -638,6 +647,7 @@ export function App() {
                 modelReady={!!modelConfig?.apiKey}
                 onOpenSettings={() => setShowSettings(true)}
                 generateConceptMap={handleGenerateConceptMap}
+                generateFlows={handleGenerateFlows}
                 conceptMap={conceptMap}
                 degraded={conceptDegraded}
                 degradedText={conceptError ?? undefined}

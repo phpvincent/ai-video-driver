@@ -43,6 +43,8 @@ export interface MindmapTabProps {
   modelReady?: boolean;
   /** 打开设置页（模型未配置引导） */
   onOpenSettings?: () => void;
+  /** 关系边独立生成（冒烟 3b 二轮）：App 闭包（含 videoId），成功后更新 conceptMap 状态 */
+  generateFlows?: () => Promise<ConceptFlow[]>;
   /** 生成概念图（注入 mindmapLoader.generateConceptMap 的包装；未接线时组件降级为本地术语图） */
   generateConceptMap?: (sections: Section[], videoTitle: string) => Promise<void>;
   /** 缓存命中的概念图（App 注入，stages 阶段流） */
@@ -446,24 +448,85 @@ export function layoutConceptFlow(stages: ConceptStage[]): FlowLayout {
   };
 }
 
-/** 节点 → 右侧出边锚点 */
-function outPoint(n: FlowNode): { x: number; y: number } {
-  return { x: n.x + n.w, y: n.y + n.h / 2 };
-}
-
-/** 节点 → 左侧入边锚点（同列时用底部，避免重叠） */
-function inPoint(n: FlowNode, sameColumn: boolean): { x: number; y: number } {
-  return sameColumn ? { x: n.x + n.w / 2, y: n.y + n.h } : { x: n.x, y: n.y + n.h / 2 };
-}
-
-/** 贝塞尔路径（水平流向；同列时走右侧绕行） */
-function edgePath(a: { x: number; y: number }, b: { x: number; y: number }, sameColumn: boolean): string {
-  if (sameColumn) {
-    const mx = Math.max(a.x, b.x) + FLOW_COL_GAP / 2;
-    return `M ${a.x} ${a.y} C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x} ${b.y}`;
+/** 圆角正交路径：依次经过拐点，拐角用二次曲线（r=7）圆滑 */
+function orthogonalPath(points: Array<{ x: number; y: number }>, r = 7): string {
+  if (points.length < 2) return '';
+  let d = `M ${points[0]!.x} ${points[0]!.y}`;
+  for (let i = 1; i < points.length - 1; i++) {
+    const prev = points[i - 1]!;
+    const corner = points[i]!;
+    const next = points[i + 1]!;
+    // 拐点处向两边各收 r，走二次贝塞尔圆角
+    const rIn = Math.min(r, Math.abs(corner.x - prev.x) + Math.abs(corner.y - prev.y)) / 2;
+    const rOut = Math.min(r, Math.abs(next.x - corner.x) + Math.abs(next.y - corner.y)) / 2;
+    const toCornerX = Math.sign(corner.x - prev.x) * Math.min(rIn, Math.abs(corner.x - prev.x));
+    const toCornerY = Math.sign(corner.y - prev.y) * Math.min(rIn, Math.abs(corner.y - prev.y));
+    const fromCornerX = Math.sign(next.x - corner.x) * Math.min(rOut, Math.abs(next.x - corner.x));
+    const fromCornerY = Math.sign(next.y - corner.y) * Math.min(rOut, Math.abs(next.y - corner.y));
+    d += ` L ${corner.x - toCornerX} ${corner.y - toCornerY}`;
+    d += ` Q ${corner.x} ${corner.y}, ${corner.x + fromCornerX} ${corner.y + fromCornerY}`;
   }
-  const mx = (a.x + b.x) / 2;
-  return `M ${a.x} ${a.y} C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x} ${b.y}`;
+  const last = points[points.length - 1]!;
+  d += ` L ${last.x} ${last.y}`;
+  return d;
+}
+
+export interface FlowEdgeGeom {
+  d: string;
+  /** 边标签锚点（竖直段中点；无竖直段时为水平段中点） */
+  labelX: number;
+  labelY: number;
+}
+
+/**
+ * 边几何（正交路由，冒烟 3b 二轮）：**边只走列间空隙（gutter）**，
+ * 不再穿节点——旧版贝塞尔会被中间列的节点盖住（节点后绘制）。
+ * - 相邻列：源右缘 → gutter → 目标左缘；
+ * - 跨列：源右缘 → 源列右侧第一条 gutter → 竖直到目标行 → 目标左缘；
+ * - 同列：绕右侧（底线出、右侧回）。
+ * 标签锚点 = gutter 竖直段的中点。
+ */
+export function flowEdgeGeometry(
+  a: FlowNode,
+  b: FlowNode,
+  opts: { kind: 'flow' | 'seq'; colGap: number; lane?: number },
+): FlowEdgeGeom {
+  const y1 = a.y + a.h / 2;
+  const y2 = b.y + b.h / 2;
+  const sameColumn = a.stageIndex === b.stageIndex;
+  if (sameColumn) {
+    // 同列：右缘出 → 右侧绕行 → 底部入
+    const mx = Math.max(a.x, b.x) + a.w + opts.colGap / 2;
+    const points = [
+      { x: a.x + a.w, y: y1 },
+      { x: mx, y: y1 },
+      { x: mx, y: b.y + b.h + 10 },
+      { x: b.x + b.w / 2, y: b.y + b.h + 10 },
+      { x: b.x + b.w / 2, y: b.y + b.h },
+    ];
+    return { d: orthogonalPath(points), labelX: mx, labelY: (y1 + b.y + b.h) / 2 };
+  }
+  // gutter：源列右缘与下一列左缘之间的空隙中点（相邻与跨列都用它，保证在空隙里）。
+  // 同源多条边按 lane 在 gutter 内错开（±14px），避免竖线重叠。
+  const laneOffset = (opts.lane ?? 0) * 14;
+  const gutterX = a.x + a.w + opts.colGap / 2 + laneOffset;
+  const points =
+    Math.abs(y1 - y2) < 2
+      ? [
+          { x: a.x + a.w, y: y1 },
+          { x: b.x, y: y2 },
+        ]
+      : [
+          { x: a.x + a.w, y: y1 },
+          { x: gutterX, y: y1 },
+          { x: gutterX, y: y2 },
+          { x: b.x, y: y2 },
+        ];
+  return {
+    d: orthogonalPath(points),
+    labelX: gutterX,
+    labelY: (y1 + y2) / 2 - 5,
+  };
 }
 
 /** 流程图视图：节点 = 概念（点击跳播），边 = 模型 flows + 阶段内顺序边 */
@@ -475,6 +538,7 @@ function ConceptFlowView({
   degraded,
   degradedText,
   onRetry,
+  onGenerateFlows,
 }: {
   stages: ConceptStage[];
   flows: ConceptFlow[] | undefined;
@@ -483,24 +547,33 @@ function ConceptFlowView({
   degraded?: boolean;
   degradedText?: string;
   onRetry?: () => void;
+  /** 关系边独立生成（冒烟 3b 二轮：与概念图分开，省 token）；未注入时只提示 */
+  onGenerateFlows?: () => Promise<unknown>;
 }) {
+  const [generatingFlows, setGeneratingFlows] = useState(false);
+  const [flowError, setFlowError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const layout = useMemo(() => layoutConceptFlow(stages), [stages]);
   const nodeById = useMemo(() => new Map(layout.nodes.map((n) => [n.id, n])), [layout]);
 
   // 模型 flows（端点必须能解析到节点）+ 阶段内顺序边（虚线，弱化）
   const edges = useMemo(() => {
-    const out: Array<{ key: string; d: string; label?: string; kind: 'flow' | 'seq' }> = [];
+    const out: Array<{ key: string; d: string; label?: string; kind: 'flow' | 'seq'; labelX: number; labelY: number }> = [];
+    const laneByFrom = new Map<string, number>();
     for (const f of flows ?? []) {
       const a = nodeById.get(f.fromId);
       const b = nodeById.get(f.toId);
       if (!a || !b) continue;
-      const sameColumn = a.stageIndex === b.stageIndex;
+      const lane = laneByFrom.get(f.fromId) ?? 0;
+      laneByFrom.set(f.fromId, lane + 1);
+      const geom = flowEdgeGeometry(a, b, { kind: 'flow', colGap: FLOW_COL_GAP, lane });
       out.push({
         key: `${f.fromId}->${f.toId}:${f.label ?? ''}`,
-        d: edgePath(outPoint(a), inPoint(b, sameColumn), sameColumn),
+        d: geom.d,
         label: f.label,
         kind: 'flow',
+        labelX: geom.labelX,
+        labelY: geom.labelY,
       });
     }
     for (const stage of stages) {
@@ -508,10 +581,13 @@ function ConceptFlowView({
         const a = nodeById.get(stage.concepts[i]!.id);
         const b = nodeById.get(stage.concepts[i + 1]!.id);
         if (!a || !b) continue;
+        const geom = flowEdgeGeometry(a, b, { kind: 'seq', colGap: FLOW_COL_GAP });
         out.push({
           key: `seq-${a.id}-${b.id}`,
-          d: edgePath({ x: a.x + a.w, y: a.y + a.h / 2 }, { x: b.x, y: b.y + b.h / 2 }, false),
+          d: geom.d,
           kind: 'seq',
+          labelX: geom.labelX,
+          labelY: geom.labelY,
         });
       }
     }
@@ -539,14 +615,31 @@ function ConceptFlowView({
   const flowCount = (flows ?? []).length;
   return (
     <div className="cm-container">
-      {(degraded || flowCount === 0) && (
+      {(degraded || (flowCount === 0 && !generatingFlows)) && (
         <div className={`cm-degraded-banner${degraded ? '' : ' cmf-hint-banner'}`} role="status">
           <span className="cm-degraded-text">
             {degraded
               ? (degradedText ?? CONCEPT_DEGRADED_TEXT)
-              : '本图为旧版缓存（无逻辑关系边）——点「重新生成」可获得 draw.io 式流程'}
+              : '还没有逻辑关系边——生成一次（独立小请求，只传概念清单，很省 token）即可看到 draw.io 式流程'}
+            {flowError ? `：${flowError}` : ''}
           </span>
-          {(degraded ? onRetry : generateFlowRetry()) && onRetry && (
+          {!degraded && onGenerateFlows && (
+            <button
+              type="button"
+              className="cm-retry-btn"
+              disabled={generatingFlows}
+              onClick={() => {
+                setGeneratingFlows(true);
+                setFlowError(null);
+                onGenerateFlows()
+                  .catch((err: unknown) => setFlowError(err instanceof Error ? err.message : String(err)))
+                  .finally(() => setGeneratingFlows(false));
+              }}
+            >
+              {generatingFlows ? '生成中…' : '生成关系边'}
+            </button>
+          )}
+          {degraded && onRetry && (
             <button type="button" className="cm-retry-btn" onClick={onRetry}>
               {CONCEPT_RETRY_TEXT}
             </button>
@@ -598,7 +691,7 @@ function ConceptFlowView({
             <g key={e.key} className={`cmf-edge ${e.kind}`}>
               <path d={e.d} markerEnd={e.kind === 'flow' ? 'url(#cmf-arrow)' : 'url(#cmf-arrow-seq)'} />
               {e.label && (
-                <text className="cmf-edge-label" x={0} y={0}>
+                <text className="cmf-edge-label" x={e.labelX} y={e.labelY} textAnchor="middle">
                   {e.label}
                 </text>
               )}
@@ -634,11 +727,6 @@ function ConceptFlowView({
 function mmssLabel(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));
   return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
-}
-
-/** 旧缓存提示条的重试按钮仅在可重试时渲染（占位，避免未定义引用） */
-function generateFlowRetry(): boolean {
-  return true;
 }
 
 /** 概念图视图（竖向阶段流程；stages 由调用方决定来源：缓存、App 降级或本地降级） */
@@ -891,6 +979,7 @@ export function MindmapTab(props: MindmapTabProps) {
     onRequestSeek,
     modelReady = false,
     onOpenSettings,
+    generateFlows,
     generateConceptMap,
     conceptMap = null,
     generating = false,
@@ -966,6 +1055,7 @@ export function MindmapTab(props: MindmapTabProps) {
             <ConceptFlowView
               stages={conceptMap.stages}
               flows={conceptMap.flows}
+              onGenerateFlows={generateFlows}
               activeLabels={(() => {
                 // 与列表视图同一跟随口径（matchConcepts），此处内联避免提升 hook
                 const labels = matchConcepts(sections, positionMs, conceptMap.stages);

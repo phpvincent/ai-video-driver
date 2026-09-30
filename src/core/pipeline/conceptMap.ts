@@ -67,6 +67,37 @@ export const ConceptStagesSchema = z.object({
     .optional(),
 });
 
+/** 关系边独立生成（冒烟 3b 二轮：与概念图分开，省 token）的输出 Schema */
+export const ConceptFlowsSchema = z.object({
+  flows: z.array(
+    z.object({
+      from: z.string().min(1).max(30),
+      to: z.string().min(1).max(30),
+      label: z.string().min(1).max(12).optional(),
+    }),
+  ),
+});
+
+/** 解析关系边输出（宽松 JSON 修复同口径）；非法 throw（调用方提示重试） */
+export function parseConceptFlows(content: string): ConceptStagesRaw['flows'] {
+  const loose = parseJsonLoose(content);
+  let rawValue: unknown = null;
+  if (loose !== null) rawValue = loose.value;
+  else {
+    try {
+      rawValue = JSON.parse(content);
+    } catch {
+      rawValue = null;
+    }
+  }
+  const parsed = ConceptFlowsSchema.safeParse(rawValue);
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
+    throw new Error(`关系边输出未通过校验：${issues}`);
+  }
+  return parsed.data.flows;
+}
+
 /**
  * 解析并校验模型输出：JSON.parse（失败时尝试修复**被截断**的输出）+ ConceptStagesSchema。
  * 解析/校验失败 throw，由 buildConceptMap 的重试逻辑捕获。

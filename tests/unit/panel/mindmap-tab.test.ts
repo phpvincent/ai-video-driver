@@ -709,7 +709,21 @@ describe('流程图视图（冒烟 3b：draw.io 式）', () => {
     expect(html).toContain('cmf-svg');
     expect(html).toContain('cmf-stage-rect');
     expect(html).toContain('cmf-edge seq');
-    expect(html).toContain('重新生成」可获得');
+    // 旧缓存（无 flows）：显示提示条（按钮仅在注入 generateFlows 后渲染）
+    expect(html).toContain('还没有逻辑关系边');
+  });
+
+  it('注入 generateFlows 后：无 flows 显示「生成关系边」按钮', () => {
+    const html = renderToString(
+      createElement(MindmapTab, {
+        sections,
+        positionMs: 0,
+        onRequestSeek: noop,
+        conceptMap: mapData(stageFlow()),
+        generateFlows: async () => [],
+      }),
+    );
+    expect(html).toContain('生成关系边');
   });
 
   it('带 flows 的数据：渲染 flow 边与边标签；无效引用被丢弃', () => {
