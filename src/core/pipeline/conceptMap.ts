@@ -99,7 +99,8 @@ export function parseConceptFlows(content: string): ConceptStagesRaw['flows'] {
 }
 
 /**
- * 解析并校验模型输出：JSON.parse（失败时尝试修复**被截断**的输出）+ ConceptStagesSchema。
+ * 解析并校验模型输出：JSON.parse（失败时尝试修复**被截断**的输出）+ 概念形状
+ * 归一化 + ConceptStagesSchema。
  * 解析/校验失败 throw，由 buildConceptMap 的重试逻辑捕获。
  *
  * 截断是最常见的失败形态（最外层 `}` 缺失，或最后一个阶段只输出一半），此时重试
@@ -116,7 +117,7 @@ export function parseConceptStages(content: string): ConceptStagesRaw {
     }
     throw new Error(`模型输出不是合法 JSON：${message}`);
   }
-  const parsed = ConceptStagesSchema.safeParse(loose.value);
+  const parsed = ConceptStagesSchema.safeParse(normalizeConceptStages(loose.value));
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((i) => `${i.path.join('.')}: ${i.message}`)
@@ -124,6 +125,42 @@ export function parseConceptStages(content: string): ConceptStagesRaw {
     throw new Error(withRepairHint(`模型输出未通过 Schema 校验：${issues}`, loose.repaired));
   }
   return parsed.data;
+}
+
+/**
+ * 概念输出形状归一化（确定性，红线 1；与 jsonRepair 同哲学：能救则救）。
+ * 实测失败形态（qwen3.5-flash，concept-map 0.7.0）：stages 数组里先输出 1~2 个
+ * 完整阶段对象，然后把叙事弧的箭头串当字符串、把"3~5"当数字、把"主题 1~n"当
+ * 数组混进后续元素。整批拒绝太可惜——垃圾元素丢弃、合法对象保留：
+ * - stages：只留对象元素（数组/字符串/数字等丢弃），截到 stagesMax（保序取前 N）；
+ * - 每阶段 concepts：只留对象元素，截到 conceptsPerStageMax；
+ * - 每概念 details：只留字符串元素。
+ * 全合法输入恒等返回（幂等）；归一化后仍不满足 Schema（如阶段 < 3）由 zod 如实报出。
+ */
+export function normalizeConceptStages(value: unknown): unknown {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return value;
+  const root = value as Record<string, unknown>;
+  if (!Array.isArray(root.stages)) return value;
+  const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+    v != null && typeof v === 'object' && !Array.isArray(v);
+  const stages = root.stages
+    .filter(isPlainObject)
+    .map((stage) => {
+      if (!Array.isArray(stage.concepts)) return stage;
+      const concepts = stage.concepts
+        .filter(isPlainObject)
+        .map((concept) => {
+          if (!Array.isArray(concept.details)) return concept;
+          return {
+            ...concept,
+            details: concept.details.filter((d): d is string => typeof d === 'string'),
+          };
+        })
+        .slice(0, CONCEPT_MAP.conceptsPerStageMax);
+      return { ...stage, concepts };
+    })
+    .slice(0, CONCEPT_MAP.stagesMax);
+  return { ...root, stages };
 }
 
 // ---------------------------------------------------------------------------
@@ -404,11 +441,15 @@ export async function buildConceptMap(
   let lastError = '';
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     // 截断（输出在 JSON 结束前就没了）是最常见的失败形态：同样的上下文重试大概率
-    // 得到同样的截断，故重试提示必须明确要求"输出更短、务必闭合"，而不是泛泛重来
+    // 得到同样的截断，故重试提示必须明确要求"输出更短、务必闭合"，而不是泛泛重来。
+    // 形状错误（stages 混入非对象元素）次之：明确告诉模型该长什么样。
     const truncated = lastError.includes('不是合法 JSON');
+    const nonObject = lastError.includes('expected object');
     const retryHint = truncated
       ? '上次输出在 JSON 结束前就被截断了。请压缩内容：阶段取 3 个、每阶段概念不超过 4 个、每条 details 尽量短，务必输出完整闭合的 JSON。'
-      : '请重新输出严格符合要求的 JSON，不要包含任何其他文字。';
+      : nonObject
+        ? '上次输出的 stages 数组里混入了字符串、数字或数组等非对象元素。stages 的每个元素必须且只能是 {"label":"阶段名","concepts":[{"label":"概念名","importance":3,"anchorSections":[1],"details":[""]}]} 形态的对象，共 3~5 个；叙事弧只用于指导你划分阶段，不要把弧本身写进输出。请重新输出严格符合要求的 JSON。'
+        : '请重新输出严格符合要求的 JSON，不要包含任何其他文字。';
     const userPrompt =
       attempt === 0
         ? baseUserPrompt

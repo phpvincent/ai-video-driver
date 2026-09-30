@@ -261,18 +261,25 @@ describe('问答动态角色：persona.md 0.1.0', () => {
   });
 });
 
-describe('导图主线组织：concept-map 0.7.0 / concept-flows 0.3.0（nature-paper2ppt 提炼）', () => {
+describe('导图主线组织：concept-map 0.7.1 / concept-flows 0.3.0（nature-paper2ppt 提炼）', () => {
   it('文件头版本与 PROMPT_VERSIONS 一致（conceptMap 升版自动失效旧图缓存，flows 随之重生成）', () => {
     expect(parsePromptHeader(conceptMapMdRaw)).toEqual({
-      promptVersion: '0.7.0',
+      promptVersion: '0.7.1',
       kind: 'concept-map',
     });
     expect(parsePromptHeader(conceptFlowsMdRaw)).toEqual({
       promptVersion: '0.3.0',
       kind: 'concept-flows',
     });
-    expect(PROMPT_VERSIONS.conceptMap).toBe('0.7.0');
+    expect(PROMPT_VERSIONS.conceptMap).toBe('0.7.1');
     expect(PROMPT_VERSIONS.conceptFlows).toBe('0.3.0');
+  });
+
+  it('0.7.1 防混淆护栏：弧不进输出 + stages 元素必须是对象', () => {
+    const body = getConceptMapSystemPrompt();
+    expect(body).toContain('不要出现在输出里');
+    expect(body).toContain('都必须是 {"label":"","concepts":[…]} 形态的对象');
+    expect(body).toContain('不允许出现字符串、数字或数组元素');
   });
 
   it('主线优先于章节顺序（论证主线 > 照搬章节顺序）', () => {
