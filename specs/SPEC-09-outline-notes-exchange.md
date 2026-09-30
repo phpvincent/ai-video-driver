@@ -166,3 +166,4 @@
 | 10-01 | 父 agent | 起草（依据用户确认的锚点 / 讨论串 / 归位 / 导入导出设计） | — | 本提交 |
 | 10-01 | 父 agent | **开工范围说明**：SPEC-08 仅剩 [人工] 冒烟项，地基子任务（9.1/9.2/9.5）先行施工，不触碰 UI 与既有功能 | — | — |
 | 10-01 | 父 agent | 9.1 数据模型与存储：`OutlineNote`/`NoteAnchor`/`NoteReply` 入 types.ts；DB.stores.notes + 版本 v3→v4（补建 store 幂等）；saveNote/deleteNote/listNotesByVideo。**范围说明**：设计稿"索引 videoId"简化为 getAll+过滤（沿用 qaHistory 先例，量级低），行为等价 | 单测 6 例过（排序/隔离/删除/透传/脏数据过滤） | 本提交 |
+| 10-01 | 父 agent | 9.2 重新归位：`core/notes/reanchor.ts` 纯函数（bullet 15s 窗口 + 字符 bigram Jaccard 相似度选优；section 待确认 = 标题完全不同且时长重叠 <50%；time 按 tMs 落章；越界未归位；**永不删除**）；常量入 config NOTES | 单测 17 例过（A3 全路径：命中/降级/选优/待确认/越界不减/可再归位） | 本提交 |

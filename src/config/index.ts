@@ -224,6 +224,14 @@ export const OBSIDIAN = {
   requestTimeoutMs: 8_000,
 } as const;
 
+/** 大纲笔记（SPEC-09）：重新归位算法常量（spec §3.3 用户确认值） */
+export const NOTES = {
+  /** bullet 锚点重新归位的时间窗口：新要点与 tMs 的偏差 ≤ 15s 才参与文本相似度匹配 */
+  reanchorBulletWindowMs: 15_000,
+  /** 章节锚点「待确认」判定：旧/新章节标题完全不同 且 时长重叠 < 50% */
+  reanchorPendingOverlapRatio: 0.5,
+} as const;
+
 export const DB = {
   name: 'vsc-cache',
   stores: {
