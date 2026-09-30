@@ -24,6 +24,8 @@ import {
   seedProfilesIfEmpty,
   stripSeedProfiles,
   preserveSecrets,
+  mergeSavedSecrets,
+  maskKey,
 } from '../../../src/panel/settings/modelForm';
 import type { ModelConfig, Settings } from '../../../src/types';
 
@@ -643,5 +645,39 @@ describe('mergeSettings', () => {
     const prev = { model: { ...DEFAULT_MODEL, apiKey: 'sk-old' } } as never;
     const next = { model: { ...DEFAULT_MODEL, apiKey: 'sk-new' } } as never;
     expect(preserveSecrets(next, prev).model?.apiKey).toBe('sk-new');
+  });
+  it('mergeSavedSecrets：只改 moduleModel（切 Tab/切模块）时 Key 原样不动', () => {
+    const stored = {
+      model: { ...DEFAULT_MODEL, apiKey: 'sk-keep' },
+      modelProfiles: [{ name: 'Q', apiKey: 'sk-q', baseUrl: 'https://q', model: 'm' }],
+    } as never;
+    const next = { ...(stored as object), moduleModel: { qa: 'Q' } } as never;
+    const out = mergeSavedSecrets(next, stored);
+    expect(out.model?.apiKey).toBe('sk-keep');
+    expect((out.modelProfiles as Array<{ apiKey: string }>)[0]?.apiKey).toBe('sk-q');
+  });
+
+  it('mergeSavedSecrets：保存其他分区（Obsidian）不带 model 时 Key 不被清空', () => {
+    const stored = { model: { ...DEFAULT_MODEL, apiKey: 'sk-keep' } } as never;
+    const next = {
+      model: { ...DEFAULT_MODEL, apiKey: '' },
+      obsidian: { baseUrl: 'https://o', apiKey: 'k', rootDir: 'r' },
+    } as never;
+    expect(mergeSavedSecrets(next, stored).model?.apiKey).toBe('sk-keep');
+  });
+
+  it('mergeSavedSecrets：用户填了新 Key 才覆盖（身份不变）', () => {
+    const stored = { model: { ...DEFAULT_MODEL, apiKey: 'sk-old' } } as never;
+    const next = { model: { ...DEFAULT_MODEL, apiKey: 'sk-new' } } as never;
+    expect(mergeSavedSecrets(next, stored).model?.apiKey).toBe('sk-new');
+  });
+
+  it('maskKey：脱敏且不暴露完整内容', () => {
+    expect(maskKey('')).toBe('未设置');
+    expect(maskKey(undefined)).toBe('未设置');
+    expect(maskKey('short')).toBe('••••••••');
+    const masked = maskKey('sk-abcdefgh1234');
+    expect(masked.endsWith('1234')).toBe(true);
+    expect(masked).not.toContain('abcdefgh');
   });
 });

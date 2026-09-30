@@ -195,40 +195,60 @@ export function stripSeedProfiles(settings: Settings): Settings {
   return { ...settings, modelProfiles: kept as Settings['modelProfiles'] };
 }
 
+/** 身份槽位：方案名 + 端点。Key 归属于"这个端点上的这个方案"，不是归属于某个下标 */
+function slotId(m?: { name?: string; baseUrl?: string }): string {
+  return `${(m?.name ?? '').trim()}|${(m?.baseUrl ?? '').trim()}`;
+}
+
 /**
- * 密钥护栏：新值 Key 为空而旧值非空时沿用旧值。
- * 任何保存路径都不得因为"表单里没填 / 载入未完成"而把已配置的 Key 清空。
+ * 【核心不变式】已保存的 API Key 是用户资产，只有"用户在表单里填了非空的新值"才能改变它。
+ *
+ * 除该动作外的任何路径——切换 Tab、刷新页面、保存其他分区（Obsidian/检索）、
+ * 内置方案种子注入、旧数据迁移、模块下拉写回——都不得改动已保存的 Key。
+ *
+ * 规则（逐槽位，身份 = 方案名 + 端点）：
+ * - 新值 Key 非空 → 视为用户新填，接受（覆盖）
+ * - 新值 Key 为空 → 沿用同身份槽位里已保存的 Key
+ * - 身份不同（换端点/换名）→ 无 Key 可沿用，保持空（需用户填写，避免平台错配 401）
  */
-export function preserveSecrets(next: Settings, prev: Settings): Settings {
-  const pm = prev.model;
+export function mergeSavedSecrets(next: Settings, stored: Settings): Settings {
   const nm = next.model;
-  // Key 跟着端点走：**只有 baseUrl 相同（同一平台）才允许沿用空 Key**——
-  // 换了端点还沿用旧 Key，就是把 A 平台的钥匙插进 B 平台的门（401 的根因）
-  const sameEndpoint =
-    nm && pm && (nm.baseUrl ?? '').trim() === (pm.baseUrl ?? '').trim();
+  const sm = stored.model;
   const model =
-    nm && pm && sameEndpoint && !nm.apiKey?.trim() && pm.apiKey?.trim()
-      ? { ...nm, apiKey: pm.apiKey }
+    nm && sm && slotId(nm) === slotId(sm) && !nm.apiKey?.trim() && sm.apiKey?.trim()
+      ? { ...nm, apiKey: sm.apiKey }
       : nm;
 
-  const prevProfiles = (prev.modelProfiles ?? []) as Array<ModelConfig & { name?: string }>;
+  const storedProfiles = (stored.modelProfiles ?? []) as Array<ModelConfig & { name?: string }>;
   const nextProfiles = (next.modelProfiles ?? []) as Array<ModelConfig & { name?: string }>;
   const profiles =
     nextProfiles.length > 0
       ? nextProfiles.map((p) => {
-          const name = p?.name?.trim();
-          if (!name || p.apiKey?.trim()) return p;
-          const old = prevProfiles.find((q) => (q?.name?.trim() ?? '') === name);
-          // 同名且同端点才沿用；端点变了说明用户在换平台，旧 Key 不可复用
-          const sameBase = old && (old.baseUrl ?? '').trim() === (p.baseUrl ?? '').trim();
-          return old && sameBase && old.apiKey?.trim() ? { ...p, apiKey: old.apiKey } : p;
+          if (p?.apiKey?.trim()) return p;
+          const old = storedProfiles.find((q) => slotId(q) === slotId(p));
+          return old?.apiKey?.trim() ? { ...p, apiKey: old.apiKey } : p;
         })
       : next.modelProfiles;
 
   return { ...next, model: model ?? next.model, modelProfiles: profiles ?? next.modelProfiles };
 }
 
-/** 预设按钮短名（避免多个 Qwen 端点按钮同名） */
+/** 脱敏展示：让用户能确认"Key 还在"，但不暴露内容 */
+export function maskKey(apiKey?: string): string {
+  const k = (apiKey ?? '').trim();
+  if (k.length === 0) return '未设置';
+  if (k.length <= 8) return '••••••••';
+  return `••••${k.slice(-4)}`;
+}
+
+/**
+ * 密钥护栏：新值 Key 为空而旧值非空时沿用旧值。
+ * 任何保存路径都不得因为"表单里没填 / 载入未完成"而把已配置的 Key 清空。
+ */
+export function preserveSecrets(next: Settings, prev: Settings): Settings {
+  return mergeSavedSecrets(next, prev);
+}
+
 export function presetShortLabel(preset: PresetKey): string {
   switch (preset) {
     case 'deepseek':

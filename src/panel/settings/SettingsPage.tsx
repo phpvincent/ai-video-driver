@@ -31,6 +31,8 @@ import {
   migrateVisionToModel,
   stripSeedProfiles,
   preserveSecrets,
+  mergeSavedSecrets,
+  maskKey,
   mergeSettings,
   normalizeModelConfig,
   presetShortLabel,
@@ -238,19 +240,32 @@ export function SettingsPage({
   }, []);
 
   /** 合并写：patch 覆盖目标分区，其余分区原样保留 */
+  /** 读取最新存储：写回必须以存储值为基准，不能用内存快照（会把刚写入的 Key 回滚） */
+  const readLatest = async (): Promise<Settings> => {
+    try {
+      const fresh = (await sendRuntimeMessage({ type: MSG.GET_SETTINGS })) as Settings | null;
+      if (fresh && typeof fresh === 'object') return fresh;
+    } catch {
+      /* 读取失败时退回内存快照 */
+    }
+    return savedRef.current;
+  };
+
   const savePatch = (patch: Partial<Settings>): Promise<boolean> => {
-    const merged = mergeSettings(savedRef.current, patch);
-    // 两道护栏：剥离未激活的种子方案 + 不得清空已有密钥
-    const next = stripSeedProfiles(preserveSecrets(merged, savedRef.current));
-    return sendRuntimeMessage({ type: MSG.SET_SETTINGS, payload: next })
-      .then((response: unknown) => {
-        if ((response as { ok?: boolean } | null)?.ok === true) {
-          savedRef.current = next;
-          return true;
-        }
-        return false;
-      })
-      .catch(() => false);
+    // 先取最新存储，再按不变式合并：已保存的 Key 只有用户新填才改变
+    return readLatest().then((latest) => {
+      const merged = mergeSettings(latest, patch);
+      const next = stripSeedProfiles(mergeSavedSecrets(merged, latest));
+      return sendRuntimeMessage({ type: MSG.SET_SETTINGS, payload: next })
+        .then((response: unknown) => {
+          if ((response as { ok?: boolean } | null)?.ok === true) {
+            savedRef.current = next;
+            return true;
+          }
+          return false;
+        })
+        .catch(() => false);
+    });
   };
 
   const update = (field: keyof ModelFormState) => (
@@ -575,7 +590,7 @@ export function SettingsPage({
           />
         </label>
         <label className="field">
-          <span>API Key</span>
+          <span>API Key（已保存：{maskKey(savedRef.current.model?.apiKey)}；留空表示不修改）</span>
           <input
             type="password"
             placeholder="粘贴 API Key"
