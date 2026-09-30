@@ -292,7 +292,11 @@ export function SettingsPage({
       apiKey: model.apiKey,
       model: model.model,
       temperature: model.temperature.outline,
-      maxTokens: 1,
+      // 连通性探测给足余量：推理模型未禁思考时 1 个 token 会被思考吃光导致正文为空
+      maxTokens: 16,
+      // 测试连接同样尊重「禁用思考过程」开关（此前遗漏：探测路径没传 thinking，
+      // 推理模型在 maxTokens=1 时思考耗尽预算 → 误报"模型正文为空"）
+      thinking: disableThinking ? { type: 'disabled' } : { type: 'enabled' },
       messages: [{ role: 'user', content: 'ping' }],
     })
       .then(() => {
