@@ -406,7 +406,7 @@ const SegmentAnswerSchema = z.object({
 ### 7.3 Obsidian Local REST API
 
 - 安装 Obsidian 插件 **Local REST API**，勾选 **Enable Non-encrypted (HTTP) Server**。
-- 默认 `http://127.0.0.1:27124`，鉴权头 `Authorization: Bearer <api-key>`。
+- 默认 `http://127.0.0.1:27123`，鉴权头 `Authorization: Bearer <api-key>`。
 - 写入：`PUT /vault/{path}`，`Content-Type: text/markdown`；路径逐段 URL 编码。
 - 默认 HTTPS 端口 27123 使用自签证书，扩展直连会失败，必须使用 HTTP 模式。
 
@@ -515,7 +515,7 @@ ai-video-driver/                    # 仓库根
     "https://api.bilibili.com/*",
     "https://*.hdslb.com/*",
     "https://api.deepseek.com/*",
-    "http://127.0.0.1:27124/*"
+    "http://127.0.0.1:27123/*"
   ],
   "content_scripts": [
     { "matches": ["https://www.bilibili.com/video/*"], "js": ["content.js"], "run_at": "document_idle" }

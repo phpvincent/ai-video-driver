@@ -96,7 +96,7 @@ export const SUBTITLE = {
 export { PLAYBACK } from './shared';
 
 export const OBSIDIAN = {
-  baseUrl: 'http://127.0.0.1:27124',
+  baseUrl: 'http://127.0.0.1:27123', // Local REST API 的 HTTP 模式端口（HTTPS 模式为 27124）
   requestTimeoutMs: 8_000,
 } as const;
 
