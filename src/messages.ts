@@ -22,6 +22,8 @@ export const MSG = {
   PAUSE: 'player/pause',
   /** panel -> background -> content：恢复播放 */
   RESUME: 'player/resume',
+  /** panel -> background -> content：抽取关键帧（视觉问答，返回 JPEG base64 数组） */
+  CAPTURE_FRAMES: 'video/capture-frames',
   /** panel -> background：拉取当前 tab 的视频信息（panel 打开时） */
   CURRENT_VIDEO_GET: 'video/current-get',
   /** panel <-> background：设置读写 */
@@ -51,6 +53,22 @@ export interface SeekPayload {
   targetMs: number;
 }
 
+export interface CaptureFramesPayload {
+  videoId: VideoId;
+  /** 目标时间点（毫秒），最多取前 N 个 */
+  targetsMs: number[];
+  /** 最长边像素（默认 512） */
+  maxSize?: number;
+}
+
+export interface CapturedFrame {
+  targetMs: number;
+  /** 已吸附到的真实帧时间（毫秒） */
+  actualMs: number;
+  /** JPEG base64（不含 data: 前缀） */
+  dataBase64: string;
+}
+
 export interface VideoIdPayload {
   videoId: VideoId;
 }
@@ -62,6 +80,7 @@ export type RuntimeMessage =
   | { type: typeof MSG.VIDEO_CHANGED; payload: VideoInfoPayload | null }
   | { type: typeof MSG.PLAYBACK_CHANGED; payload: PlaybackPayload }
   | { type: typeof MSG.SEEK; payload: SeekPayload }
+  | { type: typeof MSG.CAPTURE_FRAMES; payload: CaptureFramesPayload }
   | { type: typeof MSG.PAUSE; payload: VideoIdPayload }
   | { type: typeof MSG.RESUME; payload: VideoIdPayload }
   | { type: typeof MSG.CURRENT_VIDEO_GET }
