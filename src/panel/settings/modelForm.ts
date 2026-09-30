@@ -324,9 +324,7 @@ export function presetShortLabel(preset: PresetKey): string {
     case 'deepseek':
       return 'DeepSeek';
     case 'qwen':
-      return 'Qwen · 百炼官方';
-    case 'qwenMaas':
-      return 'Qwen · maas 网关';
+      return 'Qwen';
     default:
       return preset;
   }

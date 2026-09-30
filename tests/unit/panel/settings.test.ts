@@ -557,34 +557,31 @@ describe('mergeSettings', () => {
     expect(n.baseUrl).toBe('https://example.com');
   });
 
-  it('presetShortLabel：三个预设各自可区分', () => {
+  it('presetShortLabel：两个预设各自可区分', () => {
     expect(presetShortLabel('deepseek')).toBe('DeepSeek');
-    expect(presetShortLabel('qwen')).toContain('百炼');
-    expect(presetShortLabel('qwenMaas')).toContain('maas');
-    expect(presetShortLabel('qwen')).not.toBe(presetShortLabel('qwenMaas'));
+    expect(presetShortLabel('qwen')).toBe('Qwen');
   });
 
-  it('presetVisionDefault：DeepSeek 不支持图像，Qwen 两端点默认支持', () => {
+  it('presetVisionDefault：DeepSeek 不支持图像，Qwen 默认支持', () => {
     expect(presetVisionDefault('deepseek')).toBe(false);
     expect(presetVisionDefault('qwen')).toBe(true);
-    expect(presetVisionDefault('qwenMaas')).toBe(true);
   });
   it('activePreset：按 baseUrl 识别当前预设（含尾斜杠归一）', () => {
     expect(activePreset(MODEL_PRESETS.deepseek.baseUrl)).toBe('deepseek');
-    expect(activePreset(MODEL_PRESETS.qwenMaas.baseUrl + '/')).toBe('qwenMaas');
+    expect(activePreset(MODEL_PRESETS.qwen.baseUrl + '/')).toBe('qwen');
     expect(activePreset('https://example.com/v1')).toBeNull();
     expect(activePreset('')).toBeNull();
   });
-  it('seedProfilesIfEmpty：空方案时注入三个内置方案（多模态标记正确）', () => {
+  it('seedProfilesIfEmpty：空方案时注入两个内置方案（多模态标记正确）', () => {
     const seeded = seedProfilesIfEmpty({});
     const profiles = seeded.modelProfiles as never[];
-    expect(profiles.length).toBe(3);
+    expect(profiles.length).toBe(2);
     const names = profiles.map((x) => (x as { name: string }).name);
     expect(names.some((n) => n.includes('DeepSeek'))).toBe(true);
-    expect(names.filter((n) => n.includes('Qwen')).length).toBe(2);
+    expect(names.filter((n) => n.includes('Qwen')).length).toBe(1);
     // DeepSeek 不支持图像；Qwen 方案支持
     const ds = profiles.find((x) => (x as { name: string }).name.includes('DeepSeek')) as unknown as { supportsVision?: boolean };
-    const qw = profiles.find((x) => (x as { name: string }).name.includes('maas')) as unknown as { supportsVision?: boolean };
+    const qw = profiles.find((x) => (x as { name: string }).name.includes('Qwen')) as unknown as { supportsVision?: boolean };
     expect(ds.supportsVision).toBe(false);
     expect(qw.supportsVision).toBe(true);
     // 已有方案时不覆盖（幂等）
