@@ -40,6 +40,10 @@ const db = createSubtitleDb();
 
 /** App 当前视频 id 的共享 ref（App 接线时设置，explain 时读取） */
 export const currentVideoIdRef: { value: string | null } = { value: null };
+/** 当前视频元信息（App 同步）：问答上下文注入【视频信息】块，模型可直接回答时长/标题类问题 */
+export const currentVideoMetaRef: { value: { title?: string; durationMs?: number } | null } = {
+  value: null,
+};
 
 /** chrome.runtime.sendMessage 安全包装 */
 function sendRuntimeMessage(message: unknown): Promise<unknown> {
@@ -187,6 +191,7 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
     cues,
     rangeMs: args.rangeMs,
     positionMs: args.positionMs,
+    videoMeta: currentVideoMetaRef.value ?? undefined,
     // 知识库与公开资料各自带独立分隔标记，合并进同一素材分区
     knowledgeContext: [knowledge.context, web.context].filter(Boolean).join('\n\n'),
     images: frames.map((f) => ({

@@ -23,6 +23,8 @@ export interface CompileInput {
   question: string;
   /** 划词术语（术语解释时） */
   term?: string;
+  /** 视频元信息（标题/总时长等）：注入素材头部，模型可直接回答"视频多长/讲什么"这类问题 */
+  videoMeta?: { title?: string; durationMs?: number };
   /** 上轮摘要（≤150 token，调用方截断） */
   prevSummary?: string;
   /** 个人知识库素材（SPEC-05 范围变更第 4 条：由 knowledge/retriever 组装，未命中为空串） */
@@ -121,12 +123,23 @@ function assemblePrompt(
   const parts: string[] = [
     MATERIAL_BEGIN_MARK,
     '',
+  ];
+  // 视频元信息块：面板已知的事实（标题/总时长），不依赖字幕推断
+  if (input.videoMeta?.title || typeof input.videoMeta?.durationMs === 'number') {
+    const bits: string[] = [];
+    if (input.videoMeta?.title) bits.push(`标题：${input.videoMeta.title}`);
+    if (typeof input.videoMeta?.durationMs === 'number') {
+      bits.push(`总时长：${formatMmSs(input.videoMeta.durationMs)}`);
+    }
+    parts.push(`【视频信息】${bits.join('；')}`, '');
+  }
+  parts.push(
     '【全局章节列表】',
     sectionListText,
     '',
     `【区间字幕 ${formatMmSs(range[0])}-${formatMmSs(range[1])}】`,
     rangeCueText,
-  ];
+  );
   // 知识库素材（可缺省）：位于区间字幕之后、章节列表之后，同属素材包裹内
   if (knowledgeBlocks.length > 0) {
     parts.push('', knowledgeBlocks.join('\n\n'));

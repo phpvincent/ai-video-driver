@@ -685,3 +685,14 @@ body {
   color: #1d2939;
   border-color: #98a2b3;
 }
+
+/* ===== 设置页：当前选用预设的高亮 ===== */
+.btn.preset-active {
+  background: #e0f2fe;
+  border-color: #0284c7;
+  color: #075985;
+  font-weight: 600;
+}
+.btn.preset-active::after {
+  content: ' ✓';
+}

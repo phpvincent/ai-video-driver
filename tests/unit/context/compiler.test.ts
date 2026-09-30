@@ -241,3 +241,19 @@ describe('辅助纯函数', () => {
     expect(findSectionAt(sections, 600_000)?.id).toBe('sec_0002');
   });
 });
+
+describe('compiler 视频元信息注入', () => {
+  const base: CompileInput = makeInput({ question: '这个视频多长？' });
+
+  it('带 videoMeta → userPrompt 含【视频信息】与总时长', () => {
+    const r = compileContext({ ...base, videoMeta: { title: 'Agent 入门', durationMs: 1922000 } });
+    expect(r.userPrompt).toContain('【视频信息】');
+    expect(r.userPrompt).toContain('Agent 入门');
+    expect(r.userPrompt).toContain('32:02');
+  });
+
+  it('无 videoMeta → 不出现【视频信息】块（旧行为不变）', () => {
+    const r = compileContext(base);
+    expect(r.userPrompt).not.toContain('【视频信息】');
+  });
+});

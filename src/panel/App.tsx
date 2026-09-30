@@ -12,7 +12,7 @@ import { OutlineTab } from './OutlineTab';
 import { generateOutline, loadOutlineCached, regenerateOne } from './outlineLoader';
 import { SettingsPage } from './settings/SettingsPage';
 import { SubtitleTab } from './SubtitleTab';
-import { currentVideoIdRef, explain as explainFn } from './explainLoader';
+import { currentVideoIdRef, currentVideoMetaRef, explain as explainFn } from './explainLoader';
 import { saveTermCardToObsidian, saveVideoNoteToObsidian } from './obsidianLoader';
 import { applyUsageEvent, createEmptyUsage, type UsageRecord } from '../core/metrics/usage';
 import { createSubtitleDb, getUsage, saveUsage, listAllUsage } from '../storage/db';
@@ -138,6 +138,9 @@ export function App() {
 
   useEffect(() => {
     currentVideoIdRef.value = video?.videoId ?? null;
+    currentVideoMetaRef.value = video
+      ? { title: video.title, durationMs: video.durationMs }
+      : null;
     setSections([]);
     setPendingTerm(null);
     setConceptMap(null);

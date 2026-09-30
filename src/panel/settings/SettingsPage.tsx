@@ -22,6 +22,7 @@ import { DEFAULT_MODEL, MODEL_PRESETS, OBSIDIAN, VISION } from '../../config';
 import { MSG } from '../../messages';
 import { testObsidianConnection } from '../obsidianLoader';
 import {
+  activePreset,
   applyPreset,
   describeModelStrategy,
   migrateLegacyVisionModel,
@@ -294,9 +295,8 @@ export function SettingsPage({
       temperature: model.temperature.outline,
       // 连通性探测给足余量：推理模型未禁思考时 1 个 token 会被思考吃光导致正文为空
       maxTokens: 16,
-      // 测试连接同样尊重「禁用思考过程」开关（此前遗漏：探测路径没传 thinking，
-      // 推理模型在 maxTokens=1 时思考耗尽预算 → 误报"模型正文为空"）
-      thinking: disableThinking ? { type: 'disabled' } : { type: 'enabled' },
+      // 探测无条件禁用思考：连通性测试不需要推理，也不依赖用户开关状态
+      thinking: { type: 'disabled' },
       messages: [{ role: 'user', content: 'ping' }],
     })
       .then(() => {
@@ -461,10 +461,10 @@ export function SettingsPage({
           {presetKeys.map((key) => (
             <button
               type="button"
-              className="btn"
               key={`model-preset-${key}`}
               onClick={() => applyPresetToForm(key)}
               title={MODEL_PRESETS[key].label}
+              className={activePreset(form.baseUrl) === key ? 'btn preset-active' : 'btn'}
             >
               {presetShortLabel(key)}
             </button>

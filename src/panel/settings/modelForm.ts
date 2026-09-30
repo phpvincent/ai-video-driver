@@ -130,6 +130,16 @@ export function presetShortLabel(preset: PresetKey): string {
   }
 }
 
+/** 当前表单的接口地址匹配哪个预设（用于高亮显示"当前选用"） */
+export function activePreset(baseUrl: string): PresetKey | null {
+  const normalized = (baseUrl ?? '').trim().replace(/\/+$/, '');
+  if (!normalized) return null;
+  for (const key of Object.keys(MODEL_PRESETS) as PresetKey[]) {
+    if (MODEL_PRESETS[key].baseUrl === normalized) return key;
+  }
+  return null;
+}
+
 /** 归一化：去除粘贴带来的首尾空白（API Key 前后空格是 401 的常见成因） */
 export function normalizeModelConfig(form: ModelConfig): ModelConfig {
   return {

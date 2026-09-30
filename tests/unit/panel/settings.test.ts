@@ -17,6 +17,7 @@ import {
   visionActiveFor,
   normalizeModelConfig,
   presetShortLabel,
+  activePreset,
 } from '../../../src/panel/settings/modelForm';
 import type { ModelConfig, Settings } from '../../../src/types';
 
@@ -384,5 +385,11 @@ describe('mergeSettings', () => {
     expect(presetVisionDefault('deepseek')).toBe(false);
     expect(presetVisionDefault('qwen')).toBe(true);
     expect(presetVisionDefault('qwenMaas')).toBe(true);
+  });
+  it('activePreset：按 baseUrl 识别当前预设（含尾斜杠归一）', () => {
+    expect(activePreset(MODEL_PRESETS.deepseek.baseUrl)).toBe('deepseek');
+    expect(activePreset(MODEL_PRESETS.qwenMaas.baseUrl + '/')).toBe('qwenMaas');
+    expect(activePreset('https://example.com/v1')).toBeNull();
+    expect(activePreset('')).toBeNull();
   });
 });
