@@ -233,6 +233,33 @@ export function migrateLegacyVisionModel(settings: Settings): Settings {
 }
 
 /** 合并写回：把局部更新合并进整份 settings（不动其他分区） */
+/**
+ * 规范化方案列表（幂等）：
+ * 1. 旧版本的内置方案（名称以「内置 · 」开头）——其 Key 若有，先迁入端点表，
+ *    然后从方案列表删除（旧名称与当前两个内置方案不一致，会残留在下拉里）
+ * 2. 重新播种当前的两个内置方案（DeepSeek / Qwen）
+ * 3. 用户的自定义方案（非「内置 · 」前缀）原样保留
+ */
+export function normalizeProfiles(settings: Settings): Settings {
+  let endpointKeys = { ...(settings.endpointKeys ?? {}) };
+  const profiles = (settings.modelProfiles ?? []) as Array<ModelConfig & { name?: string }>;
+  const custom: Array<ModelConfig & { name?: string }> = [];
+  for (const p of profiles) {
+    const name = p?.name?.trim() ?? '';
+    if (name.startsWith(SEED_PROFILE_PREFIX)) {
+      // 旧内置方案：Key 迁入端点表后删除
+      if (p.apiKey?.trim() && p.baseUrl?.trim()) {
+        endpointKeys[p.baseUrl.trim()] = p.apiKey.trim();
+      }
+      continue;
+    }
+    if (name) custom.push(p);
+  }
+  // 播种当前的两个内置方案（已有同名者不重复——理论上迁移后不会存在）
+  const seeded = seedProfilesIfEmpty({ ...(settings as Settings), modelProfiles: custom as never });
+  return { ...(seeded as Settings), endpointKeys };
+}
+
 /** 内置种子方案的名称前缀（seedProfilesIfEmpty 生成，Key 为空） */
 export const SEED_PROFILE_PREFIX = '内置 · ';
 

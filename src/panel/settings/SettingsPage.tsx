@@ -40,7 +40,7 @@ import {
   savedKeyForEndpoint,
   normalizeModelConfig,
   presetShortLabel,
-  seedProfilesIfEmpty,
+  normalizeProfiles,
   presetVisionDefault,
   validateModelForm,
   type ModelFormErrors,
@@ -194,7 +194,7 @@ export function SettingsPage({
         };
         // 旧设置迁移：无 model 但有 visionModel → 提升为 model（避免老用户配置丢失）
         // + modelSupportsVision → model.supportsVision（能力随 ModelConfig 走，各执行一次幂等迁移）
-        const stored = seedProfilesIfEmpty(migrateVisionToModel(migrateLegacyVisionModel(raw)));
+        const stored = normalizeProfiles(migrateVisionToModel(migrateLegacyVisionModel(raw)));
         savedRef.current = stored;
         const merged = { ...DEFAULT_MODEL, ...(stored.model ?? {}) } as Partial<ModelConfig>;
         const obs = (stored.obsidian ?? {}) as Partial<ObsidianConfig>;

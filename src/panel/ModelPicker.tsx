@@ -11,7 +11,7 @@ import {
   MSG } from '../messages';
 import {
   isModelConfigured,
-  seedProfilesIfEmpty,
+  normalizeProfiles,
   stripSeedProfiles,
   savedKeyForEndpoint,
 } from './settings/modelForm';
@@ -103,7 +103,7 @@ export function ModelPicker({ module }: ModelPickerProps) {
       .then((stored) => {
         if (cancelled) return;
         // 读取时补种子：内置方案此前只在设置页载入时生成且未持久化，导致下拉只有默认项
-        setOptions(buildPickerOptions(seedProfilesIfEmpty(stored)));
+        setOptions(buildPickerOptions(normalizeProfiles(stored)));
         setSelected(stored.moduleModel?.[module] ?? '');
       })
       .catch(() => {
@@ -127,7 +127,7 @@ export function ModelPicker({ module }: ModelPickerProps) {
         return sendRuntimeMessage({ type: MSG.SET_SETTINGS, payload: next }).then(
           (response: unknown) => {
             if ((response as { ok?: boolean } | null)?.ok === true) {
-              setOptions(buildPickerOptions(seedProfilesIfEmpty(next)));
+              setOptions(buildPickerOptions(normalizeProfiles(next)));
             }
           },
         );

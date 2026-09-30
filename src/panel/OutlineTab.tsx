@@ -516,9 +516,11 @@ export function OutlineTab(props: OutlineTabProps) {
   }
 
   // 模型选择在所有状态下可见（生成前也要能选用哪个模型）
+  // 顶栏常驻：模型选择 + 生成来源横幅（所有状态可见）
   const pickerRow = (
     <div className="outline-picker-row">
       <ModelPicker module="outline" />
+      <GenerationBanner module="outline" />
     </div>
   );
 
@@ -526,7 +528,6 @@ export function OutlineTab(props: OutlineTabProps) {
     return (
       <div className="outline-tab">
         {pickerRow}
-      <GenerationBanner module="outline" />
         <div className="tab-placeholder">
           <p>{OUTLINE_PHASE_TEXT.loading}</p>
         </div>
