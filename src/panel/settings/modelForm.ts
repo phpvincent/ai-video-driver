@@ -37,7 +37,10 @@ export function isModelConfigured(cfg?: Partial<ModelConfig> | null): boolean {
 /** 应用预设：只覆盖 baseUrl 与 model，保留用户已填的 apiKey、temperature 等字段 */
 export function applyPreset(form: ModelConfig, preset: PresetKey): ModelConfig {
   const p = MODEL_PRESETS[preset];
-  return { ...form, baseUrl: p.baseUrl, model: p.model };
+  // 端点变了，旧平台的 Key 不可复用（不同平台 Key 体系不同）——
+  // 显式清空，逼用户填写对应平台的 Key；否则保存后必 401
+  const sameEndpoint = (form.baseUrl ?? '').trim() === p.baseUrl;
+  return { ...form, baseUrl: p.baseUrl, model: p.model, apiKey: sameEndpoint ? form.apiKey : '' };
 }
 
 function isHttpUrl(value: string): boolean {
@@ -110,7 +113,9 @@ export function resolveModuleModel(
   const wanted = settings.moduleModel?.[module];
   if (wanted) {
     const profile = listProfiles(settings).find((p) => p.name === wanted);
-    if (profile) return profile;
+    // 方案存在但 Key 缺失 → 视为未激活，回退默认模型；
+    // 否则主流程会拿到不完整配置（或把默认模型的 Key 发给方案端点 → 平台错配 401）
+    if (profile && profile.apiKey?.trim()) return profile;
   }
   return settings.model ?? null;
 }
@@ -197,8 +202,14 @@ export function stripSeedProfiles(settings: Settings): Settings {
 export function preserveSecrets(next: Settings, prev: Settings): Settings {
   const pm = prev.model;
   const nm = next.model;
+  // Key 跟着端点走：**只有 baseUrl 相同（同一平台）才允许沿用空 Key**——
+  // 换了端点还沿用旧 Key，就是把 A 平台的钥匙插进 B 平台的门（401 的根因）
+  const sameEndpoint =
+    nm && pm && (nm.baseUrl ?? '').trim() === (pm.baseUrl ?? '').trim();
   const model =
-    nm && pm && !nm.apiKey?.trim() && pm.apiKey?.trim() ? { ...nm, apiKey: pm.apiKey } : nm;
+    nm && pm && sameEndpoint && !nm.apiKey?.trim() && pm.apiKey?.trim()
+      ? { ...nm, apiKey: pm.apiKey }
+      : nm;
 
   const prevProfiles = (prev.modelProfiles ?? []) as Array<ModelConfig & { name?: string }>;
   const nextProfiles = (next.modelProfiles ?? []) as Array<ModelConfig & { name?: string }>;
@@ -208,7 +219,9 @@ export function preserveSecrets(next: Settings, prev: Settings): Settings {
           const name = p?.name?.trim();
           if (!name || p.apiKey?.trim()) return p;
           const old = prevProfiles.find((q) => (q?.name?.trim() ?? '') === name);
-          return old?.apiKey?.trim() ? { ...p, apiKey: old.apiKey } : p;
+          // 同名且同端点才沿用；端点变了说明用户在换平台，旧 Key 不可复用
+          const sameBase = old && (old.baseUrl ?? '').trim() === (p.baseUrl ?? '').trim();
+          return old && sameBase && old.apiKey?.trim() ? { ...p, apiKey: old.apiKey } : p;
         })
       : next.modelProfiles;
 

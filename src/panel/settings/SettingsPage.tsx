@@ -275,6 +275,13 @@ export function SettingsPage({
       maxTokens: String(next.maxTokens),
     });
     setSupportsVision(presetVisionDefault(preset));
+    // 端点变化时 Key 已被清空（不同平台 Key 体系不同），提示用户重填
+    setSaveFeedback(
+      applyPreset(formToModelConfig(form, outlineTokenBudget), preset).baseUrl !==
+      formToModelConfig(form, outlineTokenBudget).baseUrl
+        ? { kind: 'ok', text: '已切换端点：请填写该平台的 API Key 后保存' }
+        : null,
+    );
     setSaveFeedback(null);
   };
 

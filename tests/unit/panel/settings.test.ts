@@ -72,8 +72,12 @@ describe('applyPreset', () => {
     expect(next.model).toBe(MODEL_PRESETS.qwen.model);
   });
 
-  it('保留用户已填的 apiKey', () => {
-    expect(applyPreset(textConfig({ apiKey: 'keep-me' }), 'qwen').apiKey).toBe('keep-me');
+  it('applyPreset：换端点时清空旧 Key（语义变更：A 平台 Key 不可带到 B 平台，防 401）', () => {
+    const form = { ...DEFAULT_MODEL, baseUrl: 'https://old.example/v1', apiKey: 'keep-me' } as never;
+    const out = applyPreset(form as never, 'deepseek');
+    expect(out.apiKey).toBe(''); // 端点变了 → Key 必须重填
+    expect(out.baseUrl).toBe(MODEL_PRESETS.deepseek.baseUrl);
+    expect(out.model).toBe(MODEL_PRESETS.deepseek.model);
   });
 
   it('保留 temperature / maxTokens / outlineTokenBudget', () => {
@@ -598,7 +602,7 @@ describe('mergeSettings', () => {
     expect(out[0]?.apiKey).toBe('sk-real');
   });
 
-  it('preserveSecrets：新值 Key 为空时沿用旧值（密钥不得被静默清空）', () => {
+  it('preserveSecrets：同端点下新值 Key 为空时沿用旧值（密钥不得被静默清空）', () => {
     const prev = { model: { ...DEFAULT_MODEL, apiKey: 'sk-old' } } as never;
     const next = { model: { ...DEFAULT_MODEL, apiKey: '' } } as never;
     expect(preserveSecrets(next, prev).model?.apiKey).toBe('sk-old');
@@ -606,6 +610,33 @@ describe('mergeSettings', () => {
     const prev2 = { modelProfiles: [{ name: 'A', apiKey: 'sk-a', baseUrl: 'https://x', model: 'm' }] } as never;
     const next2 = { modelProfiles: [{ name: 'A', apiKey: '', baseUrl: 'https://x', model: 'm' }] } as never;
     expect((preserveSecrets(next2, prev2).modelProfiles as Array<{ apiKey: string }>)[0]?.apiKey).toBe('sk-a');
+  });
+
+  it('preserveSecrets：端点变了绝不沿用旧 Key（401 根因——A 平台钥匙不能开 B 平台的门）', () => {
+    const prev = { model: { ...DEFAULT_MODEL, baseUrl: 'https://maas.example/v1', apiKey: 'sk-maas' } } as never;
+    const next = { model: { ...DEFAULT_MODEL, baseUrl: 'https://dashscope.example/v1', apiKey: '' } } as never;
+    expect(preserveSecrets(next, prev).model?.apiKey).toBe('');
+    // 方案同理
+    const prev2 = { modelProfiles: [{ name: 'A', apiKey: 'sk-maas', baseUrl: 'https://maas.example/v1', model: 'm' }] } as never;
+    const next2 = { modelProfiles: [{ name: 'A', apiKey: '', baseUrl: 'https://dashscope.example/v1', model: 'm' }] } as never;
+    expect((preserveSecrets(next2, prev2).modelProfiles as Array<{ apiKey?: string }>)[0]?.apiKey ?? '').toBe('');
+  });
+
+  it('resolveModuleModel：选中的方案缺 Key → 回退默认模型（不返回不完整配置）', () => {
+    const settings = {
+      model: { ...DEFAULT_MODEL, apiKey: 'sk-default' },
+      modelProfiles: [{ name: '缺Key方案', apiKey: '', baseUrl: 'https://x', model: 'm' }],
+      moduleModel: { qa: '缺Key方案' },
+    } as never;
+    expect(resolveModuleModel(settings, 'qa')?.apiKey).toBe('sk-default');
+  });
+
+  it('applyPreset：切换端点时清空 Key（同端点则保留）', () => {
+    const form = { ...DEFAULT_MODEL, baseUrl: MODEL_PRESETS.deepseek.baseUrl, apiKey: 'sk-ds', model: 'deepseek-flash' };
+    const toQwen = applyPreset(form as never, 'qwen');
+    expect(toQwen.apiKey).toBe('');
+    const toSame = applyPreset({ ...form } as never, 'deepseek');
+    expect(toSame.apiKey).toBe('sk-ds');
   });
 
   it('preserveSecrets：新值填了 Key 时以新值为准（正常覆盖）', () => {
