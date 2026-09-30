@@ -158,6 +158,51 @@ export interface OutlineRecord {
   createdAt: string;
 }
 
+// ---------------------------------------------------------------------------
+// 大纲笔记（SPEC-09 9.1）：与大纲解耦存储，大纲重生成不触碰 notes store
+// ---------------------------------------------------------------------------
+
+/** 锚点粒度：整章 / 某条要点 / 某个时间点（SPEC-09 §1 用户拍板） */
+export type NoteAnchorKind = 'section' | 'bullet' | 'time';
+
+/**
+ * 笔记锚点。tMs 是重新归位与跨版本导入的**唯一可靠依据**，创建后永不改写；
+ * sectionId / bulletId 只是加速提示，重生成后由 reanchor 按时间重新对上。
+ */
+export interface NoteAnchor {
+  kind: NoteAnchorKind;
+  /** 锚点所在章节；未归位为 null */
+  sectionId: string | null;
+  /** kind=bullet 时指向要点（导出侧合成 `${sectionId}-b${序号}`） */
+  bulletId?: string | null;
+  /** 锚定时间（毫秒） */
+  tMs: number;
+}
+
+export type NoteAuthor = 'self' | 'assistant';
+
+/** 讨论串回复；「请助教回答」的回答以 author='assistant' 追加（SPEC-09 9.2） */
+export interface NoteReply {
+  id: string;
+  author: NoteAuthor;
+  body: string;
+  createdAt: string;
+}
+
+/** IndexedDB notes store 记录，键 note.id（SPEC-09 §3.5） */
+export interface OutlineNote {
+  id: string;
+  videoId: VideoId;
+  anchor: NoteAnchor;
+  /** Markdown 纯文本（v1 不做富文本） */
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+  replies: NoteReply[];
+  /** 导入来源（导入的笔记与自己的笔记区分显示；自建笔记无此字段） */
+  importedFrom?: { exporter: string; exportedAt: string };
+}
+
 export interface ModelConfig {
   /** 命名方案名（默认模型无 name；modelProfiles 中的方案必有） */
   name?: string;

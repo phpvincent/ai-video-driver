@@ -237,6 +237,8 @@ export const DB = {
     usage: 'usage',
     /** LLM 交互日志（键 entry.id，值 LlmLogEntry；验证期报告的「LLM 交互日志」子模块读它） */
     logs: 'logs',
+    /** SPEC-09 追加：大纲笔记（键 note.id，值 OutlineNote；与大纲解耦，重生成不触碰） */
+    notes: 'notes',
   },
   traceKeep: 50,
   /** LLM 交互日志保留条数（超出从最旧一条开始丢弃） */

@@ -11,7 +11,7 @@
  * 高层 API getSubtitle / saveSubtitle 仅操作 DB.stores.subtitles（键 videoId）。
  * 红线 8 的兜底在调用方（waterfall）：本模块异常向上传播，不在 DB 层吞错。
  */
-import type { OutlineRecord, QaRecord, SubtitleRecord } from '../types';
+import type { OutlineNote, OutlineRecord, QaRecord, SubtitleRecord } from '../types';
 import type { UsageRecord } from '../core/metrics/usage';
 import type { LlmLogEntry } from '../core/metrics/llmLog';
 import { DB } from '../config';
@@ -52,9 +52,10 @@ export function createSubtitleDb(idbFactory?: IDBFactory): DbLike {
           reject(new Error('indexedDB unavailable'));
           return;
         }
-        // 版本号：v2 起新增 usage（验证期埋点）store；v3 起新增 logs（LLM 交互日志）。
-        // 升级时为已存在的库补建缺失 store（onupgradeneeded 只在版本变化时触发）
-        const req = factory.open(DB.name, 3);
+        // 版本号：v2 起新增 usage（验证期埋点）store；v3 起新增 logs（LLM 交互日志）；
+        // v4 起新增 notes（SPEC-09 大纲笔记）。升级时为已存在的库补建缺失 store
+        // （onupgradeneeded 只在版本变化时触发）
+        const req = factory.open(DB.name, 4);
         req.onupgradeneeded = () => {
           const db = req.result;
           for (const storeName of Object.values(DB.stores)) {
@@ -237,4 +238,36 @@ export async function clearLlmLogs(db: DbLike): Promise<void> {
       await db.delete(DB.stores.logs, entry.id);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// notes（SPEC-09 9.1 追加）：键 note.id，值 OutlineNote。
+// 笔记与大纲**解耦存储**：大纲重生成不触碰本 store——这是"不丢笔记"的根本
+// 保证（spec §3.5）。与 qaHistory 同法：量级低（每视频几十条），
+// listNotesByVideo 用全量 getAll + 过滤，不建 IDB 索引（设计稿的"索引
+// videoId"简化为过滤，沿用既有先例；见 SPEC-09 执行记录的范围说明）。
+// ---------------------------------------------------------------------------
+
+/** 写笔记（新增或整体更新：编辑正文 / 追加回复都整条覆盖写） */
+export async function saveNote(db: DbLike, note: OutlineNote): Promise<void> {
+  await db.open();
+  await db.put(DB.stores.notes, note.id, note);
+}
+
+/** 删除单条笔记（键 note.id） */
+export async function deleteNote(db: DbLike, noteId: string): Promise<void> {
+  await db.open();
+  await db.delete(DB.stores.notes, noteId);
+}
+
+/** 列出某视频的全部笔记（createdAt 升序，稳定顺序；无笔记返回空数组） */
+export async function listNotesByVideo(db: DbLike, videoId: string): Promise<OutlineNote[]> {
+  await db.open();
+  const all = await db.getAll<OutlineNote>(DB.stores.notes);
+  return all
+    .filter(
+      (n): n is OutlineNote =>
+        typeof n === 'object' && n !== null && n.videoId === videoId && typeof n.id === 'string',
+    )
+    .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
 }

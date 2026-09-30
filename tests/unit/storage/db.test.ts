@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
   createSubtitleDb,
+  deleteNote,
   getSubtitle,
+  listNotesByVideo,
   listQaByVideo,
+  saveNote,
   saveQaRecord,
   saveSubtitle,
   type DbLike,
 } from '../../../src/storage/db';
 import { DB } from '../../../src/config';
-import type { QaRecord, SubtitleRecord, VideoMeta } from '../../../src/types';
+import type { OutlineNote, QaRecord, SubtitleRecord, VideoMeta } from '../../../src/types';
 
 const meta: VideoMeta = {
   videoId: 'BV1X_p1',
@@ -276,5 +279,78 @@ describe('saveQaRecord / listQaByVideo（内存 DbLike 注入）', () => {
     const [got] = await listQaByVideo(db, rec.videoId);
     expect(got).toEqual(rec);
     expect(got.sectionId).toBe('sec_0002');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// notes store（SPEC-09 9.1）：键 note.id；解耦存储，跨视频隔离，顺序稳定
+// ---------------------------------------------------------------------------
+
+describe('notes store（SPEC-09 9.1）', () => {
+  const note = (over: Partial<OutlineNote> = {}): OutlineNote => ({
+    id: 'n_0001',
+    videoId: 'BV1X_p1',
+    anchor: { kind: 'section', sectionId: 'sec_0001', tMs: 0 },
+    body: '先观察再推理',
+    createdAt: '2026-10-01T00:00:00.000Z',
+    updatedAt: '2026-10-01T00:00:00.000Z',
+    replies: [],
+    ...over,
+  });
+
+  it('保存后可按 id 读回；底层落在 notes store', async () => {
+    const db = new MemoryDbLike();
+    await saveNote(db, note());
+    expect(db.stores.get(DB.stores.notes)?.get('n_0001')).toEqual(note());
+  });
+
+  it('listNotesByVideo：createdAt 升序稳定排序', async () => {
+    const db = new MemoryDbLike();
+    await saveNote(db, note({ id: 'b', createdAt: '2026-10-01T00:00:02.000Z' }));
+    await saveNote(db, note({ id: 'a', createdAt: '2026-10-01T00:00:01.000Z' }));
+    const list = await listNotesByVideo(db, 'BV1X_p1');
+    expect(list.map((n) => n.id)).toEqual(['a', 'b']);
+  });
+
+  it('跨视频隔离：只返回目标 videoId 的笔记', async () => {
+    const db = new MemoryDbLike();
+    await saveNote(db, note({ id: 'x1', videoId: 'BV1X_p1' }));
+    await saveNote(db, note({ id: 'x2', videoId: 'BV1Y_p1' }));
+    const list = await listNotesByVideo(db, 'BV1X_p1');
+    expect(list.map((n) => n.id)).toEqual(['x1']);
+  });
+
+  it('deleteNote 删除后 listNotesByVideo 不再返回', async () => {
+    const db = new MemoryDbLike();
+    await saveNote(db, note({ id: 'gone' }));
+    await deleteNote(db, 'gone');
+    expect(await listNotesByVideo(db, 'BV1X_p1')).toEqual([]);
+  });
+
+  it('讨论串与 importedFrom 字段完整透传（A2/A8 数据形状）', async () => {
+    const db = new MemoryDbLike();
+    const rec = note({
+      id: 'n_thread',
+      anchor: { kind: 'bullet', sectionId: 'sec_0002', bulletId: 'sec_0002-b1', tMs: 45_000 },
+      replies: [
+        { id: 'r_1', author: 'self', body: '对称和数量怎么区分？', createdAt: '2026-10-01T00:00:03.000Z' },
+        { id: 'r_2', author: 'assistant', body: '先看元素排列是否有镜像轴……', createdAt: '2026-10-01T00:00:04.000Z' },
+      ],
+      importedFrom: { exporter: 'peer@vsc', exportedAt: '2026-10-01T00:00:00.000Z' },
+    });
+    await saveNote(db, rec);
+    const [got] = await listNotesByVideo(db, rec.videoId);
+    expect(got).toEqual(rec);
+    expect(got.replies).toHaveLength(2);
+    expect(got.replies[1].author).toBe('assistant');
+  });
+
+  it('脏数据（无 id 的记录）被过滤，不影响其余笔记', async () => {
+    const db = new MemoryDbLike();
+    await saveNote(db, note({ id: 'clean' }));
+    // 直接往底层塞一条脏数据（模拟历史遗留/损坏记录）
+    await db.put(DB.stores.notes, 'dirty', { videoId: 'BV1X_p1', body: 'no id' });
+    const list = await listNotesByVideo(db, 'BV1X_p1');
+    expect(list.map((n) => n.id)).toEqual(['clean']);
   });
 });
