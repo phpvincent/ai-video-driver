@@ -125,10 +125,18 @@ describe('routeBackgroundMessage', () => {
     expect(actions).toEqual([{ kind: 'respond', response: video }]);
   });
 
-  it('CURRENT_VIDEO_GET 但活跃 tab 无视频：respond null', () => {
+  it('CURRENT_VIDEO_GET 活跃 tab 无视频但有 lastVideo：回退 lastVideo（全屏单视图修复）', () => {
     const actions = routeBackgroundMessage(
       { type: MSG.CURRENT_VIDEO_GET },
       makeCtx({ senderTabId: null, getActiveTabVideo: () => null }),
+    );
+    expect(actions).toEqual([{ kind: 'respond', response: video }]);
+  });
+
+  it('CURRENT_VIDEO_GET 活跃 tab 与 lastVideo 均无：respond null', () => {
+    const actions = routeBackgroundMessage(
+      { type: MSG.CURRENT_VIDEO_GET },
+      makeCtx({ senderTabId: null, getActiveTabVideo: () => null, getLastVideo: () => null }),
     );
     expect(actions).toEqual([{ kind: 'respond', response: null }]);
   });
