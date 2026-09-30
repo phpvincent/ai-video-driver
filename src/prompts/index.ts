@@ -79,3 +79,11 @@ export function getTermExplainerSystemPrompt(): string {
 export function getSegmentQaSystemPrompt(): string {
   return stripPromptHeaderComments(segmentQaMd);
 }
+
+/**
+ * 知识捕获 system prompt 正文（单一事实源：src/prompts/knowledge-capture.md，SPEC-06）。
+ * 本期仅预留未来模型辅助摘要：frontmatter 与去重由代码确定性实现，落盘链路不调用本 prompt。
+ */
+export function getKnowledgeCaptureSystemPrompt(): string {
+  return stripPromptHeaderComments(knowledgeCaptureMd);
+}

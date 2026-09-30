@@ -12,8 +12,13 @@ import { generateOutline, loadOutlineCached, regenerateOne } from './outlineLoad
 import { SettingsPage } from './settings/SettingsPage';
 import { SubtitleTab } from './SubtitleTab';
 import { currentVideoIdRef, explain as explainFn } from './explainLoader';
+import { saveTermCardToObsidian, saveVideoNoteToObsidian } from './obsidianLoader';
+import { applyUsageEvent, createEmptyUsage, type UsageRecord } from '../core/metrics/usage';
+import { createSubtitleDb, getUsage, saveUsage, listAllUsage } from '../storage/db';
+import { DB } from '../config';
+import { ValidationReportView } from './ValidationReportView';
 import { generateConceptMap as genConceptMap, getConceptMapCached, termIndexFallback } from './mindmapLoader';
-import type { ConceptMapData } from '../types';
+import type { ConceptMapData, QaRecord } from '../types';
 import type { Section } from '../types';
 import { loadSubtitles as runWaterfall, loadSubtitlesManual } from './subtitleLoader';
 
@@ -51,6 +56,26 @@ function formatDuration(ms: number): string {
 
 
 
+/** 面板共享 DB 实例（埋点与问答记录读取） */
+const db = createSubtitleDb();
+
+async function listAllUsageFromDb(): Promise<UsageRecord[]> {
+  try {
+    return await listAllUsage(db);
+  } catch {
+    return [];
+  }
+}
+
+async function listAllQaFromDb(): Promise<QaRecord[]> {
+  try {
+    const all = await db.getAll<QaRecord>(DB.stores.qaHistory);
+    return Array.isArray(all) ? all : [];
+  } catch {
+    return [];
+  }
+}
+
 export function App() {
   const [video, setVideo] = useState<VideoInfoPayload | null>(null);
   const [playback, setPlayback] = useState<PlaybackPayload | null>(null);
@@ -70,6 +95,7 @@ export function App() {
   const [conceptGenerating, setConceptGenerating] = useState(false);
   /** 概念图是否为降级产物（模型生成失败回退本地术语图时为 true） */
   const [conceptDegraded, setConceptDegraded] = useState(false);
+  const [showReport, setShowReport] = useState(false);
   /** 设置中的模型配置（modelReady 判断用；生成时 loadOutlineForVideo 会实时重读） */
   const [modelConfig, setModelConfig] = useState<ModelConfig | null>(null);
 
@@ -153,8 +179,21 @@ export function App() {
   }, []);
 
   /** 字幕 Tab 点句跳播：panel -> background -> content */
+  /** 验证期埋点：记录一次使用事件（seek/字幕/大纲/概念图） */
+  const trackUsage = async (kind: 'seek' | 'subtitle' | 'outline' | 'conceptMap') => {
+    const vid = video?.videoId;
+    if (!vid) return;
+    try {
+      const current = (await getUsage(db, vid)) ?? createEmptyUsage(vid, Date.now);
+      await saveUsage(db, applyUsageEvent(current, { kind }, Date.now));
+    } catch {
+      /* 埋点失败不影响使用 */
+    }
+  };
+
   const handleRequestSeek = (targetMs: number) => {
     if (!video) return;
+    void trackUsage('seek');
     try {
       void chrome.runtime
         .sendMessage({ type: MSG.SEEK, payload: { videoId: video.videoId, targetMs } })
@@ -194,11 +233,51 @@ export function App() {
     try {
       const data = await genConceptMap(video?.videoId ?? '', secs, title);
       setConceptMap(data);
+      await trackUsage('conceptMap');
     } catch {
       setConceptMap(termIndexFallback(secs));
       setConceptDegraded(true);
     } finally {
       setConceptGenerating(false);
+    }
+  };
+
+  /** 存入 Obsidian：视频笔记（大纲 Tab） */
+  const handleSaveVideoNote = async (): Promise<string> => {
+    if (!meta || !video || sections.length === 0) return '暂无可存的大纲';
+    try {
+      const { path } = await saveVideoNoteToObsidian({ videoId: video.videoId, meta, sections });
+      return `已存入 ${path}`;
+    } catch (err) {
+      return `存库失败：${err instanceof Error ? err.message : String(err)}`;
+    }
+  };
+
+  /** 存入 Obsidian：术语卡（问答 Tab）；重复术语提示由 loader throw 带出 */
+  const handleSaveNote = async (args: {
+    kind: 'term' | 'segment';
+    term?: string;
+    payload: unknown;
+  }): Promise<string> => {
+    if (!meta || !video) return '未检测到视频';
+    try {
+      if (args.kind === 'term' && args.term) {
+        const { path } = await saveTermCardToObsidian({
+          term: args.term,
+          payload: args.payload as never,
+          meta,
+          existingTerms: [],
+        });
+        return `已存入 ${path}`;
+      }
+      const { path } = await saveVideoNoteToObsidian({
+        videoId: video.videoId,
+        meta,
+        sections,
+      });
+      return `已存入 ${path}`;
+    } catch (err) {
+      return err instanceof Error ? err.message : `存库失败：${String(err)}`;
     }
   };
 
@@ -212,10 +291,13 @@ export function App() {
   const meta: VideoMeta | null = video ? { ...video, cid: 0, url: '' } : null;
 
   /** 字幕加载：经瀑布（缓存 → B 站一级通道；红线 8 保证不抛） */
-  const handleLoadSubtitles = (videoId: string): Promise<FetchResult> =>
-    meta
-      ? runWaterfall(videoId, meta)
-      : Promise.resolve({ cues: [], status: 'no_subtitle', error: '无视频元信息' });
+  const handleLoadSubtitles = async (videoId: string): Promise<FetchResult> => {
+    const result = meta
+      ? await runWaterfall(videoId, meta)
+      : { cues: [], status: 'no_subtitle' as const, error: '无视频元信息' };
+    if (result.cues.length > 0) await trackUsage('subtitle');
+    return result;
+  };
 
   /** 手动粘贴解析：走瀑布手动直达通道并落缓存，成功后递增版本号触发重载 */
   const handleManualPaste = (text: string) => {
@@ -259,13 +341,30 @@ export function App() {
       </header>
 
       {showSettings ? (
-        <SettingsPage
-          onClose={() => {
-            setShowSettings(false);
-            // 保存后返回需刷新 modelReady
-            refreshModelConfig();
-          }}
-        />
+        <>
+          {showReport ? (
+            <div className="report-wrap">
+            <button type="button" className="btn" onClick={() => setShowReport(false)}>
+              返回设置
+            </button>
+            <ValidationReportView
+              onLoad={async () => ({
+                usage: await listAllUsageFromDb(),
+                qa: await listAllQaFromDb(),
+              })}
+            />
+            </div>
+          ) : (
+            <SettingsPage
+              onClose={() => {
+                setShowSettings(false);
+                // 保存后返回需刷新 modelReady
+                refreshModelConfig();
+              }}
+              onOpenValidationReport={() => setShowReport(true)}
+            />
+          )}
+        </>
       ) : (
         <>
 {!standaloneView && (
@@ -312,7 +411,11 @@ export function App() {
                 generateOutline={generateOutline}
                 regenerateOne={regenerateOne}
                 modelReady={!!modelConfig?.apiKey}
-                onSectionsChanged={setSections}
+                onSaveVideoNote={handleSaveVideoNote}
+                onSectionsChanged={(secs) => {
+                  setSections(secs);
+                  if (secs.length > 0) void trackUsage('outline');
+                }}
                 onOpenSettings={() => setShowSettings(true)}
               />
             )}
@@ -341,6 +444,7 @@ export function App() {
                 modelReady={!!modelConfig?.apiKey}
                 onOpenSettings={() => setShowSettings(true)}
                 explain={explainFn}
+                onSaveNote={handleSaveNote}
                 pendingTerm={pendingTerm ?? undefined}
               />
             )}

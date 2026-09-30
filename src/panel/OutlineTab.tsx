@@ -34,6 +34,8 @@ export interface OutlineTabProps {
   modelReady: boolean;
   /** 跳设置页（modelReady=false 时显示入口按钮） */
   onOpenSettings?: () => void;
+  /** 存库入口（父 agent 接线 obsidianLoader.saveVideoNoteToObsidian）：未注入时按钮隐藏 */
+  onSaveVideoNote?: () => Promise<string>;
 }
 
 type Phase = 'idle' | 'loading' | 'ready' | 'degraded' | 'empty';
@@ -310,6 +312,9 @@ export function OutlineTab(props: OutlineTabProps) {
   /** 单章重生成：进行中的章节 id / 失败信息 */
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [regenError, setRegenError] = useState<{ sectionId: string; text: string } | null>(null);
+  /** 存库（存入 Obsidian）：进行中标记与行内结果文本（红线 8：失败不崩面板） */
+  const [saving, setSaving] = useState(false);
+  const [saveResult, setSaveResult] = useState<{ ok: boolean; text: string } | null>(null);
   /** 请求序号：videoId 切换 / 重新生成后，旧请求结果作废 */
   const reqIdRef = useRef(0);
   /** 已尝试自动加载的 videoId（同一挂载周期只试一次；手动生成后不被覆盖） */
@@ -399,6 +404,20 @@ export function OutlineTab(props: OutlineTabProps) {
       });
   };
 
+  /** 一键存入 Obsidian：成功显示返回的笔记路径，失败显示错误摘要 */
+  const handleSaveVideoNote = () => {
+    const save = props.onSaveVideoNote;
+    if (!save) return;
+    setSaving(true);
+    setSaveResult(null);
+    save()
+      .then((path) => setSaveResult({ ok: true, text: path ? `已存入：${path}` : '已存入 Obsidian' }))
+      .catch((err: unknown) =>
+        setSaveResult({ ok: false, text: err instanceof Error ? err.message : String(err) }),
+      )
+      .finally(() => setSaving(false));
+  };
+
   // 无视频 / 模型未配置：占位（与 SubtitleTab idle 同结构）
   if (!videoId || !modelReady) {
     return (
@@ -454,6 +473,16 @@ export function OutlineTab(props: OutlineTabProps) {
     <div className="outline-tab">
       <div className="outline-header">
         <span className="outline-count">共 {sections.length} 章</span>
+        {props.onSaveVideoNote && (
+          <button
+            type="button"
+            className="btn"
+            onClick={handleSaveVideoNote}
+            disabled={saving}
+          >
+            {saving ? '存入中…' : '存入 Obsidian'}
+          </button>
+        )}
         <button
           type="button"
           className="btn"
@@ -463,6 +492,11 @@ export function OutlineTab(props: OutlineTabProps) {
           重新生成
         </button>
       </div>
+      {saveResult && (
+        <p className={saveResult.ok ? 'outline-save-hint' : 'outline-save-hint outline-save-error'}>
+          {saveResult.text}
+        </p>
+      )}
       <OutlineSectionList
         sections={sections}
         activeId={active ? active.id : null}
