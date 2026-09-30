@@ -313,8 +313,16 @@ export function describeOutlineFailure(r: OutlineResult): string {
   if (total > 0) {
     return '大纲生成失败：模型未返回可解析的章节；可尝试更换模型或关闭抽帧后重试。';
   }
-  return '大纲生成失败，请重试';
+  return OUTLINE_FAILURE_NO_DETAIL;
 }
+
+/**
+ * 兜底文案：任何失败都必须给出可读原因——
+ * 错误对象没带 message 时（接口异常/超时/反序列化失败常见），明确告诉用户去哪里看详情。
+ */
+export const OUTLINE_FAILURE_NO_DETAIL =
+  '大纲生成失败（未提供错误详情）：请打开 DevTools 控制台查看以 [vsc] 开头的日志。' +
+  '常见原因：模型输出不符合格式、接口鉴权失败、网络/代理拦截，或生成超时（120 秒）。';
 
 export function pickPhase(r: OutlineResult): Phase {
   if (r.sections.length > 0) return 'ready';
@@ -437,7 +445,15 @@ export function OutlineTab(props: OutlineTabProps) {
       })
       .catch((err: unknown) => {
         if (reqId !== reqIdRef.current) return;
-        setErrorText(err instanceof Error ? err.message : String(err));
+        // 失败一律留痕：界面没有详情时，控制台是唯一的诊断入口
+        console.error('[vsc] outline generate failed', err);
+        const text =
+          err instanceof Error
+            ? err.message.trim()
+            : typeof err === 'string'
+              ? err.trim()
+              : '';
+        setErrorText(text.length > 0 ? text : OUTLINE_FAILURE_NO_DETAIL);
         setPhase('degraded');
       });
   };
@@ -509,7 +525,9 @@ export function OutlineTab(props: OutlineTabProps) {
   if (phase === 'degraded') {
     return (
       <div className="outline-degraded">
-        <p className="outline-degraded-text">{errorText || OUTLINE_PHASE_TEXT.degraded}</p>
+        <p className="outline-degraded-text">
+          {errorText && errorText.trim().length > 0 ? errorText : OUTLINE_FAILURE_NO_DETAIL}
+        </p>
         <button type="button" className="btn" onClick={handleGenerate}>
           重试
         </button>

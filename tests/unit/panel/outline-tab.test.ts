@@ -18,6 +18,7 @@ import {
   OUTLINE_PHASE_TEXT,
   OUTLINE_REGEN_PLACEHOLDER,
   OutlineSectionList,
+  OUTLINE_FAILURE_NO_DETAIL,
   OutlineTab,
   badgeLabel,
   densityLabel,
@@ -457,6 +458,7 @@ describe('describeOutlineFailure 失败原因可读', () => {
 
   it('无分块信息 → 通用文案', () => {
     const r = { sections: [], chunkState: [], droppedBySnap: 0, budgetHit: false, failedChunks: 0 } as never;
-    expect(describeOutlineFailure(r)).toBe('大纲生成失败，请重试');
+    // 无分块信息时也必须有可读原因，不能只说"请重试"
+    expect(describeOutlineFailure(r)).toBe(OUTLINE_FAILURE_NO_DETAIL);
   });
 });
