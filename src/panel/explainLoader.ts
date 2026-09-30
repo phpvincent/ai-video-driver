@@ -6,6 +6,7 @@
 import { findSectionAt } from '../core/context/compiler';
 import { resolveModuleModel, visionActiveFor } from './settings/modelForm';
 import { VISION } from '../config';
+import { cueWindows, planFrameTargets } from '../core/vision/framePlanner';
 import { chatCompletion } from '../core/harness/modelClient';
 import {
   buildKnowledgeContext,
@@ -126,10 +127,22 @@ async function loadFrames(args: {
   videoId: string;
   rangeMs: [number, number] | null;
   positionMs: number;
+  cues: Cue[];
 }): Promise<CapturedFrame[]> {
   if (!args.enabled) return [];
   const [start, end] = args.rangeMs ?? [args.positionMs - 30_000, args.positionMs + 30_000];
-  const targets = [start, Math.round((start + end) / 2), args.positionMs]
+  // 结构感知抽帧：把区间切成若干窗口（每窗 ≥20s，最多 8 窗），按画面价值分取前 N 个
+  const span = Math.max(1, end - start);
+  const windowMs = Math.max(20_000, Math.ceil(span / 8));
+  const windows = cueWindows(args.cues.filter((c) => c.startMs >= start && c.startMs < end), windowMs);
+  const fallbackWindows = windows.length > 0 ? windows : [{ startMs: Math.max(0, start), endMs: Math.max(start + 1, end) }];
+  const plan = planFrameTargets(fallbackWindows, args.cues, {
+    budget: VISION.qaFrames,
+    minGapMs: VISION.minGapMs,
+    minScore: 0, // 问答是定向提问，区间内即便分低也要给画面，交由去重闸门兜底
+  });
+  const targets = plan
+    .map((w) => w.targetMs)
     .filter((t) => Number.isFinite(t) && t >= 0)
     .slice(0, VISION.qaFrames);
   if (targets.length === 0) return [];
@@ -178,6 +191,7 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
   // 关键帧（可选：需多模态模型，deepseek-chat 不支持视觉）
   const frames = await loadFrames({
     enabled: visionActiveFor({ settings, module: 'qa' }),
+    cues,
     videoId,
     rangeMs: args.rangeMs,
     positionMs: args.positionMs,

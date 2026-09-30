@@ -149,6 +149,10 @@ export const VISION = {
   /** 帧最长边像素与质量 */
   maxSize: 512,
   quality: 0.7,
+  /** 结构感知抽帧：两个取帧点最小间隔（毫秒）——过近大概率是同一页 PPT */
+  minGapMs: 15_000,
+  /** 结构感知抽帧：低于此画面价值分的窗口不取（避免为抽而抽） */
+  minScore: 25,
   /** 单帧抽取超时 */
   timeoutMs: 3000,
 } as const;

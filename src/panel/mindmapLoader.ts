@@ -16,10 +16,11 @@ import { DB } from '../config';
 import { MSG } from '../messages';
 import { getConceptMapSystemPrompt, PROMPT_VERSIONS } from '../prompts';
 import { VISION } from '../config';
+import { planFrameTargets, sectionMetaOf, sectionWindows } from '../core/vision/framePlanner';
 import { requestFrames, toPipelineImage } from './framesClient';
 import { resolveModuleModel, visionActiveFor } from './settings/modelForm';
 import type { Settings } from '../types';
-import { createSubtitleDb } from '../storage/db';
+import { createSubtitleDb, getSubtitle } from '../storage/db';
 import type { ConceptMapData, ModelConfig, Section } from '../types';
 
 /** 模块级单例 DB（惰性 open 由 db 层内部保证幂等） */
@@ -95,9 +96,15 @@ export async function generateConceptMap(
   // 单模型口径：图片与文本一起发给同一个模型
   let images: ReturnType<typeof toPipelineImage>[] = [];
   if (useVision) {
-    const anchors = sections.map((s) => s.startMs);
-    const step = Math.max(1, Math.ceil(anchors.length / VISION.mindmapFrames));
-    const targets = anchors.filter((_, i) => i % step === 0).slice(0, VISION.mindmapFrames);
+    const rec = await getSubtitle(db, videoId).catch(() => null);
+    const cues = rec?.cues ?? [];
+    // 结构感知抽帧：用章节重要性/密度分/术语 + 字幕画面提示词打分，按分数取帧
+    const plan = planFrameTargets(sectionWindows(sections, cues), cues, {
+      budget: VISION.mindmapFrames,
+      minGapMs: VISION.minGapMs,
+      minScore: VISION.minScore,
+    }, sectionMetaOf(sections));
+    const targets = plan.map((w) => w.targetMs);
     images = (await requestFrames({ videoId, targetsMs: targets })).map(toPipelineImage);
   }
 

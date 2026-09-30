@@ -24,6 +24,7 @@ import {
 } from '../prompts';
 import { chunkCues } from '../core/pipeline/chunk';
 import { VISION } from '../config';
+import { planFrameTargets } from '../core/vision/framePlanner';
 import { requestFrames, toPipelineImage } from './framesClient';
 import { resolveModuleModel, visionActiveFor } from './settings/modelForm';
 import type { Settings } from '../types';
@@ -87,12 +88,18 @@ export async function loadOutlineForVideo(
   // 单模型口径：图片与文本一起发给同一个模型（模型不支持图像时抽帧会被门控关闭）
   const chunkFrameMap = new Map<number, ReturnType<typeof toPipelineImage>>();
   if (useVision) {
+    // 结构感知抽帧：大纲生成时还没有章节，按固定窗口切分后用字幕画面提示词打分，
+    // 按分数分配帧预算（预算内取分最高的窗口，命中提示词的字幕时刻优先）
     const chunks = chunkCues(cues);
-    const targets = chunks
-      .map((c) => c[0]?.startMs)
-      .filter((t): t is number => typeof t === 'number')
-      .slice(0, VISION.maxFramesPerRequest);
-    const frames = await requestFrames({ videoId, targetsMs: targets });
+    const windows = chunks
+      .map((c) => ({ startMs: c[0]?.startMs ?? 0, endMs: (c[c.length - 1]?.endMs ?? 0) + 1 }))
+      .filter((w) => w.endMs > w.startMs);
+    const plan = planFrameTargets(windows, cues, {
+      budget: VISION.maxFramesPerRequest,
+      minGapMs: VISION.minGapMs,
+      minScore: VISION.minScore,
+    });
+    const frames = await requestFrames({ videoId, targetsMs: plan.map((w) => w.targetMs) });
     for (const f of frames) chunkFrameMap.set(f.targetMs, toPipelineImage(f));
   }
 

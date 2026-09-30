@@ -4,8 +4,10 @@
  * 只在用户开启"结合画面"且配置了视觉模型时由 loader 调用；任何失败（content
  * 未就绪 / videoId 不符 / 抽帧异常）都降级为空数组，主流程不受影响（红线 8 精神）。
  */
+import { VISION } from '../config';
 import { MSG } from '../messages';
 import type { CapturedFrame } from '../messages';
+import { dedupeFrames } from '../core/vision/framePlanner';
 
 export interface FrameRequestOptions {
   videoId: string;
@@ -21,7 +23,9 @@ export async function requestFrames(args: FrameRequestOptions): Promise<Captured
       type: MSG.CAPTURE_FRAMES,
       payload: { videoId: args.videoId, targetsMs: args.targetsMs },
     })) as { frames?: CapturedFrame[] } | null;
-    return Array.isArray(response?.frames) ? (response?.frames as CapturedFrame[]) : [];
+    const rawFrames = Array.isArray(response?.frames) ? (response?.frames as CapturedFrame[]) : [];
+    // 结构感知抽帧第二道闸门：时间过近且画面几乎未变（同一页 PPT）的帧丢弃
+    return dedupeFrames(rawFrames, { minGapMs: VISION.minGapMs });
   } catch {
     return [];
   }
