@@ -76,6 +76,7 @@
 4. 全屏按钮挪位：移出 info-meta 行内（避免换行挤压），改为 header 右缘图标（父 agent）
 
 ## 4. 验收标准
+| 2026-09-30 | 父 agent | v3 验收收尾：全屏按钮挪位（header 右缘 ⛶ 角标，absolute 定位）；npm run verify 直连 483 例全绿 | ✅ 待用户验收：阶段流程感/主锚正确性/预告过滤生效/全屏位置 | 4ce00a2 后续提交 |
 | 2026-09-30 | 子 agent 三迭代 | 知识路径：域按最早锚排序 + 序号徽标 + 域间连接线 + 概念 rail（锚点时间圆点，hover 可见语义）；serialize.ts（toSrt/toPlainText，红线 5 时间戳完整）+ SubtitleTab 下载按钮；61 例 | tsc 零错误；477 例全绿 | 4ce00a2 前半（已验收） |
 | 2026-09-30 | 父 agent | 全屏模式：App 支持 panel.html?view=xxx 独立单视图（无 Tab 栏）、header 全屏/退出按钮（chrome.tabs.create）；SSH 通道加固（443 + 代理 CONNECT 隧道 ~/.ssh/proxy-tunnel.py，双保险）；接线中自纠一次补丁错位（git checkout 重做） | verify 直连 477 例全绿 | 4ce00a2（已验收） |
 | 2026-09-30 | 子 agent 二迭代 | 知识卡片流全量：zod label 放宽至 30（代码截 12，根治降级根因）+ degraded 横幅/重试（App 全链路接线）+ matchConcepts 精确匹配（正反例单测）+ importance 文字徽标（替换圆点）+ details 折叠（grid 过渡）+ 删除 SVG/d3-flextree（依赖同步移除）+ 63 例 | tsc 零错误；458 例全绿；check-prompts PASS；d3-flextree 零引用 | 885d9b6（已验收） |
