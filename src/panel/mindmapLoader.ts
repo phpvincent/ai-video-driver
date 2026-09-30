@@ -92,7 +92,7 @@ export async function generateConceptMap(
   // 抽帧（可选）：按章节锚点均匀取 VISION.mindmapFrames 帧
   const settings = (await fetchSettings()) as Settings;
   const useVision = visionActiveFor({ settings, module: 'mindmap' });
-  const visionModel = settings.visionModel ?? null;
+  // 单模型口径：图片与文本一起发给同一个模型
   let images: ReturnType<typeof toPipelineImage>[] = [];
   if (useVision) {
     const anchors = sections.map((s) => s.startMs);
@@ -102,8 +102,7 @@ export async function generateConceptMap(
   }
 
   const modelFn: ConceptModelFn = ({ systemPrompt, userPrompt, images: imgs }) => {
-    const withImages = imgs && imgs.length > 0;
-    const cfg = withImages && visionModel?.apiKey ? visionModel : model;
+    const cfg = model;
     return chatCompletion({
       baseUrl: cfg.baseUrl,
       apiKey: cfg.apiKey,

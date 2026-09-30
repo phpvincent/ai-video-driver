@@ -4,9 +4,12 @@
  * - 保存：校验后经 SET_SETTINGS 持久化（各分区共用 mergeSettings 合并写，互不覆盖）
  * - 测试连接：用当前表单值直接调 chatCompletion（ping, maxTokens 1），期间按钮禁用
  * - apiKey 仅存于表单状态与 storage，任何提示/日志不输出其值
- * 分区顺序：文本模型 → 视觉模型（多模态）→ 抽帧开关 → Obsidian → 公开资料检索 → 验证期报告。
- * 文本/视觉模型区均提供 DeepSeek / Qwen 预设一键填入（只覆盖 baseUrl 与 model，不清空已填 Key；
- * 端点与模型标识的唯一来源是 src/config 的 MODEL_PRESETS，红线 9）。
+ * 单模型配置：只配置一个模型，文本与画面一起发给它；模型不支持图像输入时抽帧不可用。
+ * 分区顺序：模型配置（含「支持图像输入」声明）→ 当前策略 → 抽帧开关 → Obsidian → 公开资料检索 → 验证期报告。
+ * 模型区提供 DeepSeek / Qwen 预设一键填入（只覆盖 baseUrl 与 model，不清空已填 Key；
+ * 端点与模型标识的唯一来源是 src/config 的 MODEL_PRESETS，红线 9）；
+ * 预设同时按 presetVisionDefault 建议「支持图像输入」勾选，用户可自行改。
+ * 载入时执行一次 migrateLegacyVisionModel：旧版本的「视觉模型」提升为当前模型，避免老配置丢失。
  * Obsidian 区（SPEC-06）：接口地址 / API Key / 笔记根目录三字段，保存经
  * SET_SETTINGS 只合并 obsidian 段（不动 model），测试连接显示根目录条目数；
  * apiKey 用 password 输入，任何提示不输出明文。
@@ -21,8 +24,9 @@ import { testObsidianConnection } from '../obsidianLoader';
 import {
   applyPreset,
   describeModelStrategy,
-  isModelConfigured,
+  migrateLegacyVisionModel,
   mergeSettings,
+  presetVisionDefault,
   validateModelForm,
   type ModelFormErrors,
   type PresetKey,
@@ -53,19 +57,6 @@ const INITIAL_MODEL_FORM: ModelFormState = {
   temperatureOutline: String(DEFAULT_MODEL.temperature.outline),
   temperatureQa: String(DEFAULT_MODEL.temperature.qa),
   maxTokens: String(DEFAULT_MODEL.maxTokens),
-};
-
-/** 视觉模型表单：只暴露三要素，temperature / maxTokens 用 DEFAULT_MODEL 值补齐 */
-interface VisionFormState {
-  baseUrl: string;
-  apiKey: string;
-  model: string;
-}
-
-const INITIAL_VISION_FORM: VisionFormState = {
-  baseUrl: '',
-  apiKey: '',
-  model: '',
 };
 
 interface ObsidianFormState {
@@ -123,21 +114,6 @@ function formToModelConfig(form: ModelFormState, outlineTokenBudget: number): Mo
   };
 }
 
-/** 视觉模型合成完整 ModelConfig（temperature / maxTokens / 预算沿用文本默认，不参与熔断） */
-function visionFormToModelConfig(form: VisionFormState): ModelConfig {
-  return {
-    baseUrl: form.baseUrl.trim(),
-    apiKey: form.apiKey.trim(),
-    model: form.model.trim(),
-    temperature: {
-      outline: DEFAULT_MODEL.temperature.outline,
-      qa: DEFAULT_MODEL.temperature.qa,
-    },
-    maxTokens: DEFAULT_MODEL.maxTokens,
-    outlineTokenBudget: DEFAULT_MODEL.outlineTokenBudget,
-  };
-}
-
 /** 校验结果里取第一条错误文案（表单逐字段提示之外给一行总提示） */
 function firstError(errors: ModelFormErrors | Record<string, string | undefined>): string | null {
   for (const value of Object.values(errors)) {
@@ -160,10 +136,8 @@ export function SettingsPage({
   const [saveFeedback, setSaveFeedback] = useState<Feedback>(null);
   const [testFeedback, setTestFeedback] = useState<Feedback>(null);
   const [testing, setTesting] = useState(false);
-  /** 视觉模型区（独立于文本模型，未配置则自动跳过抽帧） */
-  const [visionForm, setVisionForm] = useState<VisionFormState>(INITIAL_VISION_FORM);
-  const [visionFeedback, setVisionFeedback] = useState<Feedback>(null);
-  const [visionTesting, setVisionTesting] = useState(false);
+  /** 用户声明：当前模型是否支持图像输入（决定抽帧开关是否可用） */
+  const [supportsVision, setSupportsVision] = useState(false);
   /** 抽帧开关（默认关闭：额外延迟与 token 消耗，且需模型支持图像输入） */
   const [visionEnabled, setVisionEnabled] = useState(false);
   const [visionModules, setVisionModules] = useState<Record<VisionModule, boolean>>(INITIAL_VISION_MODULES);
@@ -188,11 +162,13 @@ export function SettingsPage({
     sendRuntimeMessage({ type: MSG.GET_SETTINGS })
       .then((response: unknown) => {
         if (cancelled) return;
-        const stored = (response ?? {}) as Settings & {
+        const raw = (response ?? {}) as Settings & {
           model?: Partial<ModelConfig>;
           obsidian?: Partial<ObsidianConfig>;
           webSearch?: Partial<WebSearchSettings>;
         };
+        // 旧设置迁移：无 model 但有 visionModel → 提升为 model（避免老用户配置丢失）
+        const stored = migrateLegacyVisionModel(raw);
         savedRef.current = stored;
         const merged = { ...DEFAULT_MODEL, ...(stored.model ?? {}) } as Partial<ModelConfig>;
         const obs = (stored.obsidian ?? {}) as Partial<ObsidianConfig>;
@@ -218,12 +194,8 @@ export function SettingsPage({
           temperatureQa: String(merged.temperature?.qa ?? DEFAULT_MODEL.temperature.qa),
           maxTokens: String(merged.maxTokens ?? DEFAULT_MODEL.maxTokens),
         });
-        const vision = stored.visionModel;
-        setVisionForm({
-          baseUrl: vision?.baseUrl ?? '',
-          apiKey: vision?.apiKey ?? '',
-          model: vision?.model ?? '',
-        });
+        // 多模态能力以用户显式声明为准（未声明视为不支持 → 抽帧不可用）
+        setSupportsVision(stored.modelSupportsVision === true);
         // 全局抽帧开关默认关闭；模块开关默认全开（未配置视为开启）
         setVisionEnabled(stored.visionEnabled === true);
         setVisionModules({
@@ -264,8 +236,11 @@ export function SettingsPage({
     setSaveFeedback(null);
   };
 
-  /** 预设一键填入：只覆盖 baseUrl 与 model，已填的 Key 与其他字段保留 */
-  const applyPresetToText = (preset: PresetKey) => {
+  /**
+   * 预设一键填入：只覆盖 baseUrl 与 model，已填的 Key 与其他字段保留；
+   * 同时按 presetVisionDefault 给出「支持图像输入」的建议勾选（用户可再改）。
+   */
+  const applyPresetToForm = (preset: PresetKey) => {
     const next = applyPreset(formToModelConfig(form, outlineTokenBudget), preset);
     setForm({
       baseUrl: next.baseUrl,
@@ -275,9 +250,11 @@ export function SettingsPage({
       temperatureQa: String(next.temperature.qa),
       maxTokens: String(next.maxTokens),
     });
+    setSupportsVision(presetVisionDefault(preset));
     setSaveFeedback(null);
   };
 
+  /** 保存模型配置：连同「是否支持图像输入」一起合并写（单次合并，不覆盖其他分区） */
   const handleSave = () => {
     const model = formToModelConfig(form, outlineTokenBudget);
     const errors = validateModelForm(model);
@@ -286,7 +263,7 @@ export function SettingsPage({
       setSaveFeedback({ kind: 'error', text: error });
       return;
     }
-    savePatch({ model })
+    savePatch({ model, modelSupportsVision: supportsVision })
       .then((ok) => {
         setSaveFeedback(
           ok ? { kind: 'ok', text: '已保存' } : { kind: 'error', text: '保存失败：background 未确认' },
@@ -324,73 +301,7 @@ export function SettingsPage({
       });
   };
 
-  const updateVision = (field: keyof VisionFormState) => (
-    e: React.ChangeEvent<HTMLInputElement>,
-  ) => {
-    setVisionForm((prev) => ({ ...prev, [field]: e.target.value }));
-    setVisionFeedback(null);
-  };
-
-  const applyPresetToVision = (preset: PresetKey) => {
-    const next = applyPreset(visionFormToModelConfig(visionForm), preset);
-    setVisionForm({ baseUrl: next.baseUrl, apiKey: next.apiKey, model: next.model });
-    setVisionFeedback(null);
-  };
-
-  /** 保存视觉模型：只校验三要素（temperature / maxTokens 由代码补齐为默认值） */
-  const handleSaveVision = () => {
-    const cfg = visionFormToModelConfig(visionForm);
-    const errors = validateModelForm(cfg);
-    const error = firstError({
-      baseUrl: errors.baseUrl,
-      apiKey: errors.apiKey,
-      model: errors.model,
-    });
-    if (error) {
-      setVisionFeedback({ kind: 'error', text: error });
-      return;
-    }
-    savePatch({ visionModel: cfg })
-      .then((ok) => {
-        setVisionFeedback(
-          ok ? { kind: 'ok', text: '已保存' } : { kind: 'error', text: '保存失败：background 未确认' },
-        );
-      });
-  };
-
-  const handleTestVision = () => {
-    const cfg = visionFormToModelConfig(visionForm);
-    const errors = validateModelForm(cfg);
-    const error = firstError({
-      baseUrl: errors.baseUrl,
-      apiKey: errors.apiKey,
-      model: errors.model,
-    });
-    if (error) {
-      setVisionFeedback({ kind: 'error', text: error });
-      return;
-    }
-    setVisionTesting(true);
-    setVisionFeedback(null);
-    chatCompletion({
-      baseUrl: cfg.baseUrl,
-      apiKey: cfg.apiKey,
-      model: cfg.model,
-      temperature: cfg.temperature.outline,
-      maxTokens: 1,
-      messages: [{ role: 'user', content: 'ping' }],
-    })
-      .then(() => {
-        setVisionFeedback({ kind: 'ok', text: `连接成功（模型 ${cfg.model}）` });
-      })
-      .catch((err: unknown) => {
-        const raw = err instanceof Error ? err.message : String(err);
-        setVisionFeedback({ kind: 'error', text: raw.split(cfg.apiKey).join('***') });
-      })
-      .finally(() => setVisionTesting(false));
-  };
-
-  /** 保存抽帧开关（全局 + 三模块）；全局关闭时模块开关不生效 */
+  /** 保存抽帧开关（全局 + 三模块）；全局关闭时模块开关不生效；模型未声明多模态时不可保存 */
   const handleSaveVisionSwitch = () => {
     setVisionSwitchSaving(true);
     setVisionSwitchFeedback(null);
@@ -506,12 +417,13 @@ export function SettingsPage({
       .finally(() => setWebSearchSaving(false));
   };
 
-  const visionConfigured = isModelConfigured(visionForm);
   const presetKeys = Object.keys(MODEL_PRESETS) as PresetKey[];
+  /** 抽帧区是否可用：取决于「支持图像输入」勾选 */
+  const visionSwitchUsable = supportsVision;
   /** 当前策略摘要：由表单当前值合成 settings 后交给纯函数，随输入实时更新 */
   const strategyLines = describeModelStrategy({
     model: formToModelConfig(form, outlineTokenBudget),
-    visionModel: visionFormToModelConfig(visionForm),
+    modelSupportsVision: supportsVision,
     visionEnabled,
     visionModules,
   });
@@ -525,19 +437,20 @@ export function SettingsPage({
         </button>
       </header>
 
-      {/* ① 文本模型：大纲、概念图、术语与区间问答 */}
+      {/* ① 模型配置：一个模型承担大纲 / 导图 / 问答，支持图像输入时一并接收抽帧画面 */}
       <section className="settings-section">
-        <h4>文本模型（大纲 / 导图 / 问答）</h4>
+        <h4>模型配置（大纲 / 导图 / 问答）</h4>
         <p className="settings-hint">
-          模型名可自填，按厂商文档填写当前可用版本；成本与能力由你选择——便宜的多模态与更强的多模态差异较大，按需填写
+          只配置一个模型：纯文本请求与带画面的请求都发给它。模型名可自填，按厂商文档填写当前可用版本；
+          成本与能力由你选择——便宜的多模态与更强的多模态差异较大，按需填写
         </p>
         <div className="field-row">
           {presetKeys.map((key) => (
             <button
               type="button"
               className="btn"
-              key={`text-preset-${key}`}
-              onClick={() => applyPresetToText(key)}
+              key={`model-preset-${key}`}
+              onClick={() => applyPresetToForm(key)}
               title={MODEL_PRESETS[key].label}
             >
               {key === 'deepseek' ? 'DeepSeek' : 'Qwen'}
@@ -570,6 +483,18 @@ export function SettingsPage({
             value={form.model}
             onChange={update('model')}
           />
+        </label>
+        <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={supportsVision}
+            onChange={(e) => {
+              setSupportsVision(e.target.checked);
+              setSaveFeedback(null);
+              setVisionSwitchFeedback(null);
+            }}
+          />
+          <span>该模型支持图像输入（多模态，如 Qwen-VL 系列）</span>
         </label>
         <div className="field-row">
           <label className="field">
@@ -624,69 +549,7 @@ export function SettingsPage({
         )}
       </section>
 
-      {/* ② 视觉模型：未配置则自动跳过抽帧，不影响文本功能 */}
-      <section className="settings-section">
-        <h4>视觉模型（多模态，处理抽帧画面）</h4>
-        <p className="settings-hint">
-          模型名可自填，需支持图像输入；成本与能力由你选择（便宜的多模态更省，更强的多模态更准）。
-          {visionConfigured ? '已配置：开启抽帧后画面将随字幕一起交给视觉模型' : '未配置视觉模型：将自动跳过抽帧（不影响文本功能）'}
-        </p>
-        <div className="field-row">
-          {presetKeys.map((key) => (
-            <button
-              type="button"
-              className="btn"
-              key={`vision-preset-${key}`}
-              onClick={() => applyPresetToVision(key)}
-              title={MODEL_PRESETS[key].label}
-            >
-              {key === 'deepseek' ? 'DeepSeek' : 'Qwen'}
-            </button>
-          ))}
-        </div>
-        <label className="field">
-          <span>接口地址</span>
-          <input
-            type="text"
-            placeholder="https://…"
-            value={visionForm.baseUrl}
-            onChange={updateVision('baseUrl')}
-          />
-        </label>
-        <label className="field">
-          <span>API Key</span>
-          <input
-            type="password"
-            placeholder="粘贴 API Key"
-            value={visionForm.apiKey}
-            onChange={updateVision('apiKey')}
-          />
-        </label>
-        <label className="field">
-          <span>模型</span>
-          <input
-            type="text"
-            placeholder="支持图像输入的模型标识"
-            value={visionForm.model}
-            onChange={updateVision('model')}
-          />
-        </label>
-        <div className="field-row">
-          <button type="button" className="btn btn-primary" onClick={handleSaveVision}>
-            保存
-          </button>
-          <button type="button" className="btn" onClick={handleTestVision} disabled={visionTesting}>
-            {visionTesting ? '测试中…' : '测试连接'}
-          </button>
-        </div>
-        {visionFeedback && (
-          <p className={visionFeedback.kind === 'ok' ? 'settings-hint' : 'settings-hint settings-error'}>
-            {visionFeedback.text}
-          </p>
-        )}
-      </section>
-
-      {/* ②’ 当前策略：读以上各区表单当前值，随输入实时更新（只读展示，不参与保存） */}
+      {/* ② 当前策略：读模型区表单当前值，随输入实时更新（只读展示，不参与保存） */}
       <section className="settings-section">
         <h4>当前策略</h4>
         <ul className="settings-hint" style={{ paddingLeft: 18, listStyle: 'disc' }}>
@@ -696,18 +559,22 @@ export function SettingsPage({
         </ul>
       </section>
 
-      {/* ③ 抽帧开关：全局默认关闭，模块开关随全局失效 */}
-      <section className="settings-section">
+      {/* ③ 抽帧开关：模型未声明支持图像输入时整区置灰 */}
+      <section className="settings-section" style={visionSwitchUsable ? undefined : { opacity: 0.6 }}>
         <h4>抽帧开关（结合视频画面理解）</h4>
         <p className="settings-hint">
-          抽帧会带来额外延迟与 token 消耗，且需要视觉模型支持图像输入；全局关闭时所有模块一律不抽帧。
-          单次请求最多 {VISION.maxFramesPerRequest} 帧（大纲每分块 {VISION.outlineFramesPerChunk} 帧 /
-          导图 {VISION.mindmapFrames} 帧 / 问答 {VISION.qaFrames} 帧）
+          {visionSwitchUsable
+            ? '抽帧会增加延迟与 token 消耗；全局关闭时所有模块一律不抽帧。'
+            : '当前模型未声明支持图像输入；如需结合画面，请换用多模态模型（如 Qwen-VL 系列）并勾选上方选项。'}
+          {visionSwitchUsable
+            ? ` 单次请求最多 ${VISION.maxFramesPerRequest} 帧（大纲每分块 ${VISION.outlineFramesPerChunk} 帧 / 导图 ${VISION.mindmapFrames} 帧 / 问答 ${VISION.qaFrames} 帧）`
+            : ''}
         </p>
         <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <input
             type="checkbox"
-            checked={visionEnabled}
+            checked={visionSwitchUsable && visionEnabled}
+            disabled={!visionSwitchUsable}
             onChange={(e) => {
               setVisionEnabled(e.target.checked);
               setVisionSwitchFeedback(null);
@@ -723,8 +590,8 @@ export function SettingsPage({
           >
             <input
               type="checkbox"
-              checked={visionEnabled && visionModules[module]}
-              disabled={!visionEnabled}
+              checked={visionSwitchUsable && visionEnabled && visionModules[module]}
+              disabled={!visionSwitchUsable || !visionEnabled}
               onChange={(e) => {
                 setVisionModules((prev) => ({ ...prev, [module]: e.target.checked }));
                 setVisionSwitchFeedback(null);
@@ -732,7 +599,7 @@ export function SettingsPage({
             />
             <span>
               {VISION_MODULE_LABELS[module]}
-              {visionEnabled ? '' : '（随全局开关）'}
+              {visionSwitchUsable && visionEnabled ? '' : '（随全局开关）'}
             </span>
           </label>
         ))}
@@ -741,7 +608,7 @@ export function SettingsPage({
             type="button"
             className="btn btn-primary"
             onClick={handleSaveVisionSwitch}
-            disabled={visionSwitchSaving}
+            disabled={visionSwitchSaving || !visionSwitchUsable}
           >
             {visionSwitchSaving ? '保存中…' : '保存'}
           </button>

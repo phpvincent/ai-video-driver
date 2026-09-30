@@ -67,9 +67,23 @@ export function validateModelForm(form: ModelConfig): ModelFormErrors {
   return errors;
 }
 
+/** 用户声明当前模型支持图像输入 → 抽帧开关才可用（未声明视为不支持） */
+export function canEnableVision(settings: Settings): boolean {
+  return settings.modelSupportsVision === true;
+}
+
 /**
- * 抽帧可用判断：全局开关 + 该模块开关（未配置视为开启）+ 视觉模型已配置。
- * 任一条件不满足即为 false（调用方据此跳过抽帧，不影响文本功能）。
+ * 建议值：预设模型是否默认按多模态勾选（仅作默认值，用户可自行改）。
+ * DeepSeek 为纯文本 → false；Qwen 兼容模式支持图文 → true。
+ */
+export function presetVisionDefault(preset: PresetKey): boolean {
+  return preset === 'qwen';
+}
+
+/**
+ * 抽帧可用判断：全局开关 + 该模块开关（未配置视为开启）+ 当前模型已声明支持图像输入。
+ * 不再区分视觉模型：图片与文本一起发给同一个 model。
+ * 任一条件不满足即为 false（调用方据此跳过抽帧，不影响纯文本功能）。
  */
 export function visionActiveFor({
   settings,
@@ -79,8 +93,25 @@ export function visionActiveFor({
   module: VisionModule;
 }): boolean {
   if (settings.visionEnabled !== true) return false;
-  if (!isModelConfigured(settings.visionModel)) return false;
+  if (!canEnableVision(settings)) return false;
   return settings.visionModules?.[module] !== false;
+}
+
+/**
+ * 旧设置迁移：历史版本把多模态模型存在 visionModel。
+ * - 无 model 但有 visionModel → 提升为 model 并清除 visionModel
+ * - 两者都有 → 保留 model，清除 visionModel
+ * - 都无 → 原样返回
+ * 返回新对象，不改入参。
+ */
+export function migrateLegacyVisionModel(settings: Settings): Settings {
+  if (!settings.visionModel) return settings;
+  const next: Settings = { ...settings };
+  if (!isModelConfigured(next.model)) {
+    next.model = settings.visionModel;
+  }
+  delete next.visionModel;
+  return next;
 }
 
 /** 合并写回：把局部更新合并进整份 settings（不动其他分区） */
@@ -95,9 +126,9 @@ const STRATEGY_MODULE_LABELS: Record<VisionModule, string> = {
   qa: '问答',
 };
 
-/** 策略摘要固定行：模型路由规则（带画面走视觉，其余走文本） */
+/** 策略摘要固定行：单模型口径的说明（图片与文本一起发给同一个模型） */
 const ROUTING_RULE =
-  '路由规则：带画面的请求（开启抽帧的模块生成、区间提问）使用视觉模型；术语解释、自由提问、未带画面的请求使用文本模型';
+  '说明：图片与文本一起发给同一个模型；未开启抽帧时为纯文本问答';
 
 /**
  * 取接口地址的主机名（红线 9：摘要只暴露主机名，不输出完整地址）。
@@ -113,28 +144,28 @@ export function hostOf(baseUrl?: string): string {
   }
 }
 
-/** 模型摘要行：已配置 → 主机名 / 模型；未配置 → 括号内的兜底说明 */
-function describeModel(cfg: ModelConfig | undefined, fallback: string): string {
-  if (!isModelConfigured(cfg)) return fallback;
-  return `${hostOf(cfg?.baseUrl)} / ${cfg?.model ?? ''}`;
-}
-
 /**
- * 「当前策略」摘要（设置页展示用纯函数）：
- * 文本模型 / 视觉模型 / 抽帧状态（含各模块生效情况）/ 路由规则，每行一条。
+ * 「当前策略」摘要（设置页展示用纯函数，单模型口径）：
+ * 当前模型 / 多模态能力 / 抽帧状态（含各模块生效情况）/ 说明，每行一条。
  */
 export function describeModelStrategy(settings: Settings): string[] {
-  const text = describeModel(settings.model, '未配置（功能不可用）');
-  const vision = describeModel(settings.visionModel, '未配置（抽帧将自动跳过）');
+  const current = isModelConfigured(settings.model)
+    ? `当前模型：${hostOf(settings.model?.baseUrl)} / ${settings.model?.model ?? ''}`
+    : '当前模型：未配置（功能不可用）';
+
+  const multimodal = canEnableVision(settings)
+    ? '多模态：支持'
+    : '多模态：不支持（抽帧不可用）';
 
   const modules = Object.keys(STRATEGY_MODULE_LABELS) as VisionModule[];
-  const inactive = modules.filter((m) => !visionActiveFor({ settings, module: m }));
-  const frame =
-    settings.visionEnabled === true
-      ? inactive.length === 0
-        ? '抽帧：已开启（大纲✓ 导图✓ 问答✓）'
-        : `抽帧：已开启（关闭：${inactive.map((m) => STRATEGY_MODULE_LABELS[m]).join('、')}）`
-      : '抽帧：已关闭（所有模块均不抽帧，一律使用文本模型）';
+  const marks = modules
+    .map((m) => `${STRATEGY_MODULE_LABELS[m]}${settings.visionModules?.[m] !== false ? '✓' : '✗'}`)
+    .join(' ');
+  const frame = !canEnableVision(settings)
+    ? '抽帧：不可用（当前模型未声明支持图像输入）'
+    : settings.visionEnabled === true
+      ? `抽帧：已开启（${marks}）`
+      : '抽帧：已关闭';
 
-  return [`文本模型：${text}`, `视觉模型：${vision}`, frame, ROUTING_RULE];
+  return [current, multimodal, frame, ROUTING_RULE];
 }

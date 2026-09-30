@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { OutlineResult } from '../core/pipeline/outline';
 import type { Density, Section, VideoMeta } from '../types';
 import { formatTimestamp } from './SubtitleTab';
+import { getInflightOutline } from './outlineLoader';
 
 export interface OutlineTabProps {
   videoId: string | null;
@@ -46,7 +47,7 @@ export const OUTLINE_PHASE_TEXT: Record<Phase, string> = {
   loading: '大纲生成中…',
   ready: '',
   degraded: '大纲生成失败，请重试',
-  empty: '还没有可用字幕，请先在字幕 Tab 获取字幕',
+  empty: '暂无可展示内容：请先到字幕 Tab 确认已加载字幕，再回到本页生成大纲',
 };
 
 /** 模型未配置提示文案 */
@@ -287,6 +288,34 @@ export function OutlineSectionList({
   );
 }
 
+/**
+ * 结果阶段判定（导出供测试）：
+ * - 有分块失败 → degraded（真实原因是模型输出未通过校验，不是缺少字幕）
+ * - 有章节 → ready；无章节且无失败 → empty（需先加载字幕再生成）
+ */
+export function pickPhase(r: OutlineResult): Phase {
+  if (r.sections.length > 0) return 'ready';
+  if (r.failedChunks > 0 || (r.chunkState?.length ?? 0) > 0) return 'degraded';
+  return 'empty';
+}
+
+/** 带超时的 Promise 包装：避免 DB 卡住或请求悬挂导致"一直生成中" */
+export function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} 超时（${ms}ms）`)), ms);
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e instanceof Error ? e : new Error(String(e)));
+      },
+    );
+  });
+}
+
 export function OutlineTab(props: OutlineTabProps) {
   const {
     videoId,
@@ -341,16 +370,29 @@ export function OutlineTab(props: OutlineTabProps) {
     autoTriedRef.current = videoId;
     const reqId = reqIdRef.current;
     setPhase('loading');
-    loadCachedRef
-      .current(videoId)
+    withTimeout(loadCachedRef.current(videoId), 8_000, '读取大纲缓存')
       .then((r) => {
         if (reqId !== reqIdRef.current) return;
         setResult(r);
-        setPhase(r.sections.length > 0 ? 'ready' : 'empty');
+        setPhase(pickPhase(r));
       })
       .catch(() => {
         if (reqId !== reqIdRef.current) return;
-        // NO_CACHE（或读缓存异常）：回到"生成"按钮态
+        // NO_CACHE / 读缓存异常 / 超时：先看是否有进行中的生成可续等
+        const pending = getInflightOutline(videoId);
+        if (pending) {
+          withTimeout(pending, 120_000, '生成大纲')
+            .then((r) => {
+              if (reqId !== reqIdRef.current) return;
+              setResult(r);
+              setPhase(pickPhase(r));
+            })
+            .catch(() => {
+              if (reqId !== reqIdRef.current) return;
+              setPhase('idle');
+            });
+          return;
+        }
         setPhase('idle');
       });
   }, [videoId, modelReady]);
@@ -362,12 +404,11 @@ export function OutlineTab(props: OutlineTabProps) {
     setResult(null);
     setErrorText('');
     setRegenError(null);
-    generateRef
-      .current(videoId)
+    withTimeout(generateRef.current(videoId), 120_000, '生成大纲')
       .then((r) => {
         if (reqId !== reqIdRef.current) return;
         setResult(r);
-        setPhase(r.sections.length > 0 ? 'ready' : 'empty');
+        setPhase(pickPhase(r));
       })
       .catch((err: unknown) => {
         if (reqId !== reqIdRef.current) return;

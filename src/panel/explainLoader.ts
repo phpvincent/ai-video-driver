@@ -196,10 +196,10 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
     })),
   };
 
-  const visionModel = (settings.visionModel as ModelConfig | undefined) ?? null;
+  // 单模型口径：图片与文本一起发给同一个模型
   const modelFn: ExplainModelFn = ({ systemPrompt, userPrompt, images }) => {
     // 带图的请求走视觉模型（用户可另配 Qwen 等），不带图仍走文本模型
-    const cfg = images && images.length > 0 && visionModel?.apiKey ? visionModel : model;
+    const cfg = model;
     return chatCompletion({
       baseUrl: cfg.baseUrl,
       apiKey: cfg.apiKey,

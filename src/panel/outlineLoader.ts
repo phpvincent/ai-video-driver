@@ -33,6 +33,9 @@ import type { ModelConfig, Section } from '../types';
 /** 模块级单例 DB（惰性 open 由 db 层内部保证幂等） */
 const db = createSubtitleDb();
 
+/** 进行中的大纲生成（videoId → Promise）：同一视频去重 + 跨挂载续等 */
+const inflight = new Map<string, Promise<OutlineResult>>();
+
 export interface LoadOutlineOptions {
   /** 跳过大纲缓存强制重生成 */
   forceRefresh?: boolean;
@@ -81,7 +84,7 @@ export async function loadOutlineForVideo(
   // 抽帧（可选）：每个分块取 VISION.outlineFramesPerChunk 帧；失败降级为空
   const settings = await fetchSettings();
   const useVision = visionActiveFor({ settings, module: 'outline' });
-  const visionModel = settings.visionModel ?? null;
+  // 单模型口径：图片与文本一起发给同一个模型（模型不支持图像时抽帧会被门控关闭）
   const chunkFrameMap = new Map<number, ReturnType<typeof toPipelineImage>>();
   if (useVision) {
     const chunks = chunkCues(cues);
@@ -95,7 +98,7 @@ export async function loadOutlineForVideo(
 
   const modelFn: OutlineModelFn = ({ systemPrompt, userPrompt, images }) => {
     // 带图的请求走视觉模型，不带图的仍走文本模型（用户可分别配置）
-    const cfg = images && images.length > 0 && visionModel?.apiKey ? visionModel : model;
+    const cfg = model;
     return chatCompletion({
       baseUrl: cfg.baseUrl,
       apiKey: cfg.apiKey,
@@ -202,7 +205,23 @@ export async function generateOutline(
   videoId: string,
   opts: { onProgress?: LoadOutlineOptions['onProgress'] } = {},
 ): Promise<OutlineResult> {
-  return loadOutlineForVideo(videoId, { forceRefresh: true, onProgress: opts.onProgress });
+  const running = inflight.get(videoId);
+  if (running) return running;
+  const task = loadOutlineForVideo(videoId, { forceRefresh: true, onProgress: opts.onProgress }).finally(
+    () => {
+      inflight.delete(videoId);
+    },
+  );
+  inflight.set(videoId, task);
+  return task;
+}
+
+/**
+ * 获取正在进行的生成（用于 Tab 切回后继续等待，避免"又变回生成按钮"）。
+ * 无进行中任务返回 null。
+ */
+export function getInflightOutline(videoId: string): Promise<OutlineResult> | null {
+  return inflight.get(videoId) ?? null;
 }
 
 /**

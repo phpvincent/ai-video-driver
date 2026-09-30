@@ -242,10 +242,12 @@ export interface KnowledgeHit {
 
 /** 面板设置（GET_SETTINGS / SET_SETTINGS 的形状） */
 export interface Settings {
-  /** 文本/结构化模型（大纲、概念图、术语与区间问答） */
+  /** 统一模型（大纲、概念图、术语与区间问答；支持图像输入时一并接收抽帧画面） */
   model?: ModelConfig;
-  /** 视觉模型（多模态，处理抽帧图片；未配置则自动跳过抽帧） */
+  /** @deprecated 不再区分视觉模型：统一使用 model；保留仅为兼容旧设置数据 */
   visionModel?: ModelConfig;
+  /** 用户声明：当前模型是否支持图像输入（多模态）。未声明视为不支持 */
+  modelSupportsVision?: boolean;
   /** 全局抽帧开关（默认 false，避免不必要的成本与延迟） */
   visionEnabled?: boolean;
   /** 各模块是否结合画面（默认随全局开关；未配置视为开启） */

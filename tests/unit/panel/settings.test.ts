@@ -1,15 +1,18 @@
 /**
- * 设置页纯逻辑单测（多模型配置 + 抽帧开关）。
+ * 设置页纯逻辑单测（单模型配置 + 多模态能力门控 + 抽帧开关）。
  * 断言中的端点与模型标识一律从 src/config 的 MODEL_PRESETS 读取，禁止 URL 字面量（红线 9）。
  */
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_MODEL, MODEL_PRESETS, OBSIDIAN } from '../../../src/config';
 import {
   applyPreset,
+  canEnableVision,
   describeModelStrategy,
   hostOf,
   isModelConfigured,
   mergeSettings,
+  migrateLegacyVisionModel,
+  presetVisionDefault,
   validateModelForm,
   visionActiveFor,
 } from '../../../src/panel/settings/modelForm';
@@ -28,15 +31,16 @@ function textConfig(overrides: Partial<ModelConfig> = {}): ModelConfig {
   };
 }
 
-/** 已配置视觉模型的 settings 基线 */
+/** 旧版本的多模态模型配置（用于迁移用例） */
+function legacyVisionConfig(): ModelConfig {
+  return { ...textConfig(), baseUrl: MODEL_PRESETS.qwen.baseUrl, model: MODEL_PRESETS.qwen.model };
+}
+
+/** 单模型 settings 基线：已声明支持图像输入、抽帧开启、三模块全开 */
 function baseSettings(overrides: Partial<Settings> = {}): Settings {
   return {
     model: textConfig(),
-    visionModel: {
-      ...textConfig(),
-      baseUrl: MODEL_PRESETS.qwen.baseUrl,
-      model: MODEL_PRESETS.qwen.model,
-    },
+    modelSupportsVision: true,
     visionEnabled: true,
     visionModules: { outline: true, mindmap: true, qa: true },
     ...overrides,
@@ -75,6 +79,16 @@ describe('applyPreset', () => {
     expect(next.temperature).toEqual({ outline: 1.1, qa: 1.9 });
     expect(next.maxTokens).toBe(1234);
     expect(next.outlineTokenBudget).toBe(999);
+  });
+});
+
+describe('presetVisionDefault', () => {
+  it('deepseek → false（纯文本）', () => {
+    expect(presetVisionDefault('deepseek')).toBe(false);
+  });
+
+  it('qwen → true（兼容模式支持图文）', () => {
+    expect(presetVisionDefault('qwen')).toBe(true);
   });
 });
 
@@ -130,46 +144,74 @@ describe('isModelConfigured', () => {
   });
 });
 
+describe('canEnableVision', () => {
+  it('声明支持图像输入 → true', () => {
+    expect(canEnableVision(baseSettings({ modelSupportsVision: true }))).toBe(true);
+  });
+
+  it('未声明 / 显式 false / 字段缺失 → false', () => {
+    expect(canEnableVision(baseSettings({ modelSupportsVision: false }))).toBe(false);
+    expect(canEnableVision(baseSettings({ modelSupportsVision: undefined }))).toBe(false);
+    expect(canEnableVision({})).toBe(false);
+  });
+});
+
 describe('visionActiveFor', () => {
-  it('全局开关关闭 → false', () => {
-    expect(visionActiveFor({ settings: baseSettings({ visionEnabled: false }), module: 'outline' })).toBe(false);
+  it('未声明支持图像输入 → false（三模块均不可用）', () => {
+    const settings = baseSettings({ modelSupportsVision: false });
+    expect(visionActiveFor({ settings, module: 'outline' })).toBe(false);
+    expect(visionActiveFor({ settings, module: 'mindmap' })).toBe(false);
+    expect(visionActiveFor({ settings, module: 'qa' })).toBe(false);
   });
 
-  it('全局开关未配置（默认关）→ false', () => {
-    expect(visionActiveFor({ settings: baseSettings({ visionEnabled: undefined }), module: 'qa' })).toBe(false);
+  it('不再看 visionModel：仅有旧视觉模型也不生效', () => {
+    const settings: Settings = {
+      model: textConfig(),
+      visionModel: legacyVisionConfig(),
+      visionEnabled: true,
+    };
+    expect(visionActiveFor({ settings, module: 'qa' })).toBe(false);
   });
 
-  it('未配置视觉模型 → false', () => {
-    expect(
-      visionActiveFor({ settings: baseSettings({ visionModel: undefined }), module: 'mindmap' }),
-    ).toBe(false);
+  it('声明支持 + 全局开 + 模块未配置 → true（三模块各一例）', () => {
+    const settings = baseSettings({ visionModules: undefined });
+    expect(visionActiveFor({ settings, module: 'outline' })).toBe(true);
+    expect(visionActiveFor({ settings, module: 'mindmap' })).toBe(true);
+    expect(visionActiveFor({ settings, module: 'qa' })).toBe(true);
   });
 
-  it('视觉模型缺 apiKey → false', () => {
-    const vm = { ...textConfig(), apiKey: '' };
-    expect(visionActiveFor({ settings: baseSettings({ visionModel: vm }), module: 'qa' })).toBe(false);
-  });
-
-  it('模块开关未配置 → 视为开启', () => {
-    expect(
-      visionActiveFor({ settings: baseSettings({ visionModules: undefined }), module: 'outline' }),
-    ).toBe(true);
-  });
-
-  it('模块开关显式 false → false', () => {
+  it('模块显式 false → false（三模块各一例）', () => {
     expect(
       visionActiveFor({
         settings: baseSettings({ visionModules: { outline: false, mindmap: true, qa: true } }),
         module: 'outline',
       }),
     ).toBe(false);
+    expect(
+      visionActiveFor({
+        settings: baseSettings({ visionModules: { outline: true, mindmap: false, qa: true } }),
+        module: 'mindmap',
+      }),
+    ).toBe(false);
+    expect(
+      visionActiveFor({
+        settings: baseSettings({ visionModules: { outline: true, mindmap: true, qa: false } }),
+        module: 'qa',
+      }),
+    ).toBe(false);
   });
 
-  it('三个模块分别验证（全局开 + 全开）', () => {
-    const settings = baseSettings();
-    expect(visionActiveFor({ settings, module: 'outline' })).toBe(true);
-    expect(visionActiveFor({ settings, module: 'mindmap' })).toBe(true);
-    expect(visionActiveFor({ settings, module: 'qa' })).toBe(true);
+  it('全局关闭 → false（三模块各一例）', () => {
+    const settings = baseSettings({ visionEnabled: false });
+    expect(visionActiveFor({ settings, module: 'outline' })).toBe(false);
+    expect(visionActiveFor({ settings, module: 'mindmap' })).toBe(false);
+    expect(visionActiveFor({ settings, module: 'qa' })).toBe(false);
+  });
+
+  it('全局开关未配置（默认关）→ false', () => {
+    expect(
+      visionActiveFor({ settings: baseSettings({ visionEnabled: undefined }), module: 'qa' }),
+    ).toBe(false);
   });
 
   it('只关闭问答时大纲与导图仍为 true', () => {
@@ -177,6 +219,27 @@ describe('visionActiveFor', () => {
     expect(visionActiveFor({ settings, module: 'qa' })).toBe(false);
     expect(visionActiveFor({ settings, module: 'outline' })).toBe(true);
     expect(visionActiveFor({ settings, module: 'mindmap' })).toBe(true);
+  });
+});
+
+describe('migrateLegacyVisionModel', () => {
+  it('无 model 有 visionModel → 提升为 model 并清除 visionModel', () => {
+    const next = migrateLegacyVisionModel({ visionModel: legacyVisionConfig() });
+    expect(next.model?.model).toBe(MODEL_PRESETS.qwen.model);
+    expect(next.visionModel).toBeUndefined();
+  });
+
+  it('两者都有 → 保留 model，清除 visionModel', () => {
+    const next = migrateLegacyVisionModel({ model: textConfig(), visionModel: legacyVisionConfig() });
+    expect(next.model?.model).toBe(MODEL_PRESETS.deepseek.model);
+    expect(next.visionModel).toBeUndefined();
+  });
+
+  it('都无 → 原样返回（不改字段）', () => {
+    const current: Settings = { visionEnabled: true, knowledgeSearch: true };
+    const next = migrateLegacyVisionModel(current);
+    expect(next).toEqual(current);
+    expect(next.model).toBeUndefined();
   });
 });
 
@@ -202,58 +265,59 @@ describe('hostOf', () => {
 describe('describeModelStrategy', () => {
   const joined = (settings: Settings): string => describeModelStrategy(settings).join('\n');
 
-  it('四行：文本模型 / 视觉模型 / 抽帧 / 路由规则', () => {
+  it('四行：当前模型 / 多模态 / 抽帧 / 说明', () => {
     const lines = describeModelStrategy(baseSettings());
     expect(lines).toHaveLength(4);
-    expect(lines[0].startsWith('文本模型：')).toBe(true);
-    expect(lines[1].startsWith('视觉模型：')).toBe(true);
+    expect(lines[0].startsWith('当前模型：')).toBe(true);
+    expect(lines[1].startsWith('多模态：')).toBe(true);
     expect(lines[2].startsWith('抽帧：')).toBe(true);
-    expect(lines[3].startsWith('路由规则：')).toBe(true);
+    expect(lines[3].startsWith('说明：')).toBe(true);
   });
 
-  it('文本与视觉模型均已配置：显示主机名 / 模型', () => {
-    const text = joined(baseSettings());
-    expect(text).toContain(MODEL_PRESETS.deepseek.model);
-    expect(text).toContain(MODEL_PRESETS.qwen.model);
-    expect(text).toContain(new URL(MODEL_PRESETS.qwen.baseUrl).hostname);
+  it('单模型已配置：显示主机名 / 模型', () => {
+    const lines = describeModelStrategy(baseSettings());
+    expect(lines[0]).toContain(new URL(MODEL_PRESETS.deepseek.baseUrl).hostname);
+    expect(lines[0]).toContain(MODEL_PRESETS.deepseek.model);
   });
 
-  it('未配置文本模型 → 未配置（功能不可用）', () => {
-    expect(joined(baseSettings({ model: undefined }))).toContain('未配置（功能不可用）');
+  it('未配置模型 → 未配置（功能不可用）', () => {
+    expect(joined(baseSettings({ model: undefined }))).toContain('当前模型：未配置（功能不可用）');
+    expect(joined({})).toContain('当前模型：未配置（功能不可用）');
   });
 
-  it('未配置视觉模型 → 未配置（抽帧将自动跳过）', () => {
-    expect(joined(baseSettings({ visionModel: undefined }))).toContain('未配置（抽帧将自动跳过）');
+  it('声明支持图像输入 → 多模态：支持', () => {
+    expect(joined(baseSettings({ modelSupportsVision: true }))).toContain('多模态：支持');
+  });
+
+  it('未声明支持图像输入 → 多模态：不支持（抽帧不可用）', () => {
+    const text = joined(baseSettings({ modelSupportsVision: false }));
+    expect(text).toContain('多模态：不支持（抽帧不可用）');
+    expect(text).toContain('抽帧：不可用（当前模型未声明支持图像输入）');
   });
 
   it('抽帧开启且三模块全开 → 大纲✓ 导图✓ 问答✓', () => {
     expect(joined(baseSettings())).toContain('抽帧：已开启（大纲✓ 导图✓ 问答✓）');
   });
 
-  it('抽帧关闭 → 已关闭，所有模块走文本模型', () => {
-    const line = joined(baseSettings({ visionEnabled: false }));
-    expect(line).toContain('抽帧：已关闭');
-    expect(line).toContain('文本模型');
-  });
-
-  it('模块部分关闭 → 列出关闭的模块', () => {
-    const line = joined(
-      baseSettings({ visionModules: { outline: true, mindmap: false, qa: false } }),
+  it('抽帧开启但模块部分关闭 → 对应模块标 ✗', () => {
+    expect(joined(baseSettings({ visionModules: { outline: true, mindmap: false, qa: false } }))).toContain(
+      '抽帧：已开启（大纲✓ 导图✗ 问答✗）',
     );
-    expect(line).toContain('已开启');
-    expect(line).toContain('关闭：导图、问答');
   });
 
-  it('路由规则：带画面走视觉，术语解释/自由提问/无画面走文本', () => {
+  it('抽帧关闭 → 抽帧：已关闭', () => {
+    expect(joined(baseSettings({ visionEnabled: false }))).toContain('抽帧：已关闭');
+  });
+
+  it('说明行：图片与文本一起发给同一个模型', () => {
     const line = describeModelStrategy(baseSettings())[3];
-    expect(line).toContain('区间提问）使用视觉模型');
-    expect(line).toContain('术语解释');
-    expect(line).toContain('自由提问');
+    expect(line).toContain('图片与文本一起发给同一个模型');
+    expect(line).toContain('未开启抽帧时为纯文本问答');
   });
 
   it('不输出完整接口地址（只暴露主机名，红线 9）', () => {
     const text = joined(baseSettings());
-    expect(text).not.toContain(MODEL_PRESETS.qwen.baseUrl);
+    expect(text).not.toContain(MODEL_PRESETS.deepseek.baseUrl);
     expect(text).not.toContain('https://');
   });
 });
@@ -279,15 +343,24 @@ describe('mergeSettings', () => {
     expect(next).not.toBe(current);
   });
 
-  it('多次合并累积：model → visionModel → 开关', () => {
+  it('多次合并累积：model → modelSupportsVision → 开关', () => {
     let s: Settings = {};
     s = mergeSettings(s, { model: textConfig() });
-    s = mergeSettings(s, { visionModel: textConfig({ model: MODEL_PRESETS.qwen.model }) });
+    s = mergeSettings(s, { modelSupportsVision: true });
     s = mergeSettings(s, { visionEnabled: true, visionModules: { outline: false } });
     expect(s.model?.model).toBe(MODEL_PRESETS.deepseek.model);
-    expect(s.visionModel?.model).toBe(MODEL_PRESETS.qwen.model);
+    expect(s.modelSupportsVision).toBe(true);
     expect(s.visionEnabled).toBe(true);
     expect(visionActiveFor({ settings: s, module: 'outline' })).toBe(false);
     expect(visionActiveFor({ settings: s, module: 'qa' })).toBe(true);
+  });
+
+  it('合并后迁移旧 visionModel：抽帧按 modelSupportsVision 判定', () => {
+    let s: Settings = { visionModel: legacyVisionConfig() };
+    s = mergeSettings(s, { visionEnabled: true });
+    s = migrateLegacyVisionModel(s);
+    expect(s.model?.model).toBe(MODEL_PRESETS.qwen.model);
+    expect(visionActiveFor({ settings: s, module: 'qa' })).toBe(false);
+    expect(visionActiveFor({ settings: mergeSettings(s, { modelSupportsVision: true }), module: 'qa' })).toBe(true);
   });
 });
