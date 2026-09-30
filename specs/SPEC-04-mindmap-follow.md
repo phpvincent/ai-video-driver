@@ -29,6 +29,22 @@
 
 并行约束：SPEC-05 同时修改 `src/panel/ChatTab.tsx`；本 spec 不得修改 ChatTab 与 `src/core/pipeline/explain.ts`。
 
+
+## 范围变更记录（2026-09-30，用户对导图质量的否决性反馈）
+
+用户验收否决："导图太粗糙，是章节大纲的翻版"。判定成立：原实现按时间序渲染大纲，零信息增量。产品原则修订：**大纲=时间导航，导图=知识导航**，两者必须承载不同的认知任务。
+
+新设计（概念知识图）：
+1. 默认视图改为概念图：根=课程主题 → 概念域（3~6，语义聚类）→ 概念（短语 ≤12 字）→ 折叠细节；节点文本短语化
+2. 播放跟随升级为概念级：当前章节涉及的概念节点高亮（section.terms ↔ 概念映射）
+3. 概念节点挂多时间锚（跨章节合并出现点），可点跳播；锚点吸附真实 Cue（红线 2 精神）
+4. 节点视觉承载 score（大小/色深）
+5. 生成：一次结构化模型调用（输入 sections+terms+summaries → ConceptTree JSON，Zod 校验），缓存键 [videoId, conceptMapPromptVersion, model]；红线 1 合规（确定性单调用，非 agent loop）
+6. 降级：模型失败 → 确定性术语关联图（terms 按出现章节聚合，零 token）
+7. 原章节时间轴视图保留为切换项（次要）
+
+连带：新增 src/prompts/concept-map.md、core/pipeline/conceptMap.ts、ConceptNode 类型、db 概念图缓存。
+
 ## 4. 验收标准
 
 - [ ] A1 [自动] Markdown 组装单测：章节顺序、时间前缀、密度标记、空 bullets 处理
