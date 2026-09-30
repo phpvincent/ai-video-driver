@@ -110,3 +110,4 @@
 |---|---|---|---|---|
 | — | — | — | — | — |
 | 10-01 | 父 agent 补课 | **SPEC-08 8.7 验收核对（[自动] 项）**：A1 chunk.test / A2 snap.test / A3 outline.test（非法→重试→两次失败标记）/ A4 merge.test（增量合并 + 全局校正）/ A5 density.test / A6 outline.test（预算熔断 budgetHit）/ A7 chunkState 机制有覆盖（熔断用例断言 pending 块）但**缺专门的"中断后续跑只请求未完成块"用例** → 记为缺口，随 SPEC-07 验证期补 / A8 redlines+prompts PASS / A9 **回放测试缺失**（fixtures 仅有 bv-cases.md，无录制响应与快照）→ 记为缺口。A10~A14 [人工] 待用户冒烟（smoke-checklist）。**tag 待人工项通过后打** | verify 57 文件 / 992 例全绿 | — |
+| 10-01 | 父 agent 补课 | **SPEC-08 8.7 验收核对（[自动] 项）**：A1 chunk.test / A2 snap.test / A3 outline.test（非法→重试→两次失败标记）/ A4 merge.test（增量合并 + 全局校正）/ A5 density.test / A6 outline.test（预算熔断 budgetHit）/ A7 chunkState 机制有覆盖（熔断用例断言 pending 块）但**缺专门的"中断后续跑只请求未完成块"用例** → 记为缺口，随 SPEC-07 验证期补 / A8 redlines+prompts PASS / A9 **回放测试缺失**（fixtures 仅有 bv-cases.md，无录制响应与快照）→ 记为缺口。A10~A14 [人工] 待用户冒烟（smoke-checklist）。**tag 待人工项通过后打** | verify 57 文件 / 992 例全绿 | — |

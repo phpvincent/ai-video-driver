@@ -68,3 +68,4 @@
 |---|---|---|---|---|
 | — | — | — | — | — |
 | 10-01 | 父 agent 补课 | **SPEC-08 8.7 验收核对（[自动] 项）**：A1 compiler.test（12000 字字幕 ≤ 4000 token）/ A2 explain.test（非法重试 + coveredByVideo）/ A3 chat-tab.test snapTimestamps（吸附 + 越界丢弃；**渲染接线本轮 8.4 已修**——此前 App 未传 cues）/ A4 db.test qaHistory（索引与按视频/章节统计）/ A5 prompts+redlines PASS。A6~A10 [人工] 待用户冒烟。**tag 待人工项通过后打** | verify 57 文件 / 992 例全绿 | — |
+| 10-01 | 父 agent 补课 | **SPEC-08 8.7 验收核对（[自动] 项）**：A1 compiler.test（12000 字字幕 ≤ 4000 token）/ A2 explain.test（非法重试 + coveredByVideo）/ A3 chat-tab.test snapTimestamps（吸附 + 越界丢弃；**渲染接线本轮 8.4 已修**——此前 App 未传 cues）/ A4 db.test qaHistory（索引与按视频/章节统计）/ A5 prompts+redlines PASS。A6~A10 [人工] 待用户冒烟。**tag 待人工项通过后打** | verify 57 文件 / 992 例全绿 | — |

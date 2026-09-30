@@ -107,3 +107,4 @@
 |---|---|---|---|---|
 | — | — | — | — | — |
 | 10-01 | 父 agent 补课 | **SPEC-08 8.7 验收核对（[自动]/[半自动] 项）**：A1 capture.test buildVideoNoteMarkdown + mindmap-tab.test buildMindmapMarkdown / A2 compiler.test findSectionAt（含首句前/末句后/恰好边界）/ A3 mindmap-tab.test 渲染（节点与章节数一致、锚点时间正确）。A4~A7 [人工] 待用户冒烟。**tag 待人工项通过后打** | verify 57 文件 / 992 例全绿 | — |
+| 10-01 | 父 agent 补课 | **SPEC-08 8.7 验收核对（[自动]/[半自动] 项）**：A1 capture.test buildVideoNoteMarkdown + mindmap-tab.test buildMindmapMarkdown / A2 compiler.test findSectionAt（含首句前/末句后/恰好边界）/ A3 mindmap-tab.test 渲染（节点与章节数一致、锚点时间正确）。A4~A7 [人工] 待用户冒烟。**tag 待人工项通过后打** | verify 57 文件 / 992 例全绿 | — |
