@@ -26,6 +26,7 @@ import {
   preserveSecrets,
   mergeSavedSecrets,
   maskKey,
+  savedKeyForEndpoint,
 } from '../../../src/panel/settings/modelForm';
 import type { ModelConfig, Settings } from '../../../src/types';
 
@@ -74,10 +75,9 @@ describe('applyPreset', () => {
     expect(next.model).toBe(MODEL_PRESETS.qwen.model);
   });
 
-  it('applyPreset：换端点时清空旧 Key（语义变更：A 平台 Key 不可带到 B 平台，防 401）', () => {
+  it('applyPreset：只换端点与模型名（Key 由 savedKeyForEndpoint 按端点回填，本函数不处理）', () => {
     const form = { ...DEFAULT_MODEL, baseUrl: 'https://old.example/v1', apiKey: 'keep-me' } as never;
     const out = applyPreset(form as never, 'deepseek');
-    expect(out.apiKey).toBe(''); // 端点变了 → Key 必须重填
     expect(out.baseUrl).toBe(MODEL_PRESETS.deepseek.baseUrl);
     expect(out.model).toBe(MODEL_PRESETS.deepseek.model);
   });
@@ -633,12 +633,24 @@ describe('mergeSettings', () => {
     expect(resolveModuleModel(settings, 'qa')?.apiKey).toBe('sk-default');
   });
 
-  it('applyPreset：切换端点时清空 Key（同端点则保留）', () => {
-    const form = { ...DEFAULT_MODEL, baseUrl: MODEL_PRESETS.deepseek.baseUrl, apiKey: 'sk-ds', model: 'deepseek-flash' };
-    const toQwen = applyPreset(form as never, 'qwen');
-    expect(toQwen.apiKey).toBe('');
-    const toSame = applyPreset({ ...form } as never, 'deepseek');
-    expect(toSame.apiKey).toBe('sk-ds');
+  it('applyPreset：同端点保留 Key；换端点保留表单 Key（回填由 savedKeyForEndpoint 负责）', () => {
+    const form: ModelConfig = { ...DEFAULT_MODEL, baseUrl: MODEL_PRESETS.deepseek.baseUrl, apiKey: 'sk-ds', model: 'deepseek-flash' };
+    expect(applyPreset(form, 'deepseek').apiKey).toBe('sk-ds');
+    expect(applyPreset(form, 'qwen').apiKey).toBe('sk-ds'); // 不清空，回填逻辑负责
+  });
+
+  it('savedKeyForEndpoint：优先同端点方案，其次同端点默认模型，无则 null', () => {
+    const settings = {
+      model: { ...DEFAULT_MODEL, baseUrl: 'https://deepseek', apiKey: 'sk-ds' },
+      modelProfiles: [
+        { name: 'Q1', apiKey: 'sk-q1', baseUrl: 'https://maas', model: 'm' },
+        { name: 'Q2', apiKey: '', baseUrl: 'https://maas2', model: 'm' },
+      ],
+    } as never;
+    expect(savedKeyForEndpoint(settings, 'https://maas')).toBe('sk-q1');
+    expect(savedKeyForEndpoint(settings, 'https://deepseek')).toBe('sk-ds');
+    expect(savedKeyForEndpoint(settings, 'https://maas2')).toBeNull();
+    expect(savedKeyForEndpoint(settings, 'https://unknown')).toBeNull();
   });
 
   it('preserveSecrets：新值填了 Key 时以新值为准（正常覆盖）', () => {

@@ -514,38 +514,59 @@ export function OutlineTab(props: OutlineTabProps) {
     );
   }
 
+  // 模型选择在所有状态下可见（生成前也要能选用哪个模型）
+  const pickerRow = (
+    <div className="outline-picker-row">
+      <ModelPicker module="outline" />
+    </div>
+  );
+
   if (phase === 'loading') {
     return (
-      <div className="tab-placeholder">
-        <p>{OUTLINE_PHASE_TEXT.loading}</p>
+      <div className="outline-tab">
+        {pickerRow}
+        <div className="tab-placeholder">
+          <p>{OUTLINE_PHASE_TEXT.loading}</p>
+        </div>
       </div>
     );
   }
 
   if (phase === 'degraded') {
     return (
-      <div className="outline-degraded">
-        <p className="outline-degraded-text">
-          {errorText && errorText.trim().length > 0 ? errorText : OUTLINE_FAILURE_NO_DETAIL}
-        </p>
-        <button type="button" className="btn" onClick={handleGenerate}>
-          重试
-        </button>
+      <div className="outline-tab">
+        {pickerRow}
+        <div className="outline-degraded">
+          <p className="outline-degraded-text">
+            {errorText && errorText.trim().length > 0 ? errorText : OUTLINE_FAILURE_NO_DETAIL}
+          </p>
+          <button type="button" className="btn" onClick={handleGenerate}>
+            重试
+          </button>
+        </div>
       </div>
     );
   }
 
   if (phase === 'empty') {
-    return <div className="outline-empty">{OUTLINE_PHASE_TEXT.empty}</div>;
+    return (
+      <div className="outline-tab">
+        {pickerRow}
+        <div className="outline-empty">{OUTLINE_PHASE_TEXT.empty}</div>
+      </div>
+    );
   }
 
   if (phase === 'idle') {
     return (
-      <div className="tab-placeholder">
-        <p>{OUTLINE_PHASE_TEXT.idle}</p>
-        <button type="button" className="btn btn-primary" onClick={handleGenerate}>
-          生成大纲
-        </button>
+      <div className="outline-tab">
+        {pickerRow}
+        <div className="tab-placeholder">
+          <p>{OUTLINE_PHASE_TEXT.idle}</p>
+          <button type="button" className="btn btn-primary" onClick={handleGenerate}>
+            生成大纲
+          </button>
+        </div>
       </div>
     );
   }
@@ -555,9 +576,9 @@ export function OutlineTab(props: OutlineTabProps) {
   const active = findActiveSection(sections, positionMs);
   return (
     <div className="outline-tab">
+      {pickerRow}
       <div className="outline-header">
         <span className="outline-count">共 {sections.length} 章</span>
-        <ModelPicker module="outline" />
         {props.onSaveVideoNote && (
           <button
             type="button"

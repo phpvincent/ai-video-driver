@@ -37,10 +37,23 @@ export function isModelConfigured(cfg?: Partial<ModelConfig> | null): boolean {
 /** 应用预设：只覆盖 baseUrl 与 model，保留用户已填的 apiKey、temperature 等字段 */
 export function applyPreset(form: ModelConfig, preset: PresetKey): ModelConfig {
   const p = MODEL_PRESETS[preset];
-  // 端点变了，旧平台的 Key 不可复用（不同平台 Key 体系不同）——
-  // 显式清空，逼用户填写对应平台的 Key；否则保存后必 401
-  const sameEndpoint = (form.baseUrl ?? '').trim() === p.baseUrl;
-  return { ...form, baseUrl: p.baseUrl, model: p.model, apiKey: sameEndpoint ? form.apiKey : '' };
+  // Key 不在此处理：调用方会用 savedKeyForEndpoint 按新端点回填已保存的 Key
+  // （有已存 Key → 直接能测试连接；没有 → 留空由用户填写）
+  return { ...form, baseUrl: p.baseUrl, model: p.model };
+}
+
+/** 端点 → 已保存的 Key：优先同名同端点的方案，其次端点相同的默认模型；都没有返回 null */
+export function savedKeyForEndpoint(settings: Settings, baseUrl: string): string | null {
+  const b = (baseUrl ?? '').trim();
+  if (!b) return null;
+  const profile = ((settings.modelProfiles ?? []) as Array<ModelConfig>).find(
+    (q) => (q?.baseUrl ?? '').trim() === b && Boolean(q?.apiKey?.trim()),
+  );
+  if (profile?.apiKey?.trim()) return profile.apiKey.trim();
+  if ((settings.model?.baseUrl ?? '').trim() === b && settings.model?.apiKey?.trim()) {
+    return settings.model.apiKey.trim();
+  }
+  return null;
 }
 
 function isHttpUrl(value: string): boolean {

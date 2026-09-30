@@ -34,6 +34,7 @@ import {
   mergeSavedSecrets,
   maskKey,
   mergeSettings,
+  savedKeyForEndpoint,
   normalizeModelConfig,
   presetShortLabel,
   seedProfilesIfEmpty,
@@ -280,21 +281,25 @@ export function SettingsPage({
    * 同时按 presetVisionDefault 给出「支持图像输入」的建议勾选（用户可再改）。
    */
   const applyPresetToForm = (preset: PresetKey) => {
-    const next = applyPreset(formToModelConfig(form, outlineTokenBudget), preset);
+    const prev = formToModelConfig(form, outlineTokenBudget);
+    const next = applyPreset(prev, preset);
+    // 切换端点时回填该端点已保存的 Key（有 → 直接可测试连接；无 → 留空由用户填写）
+    const savedKey = savedKeyForEndpoint(savedRef.current, next.baseUrl);
     setForm({
       baseUrl: next.baseUrl,
-      apiKey: next.apiKey,
+      apiKey: savedKey ?? '',
       model: next.model,
       temperatureOutline: String(next.temperature.outline),
       temperatureQa: String(next.temperature.qa),
       maxTokens: String(next.maxTokens),
     });
     setSupportsVision(presetVisionDefault(preset));
-    // 端点变化时 Key 已被清空（不同平台 Key 体系不同），提示用户重填
+    const switched = next.baseUrl !== prev.baseUrl;
     setSaveFeedback(
-      applyPreset(formToModelConfig(form, outlineTokenBudget), preset).baseUrl !==
-      formToModelConfig(form, outlineTokenBudget).baseUrl
-        ? { kind: 'ok', text: '已切换端点：请填写该平台的 API Key 后保存' }
+      switched
+        ? savedKey
+          ? { kind: 'ok', text: '已切换端点，并回填该平台已保存的 API Key' }
+          : { kind: 'ok', text: '已切换端点：该平台尚无已保存的 Key，请填写后保存' }
         : null,
     );
     setSaveFeedback(null);
