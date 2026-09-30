@@ -9,7 +9,7 @@
     "https://api.bilibili.com/*",
     "https://*.hdslb.com/*",
     "https://api.deepseek.com/*",
-    "http://127.0.0.1:27124/*"
+    "http://127.0.0.1:27123/*"
   ],
   "background": { "service_worker": "background.js", "type": "module" },
   "content_scripts": [
