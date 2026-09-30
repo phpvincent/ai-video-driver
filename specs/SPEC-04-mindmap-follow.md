@@ -45,6 +45,17 @@
 
 连带：新增 src/prompts/concept-map.md、core/pipeline/conceptMap.ts、ConceptNode 类型、db 概念图缓存。
 
+
+### 范围变更二次迭代（2026-09-30 上午，用户对概念图 v1 的反馈）
+
+事实：①截图显示的是降级图（模型生成失败静默回退，UI 未告知）——根因：Zod 对 label ≤12 字硬拒绝，模型输出 13~16 字常见 → 重试再败 → 降级；②概念跟随 substring 匹配过松（亮起多个）；③importance 圆点无语义；④形式裁决：**放弃 SVG 图布局，改为 HTML 知识卡片流**（窄边栏媒介适配），"图的形式没必要有拘束"采纳。
+
+施工项：
+1. conceptMap.ts：label 的 Zod 约束放宽（≤30，代码负责截断到 12）；降级时 UI 显式提示"模型生成失败，当前为术语关联图"+ 重试按钮
+2. MindmapTab：概念图视图从 SVG 树改为 **HTML 知识卡片流**——概念域卡（域名 + 概念数）→ 概念行（名称粗体 + 重要度文字徽标〔核心/重要/一般，替换圆点〕+ 时间 chips 可点跳播 + 细节折叠）；当前概念行高亮（匹配改精确：概念 label ∈ 当前章节 terms，大小写不敏感）
+3. 时间轴视图保留；SVG/d3-flextree 代码移除
+4. 概念流程图（关系三元组抽取）列入 v0.1.x 候选（EVOLUTION-ROADMAP），本期不做
+
 ## 4. 验收标准
 | 2026-09-30 | 子 agent | 概念知识图全量：concept-map.md 单一源（grounding 约束：概念必须出自素材术语/要点）+ conceptMap.ts（ConceptTree Zod、buildConceptMap 单次结构化调用含重试、buildTermIndexMap 确定性降级、shortenLabel）+ MindmapTab 重写（自绘 SVG d3-flextree 竖向树、短语节点、渐进揭示 domain 折叠、score 权重视觉、概念跟随高亮、章节时间轴保留为切换视图）+ mindmapLoader（缓存键 concept::videoId::ver::model）+ 48 例 | tsc 零错误；48 例全绿；check-prompts PASS | d084be8（已验收） |
 | 2026-09-30 | 父 agent | App 接线（缓存回填 effect/生成 handler 失败降级本地术语图/MindmapTab 全 props）；SSH 推送通道修复（22 端口被网络切断 → ~/.ssh/config 走 ssh.github.com:443 + 官方 ed25519 指纹预置）；npm run verify 直连 443 例全绿 | ✅ 人工验收项：概念图生成/概念跟随/降级图/时间轴切换（用户） | d084be8 |
