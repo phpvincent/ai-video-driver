@@ -39,7 +39,7 @@
 ## 3b. 执行记录（append-only）
 
 | 日期 | 执行者 | 变更摘要 | 自测结果 | commit |
-| 2026-09-30 | 子 agent + 父 agent | prompt 0.2.1（章节密度从上限改目标区间：每章 2.5~5 分钟、≈时长÷3.5、单块 1~3 自然章）+ 设置页「当前策略」摘要（describeModelStrategy：文本/视觉模型、抽帧状态、路由规则说明）| tsc 零错误；92 例（三套件）+ verify 直连全绿；promptVersion 0.2.1 自动失效旧缓存（用户重新生成） | <随提交回填> |
+| 2026-09-30 | 子 agent + 父 agent | prompt 0.2.1（章节密度从上限改目标区间：每章 2.5~5 分钟、≈时长÷3.5、单块 1~3 自然章）+ 设置页「当前策略」摘要（describeModelStrategy：文本/视觉模型、抽帧状态、路由规则说明）| tsc 零错误；92 例（三套件）+ verify 直连全绿；promptVersion 0.2.1 自动失效旧缓存（用户重新生成） | f691eff 前置提交（含本次） |
 
 |---|---|---|---|---|
 | 2026-09-30 | 子 agent 3.1 | modelClient（OpenAI 兼容、注入 fetch、URL 规范化、JSON 模式、usage 映射、结构化 throw）+ 设置页激活（GET/SET_SETTINGS 持久化、校验、测试连接按钮、apiKey 脱敏）+ 15 例单测（假域名 + test-key） | tsc 零错误；34 例（harness 15 + panel 19）全绿 | 31127bd（已验收） |
