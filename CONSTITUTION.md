@@ -3,7 +3,7 @@
 > 本文件是项目施工的最高治理文档，所有参与本项目的 agent（父/子）与用户验收环节必须遵守。
 > 与其他文档（含 TECH-DESIGN.md）冲突时，以本宪法为准。
 
-- 版本：v1.1（2026-09-30，依据 `reviews/AUDIT-2026-09-30.md` 修订）
+- 版本：v1.2（2026-10-01，新增红线 11 可移植性；更新 spec 索引。v1.1：2026-09-30 依据 `reviews/AUDIT-2026-09-30.md` 修订）
 - 代码仓库：`git@github.com:phpvincent/ai-video-driver.git`，主分支 `main`
 
 ## 0. 效力与变更
@@ -78,6 +78,7 @@ spec 的每条验收项必须标注执行方式：
 | 8 | 采集瀑布每级必须返回 `(Cue[], status)`，**失败不抛异常**，降级到下一级 | 瀑布单测 + fixture 回放 |
 | 9 | **禁止硬编码**：API key、模型标识、平台接口 URL/正则只允许出现在 `src/config/` | `check:redlines` grep 规则 |
 | 10 | **API key 与模型调用禁入 content script**：`src/content/` 不得引用 modelConfig / apiKey / 模型客户端 | `check:redlines` grep 规则 |
+| 11 | **可移植性**：任何功能都要考虑未来移植到其他浏览器（360 / QQ / Edge 等 Chromium 系，以及 Firefox）的场景。①**新增**的浏览器平台调用（`chrome.*` 中除 `runtime` 消息与 `storage` 以外的能力，如 `sidePanel` / `permissions` / `tabs` / `downloads` / `action`）只能写在 `src/platform/` 适配层，业务代码通过适配层调用；②适配层对"能力不存在"必须有降级路径，不得直接抛错白屏；③`core/` 保持零 `chrome.*` 依赖；④存量调用在触碰到对应文件时顺带迁移，不做一次性大搬迁 | `check:redlines` R11 规则（SPEC-08 落地）+ diff 审查 |
 
 ## 7. 文档同步义务
 
@@ -97,15 +98,18 @@ spec 的每条验收项必须标注执行方式：
 
 ```
 SPEC-01 骨架 ─► SPEC-02 字幕瀑布 ─► SPEC-03 大纲 ─┬─► SPEC-04 导图 ─┐
-                                                 └─► SPEC-05 问答 ─┴─► SPEC-06 知识沉淀 ─► SPEC-07 MVP 验证期
+                                                 └─► SPEC-05 问答 ─┴─► SPEC-06 知识沉淀 ─► SPEC-08 MVP 收口 ─┬─► SPEC-07 MVP 验证期（真实使用）
+                                                                                               └─► SPEC-09 大纲笔记与交换格式
 ```
 
 | Spec | 标题 | 依赖 | 状态 |
 |---|---|---|---|
 | SPEC-01 | 工程骨架、共享契约与质量工具链 | — | 已验收（spec-01-accepted） |
 | SPEC-02 | 字幕采集瀑布与字幕 Tab | SPEC-01 | 已验收（spec-02-accepted） |
-| SPEC-03 | 预读大纲 pipeline | SPEC-02 | 待开工 |
-| SPEC-04 | 思维导图与播放跟随 | SPEC-03 | 待开工 |
-| SPEC-05 | 划词解释与区间问答 | SPEC-03 | 待开工 |
-| SPEC-06 | Obsidian 知识沉淀 | SPEC-04, SPEC-05 | 待开工 |
-| SPEC-07 | MVP 验证期 | SPEC-06 | 待开工 |
+| SPEC-03 | 预读大纲 pipeline | SPEC-02 | 代码已落地，**待补验收**（SPEC-08 8.7） |
+| SPEC-04 | 思维导图与播放跟随 | SPEC-03 | 代码已落地，**待补验收**（SPEC-08 8.7） |
+| SPEC-05 | 划词解释与区间问答 | SPEC-03 | 代码已落地，**待补验收**（SPEC-08 8.7） |
+| SPEC-06 | Obsidian 知识沉淀 | SPEC-04, SPEC-05 | 代码已落地，**待补验收**（SPEC-08 8.7） |
+| SPEC-07 | MVP 验证期 | SPEC-08 | 进行中：统计与报告已实现；回顾问卷入库等缺口在 SPEC-08 8.8 补齐；**真实使用 0/10** |
+| SPEC-08 | MVP 收口与真机验证 | SPEC-06 | 待开工 |
+| SPEC-09 | 大纲笔记与大纲交换格式 | SPEC-08 | 待开工 |
