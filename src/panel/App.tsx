@@ -16,7 +16,7 @@ import { currentVideoIdRef, currentVideoMetaRef, explain as explainFn } from './
 import { getLastFramePlan } from './framesClient';
 import { saveTermCardToObsidian, saveVideoNoteToObsidian } from './obsidianLoader';
 import { applyUsageEvent, createEmptyUsage, type UsageRecord } from '../core/metrics/usage';
-import { createSubtitleDb, getUsage, saveUsage, listAllUsage } from '../storage/db';
+import { createSubtitleDb, getSubtitle, getUsage, saveUsage, listAllUsage } from '../storage/db';
 import { DB } from '../config';
 import { ValidationReportView } from './ValidationReportView';
 import { LlmLogView } from './LlmLogView';
@@ -32,6 +32,7 @@ import {
 import type { ConceptMapData, QaRecord } from '../types';
 import type { Section } from '../types';
 import { loadSubtitles as runWaterfall, loadSubtitlesManual } from './subtitleLoader';
+import type { Cue } from '../types';
 
 type TabKey = 'subtitle' | 'outline' | 'mindmap' | 'chat';
 
@@ -111,6 +112,8 @@ export function App() {
   const [pasteVersion, setPasteVersion] = useState(0);
   /** 大纲章节（OutlineTab 通知；导图/问答消费） */
   const [sections, setSections] = useState<Section[]>([]);
+  /** 当前视频字幕（SubtitleTab 上报 / 换视频读缓存；ChatTab 用它吸附回答时间戳） */
+  const [cues, setCues] = useState<Cue[]>([]);
   /** 划词待解释术语（SubtitleTab → ChatTab 联动） */
   const [pendingTerm, setPendingTerm] = useState<{ term: string; consumed: () => void } | null>(null);
   /** 概念知识图（缓存/生成产物；null=未生成，组件会降级本地术语图） */
@@ -158,6 +161,14 @@ export function App() {
     setPendingTerm(null);
     setConceptMap(null);
     setConceptError(null);
+    // 换视频：先清空，再尝试读缓存字幕（此前看过该视频时 ChatTab 立即可吸附时间戳）
+    setCues([]);
+    const vid = video?.videoId;
+    if (vid) {
+      getSubtitle(db, vid)
+        .then((rec) => setCues(rec?.cues ?? []))
+        .catch(() => undefined);
+    }
   }, [video?.videoId]);
 
   /** 问答角色：缓存命中直接用；未命中则按视频内容判定一次（失败降级默认角色） */
@@ -518,6 +529,7 @@ export function App() {
                 loadSubtitles={handleLoadSubtitles}
                 onManualPaste={handleManualPaste}
                 onExplainTerm={handleExplainTerm}
+                onCues={setCues}
               />
             )}
             {effectiveTab === 'outline' && (
@@ -561,6 +573,7 @@ export function App() {
               <ChatTab
                 videoId={video?.videoId ?? null}
                 sections={sections}
+                cues={cues}
                 positionMs={playback?.positionMs ?? 0}
                 onRequestSeek={handleRequestSeek}
                 onPause={handlePause}

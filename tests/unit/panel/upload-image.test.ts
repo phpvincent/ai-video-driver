@@ -11,7 +11,7 @@ import {
   uploadQuestionNote,
   validateUploadFile,
 } from '../../../src/panel/uploadImage';
-import { ChatTab } from '../../../src/panel/ChatTab';
+import { ChatTab, digestSegmentAnswer } from '../../../src/panel/ChatTab';
 
 describe('validateUploadFile', () => {
   it('合法图片通过', () => {
@@ -87,5 +87,17 @@ describe('ChatTab 上传入口渲染', () => {
     const html = renderToString(createElement(ChatTab, { videoId: 'BV1', modelReady: true, visionReady: false, explain: async () => ({}) as never }));
     expect(html).toContain('当前模型不支持图片');
     expect(html).not.toContain('粘贴 / 拖入题目截图');
+  });
+});
+
+
+describe('digestSegmentAnswer（多轮记忆摘要）', () => {
+  it('取前 3 条要点、每条截 40 字、以；连接', () => {
+    expect(digestSegmentAnswer({ keyPoints: ['a', 'b', 'c', 'd'] })).toBe('a；b；c');
+    expect(digestSegmentAnswer({ keyPoints: ['x'.repeat(60)] })).toHaveLength(40);
+  });
+  it('无要点时回落正文前 80 字（压缩空白）', () => {
+    expect(digestSegmentAnswer({ answer: '  第一步  做 X。\n第二步 做 Y。' })).toBe('第一步 做 X。 第二步 做 Y。');
+    expect(digestSegmentAnswer({ answer: '长'.repeat(200) })).toHaveLength(80);
   });
 });

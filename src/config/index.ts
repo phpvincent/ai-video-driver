@@ -84,6 +84,10 @@ export const CONTEXT = {
   defaultRangePadMs: 30_000,
   chapterCompressChars: 3_000,
   prevSummaryMaxTokens: 150,
+  /** 问答多轮记忆：保留最近几轮（SPEC-08 8.4b，用户确认 5 轮） */
+  dialogueMaxTurns: 5,
+  /** 单轮摘要最长字符（问题 + 回答要点压缩后） */
+  dialogueTurnMaxChars: 240,
   /** 公开资料检索结果注入上下文的字符上限（红线 3：与字幕/知识库共享同一预算，不膨胀） */
   webContextMaxChars: 1_000,
 } as const;

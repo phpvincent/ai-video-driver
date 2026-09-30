@@ -218,6 +218,8 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
   const input: ExplainInput = {
     sections,
     cues,
+    // 多轮记忆（SPEC-08 8.4b）：术语解释不传（调用方已过滤）
+    dialogue: args.term ? undefined : (args.history ?? undefined),
     rangeMs: args.rangeMs,
     positionMs: args.positionMs,
     videoMeta: currentVideoMetaRef.value ?? undefined,

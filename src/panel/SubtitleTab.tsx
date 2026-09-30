@@ -17,6 +17,8 @@ export interface SubtitleTabProps {
   onRequestSeek: (targetMs: number) => void;
   /** 数据源注入（父 agent 接线 runSubtitleWaterfall；本文件不 import providers，避免并行冲突） */
   loadSubtitles: (videoId: string) => Promise<FetchResult>;
+  /** 字幕加载成功后向父级上报（App 存给 ChatTab 吸附时间戳，SPEC-08 8.4a） */
+  onCues?: (cues: Cue[]) => void;
   /** 手动粘贴解析回调（接线前缺省，按钮禁用并显示"待接线"） */
   onManualPaste?: (text: string) => void;
   /** 划词解释回调（SPEC-05 追加：选区确认后触发；接线前 sticky 条显示"待接线"） */
@@ -232,7 +234,7 @@ function downloadTextFile(content: string, filename: string): void {
 }
 
 export function SubtitleTab(props: SubtitleTabProps) {
-  const { videoId, positionMs, onRequestSeek, onManualPaste, onExplainTerm } = props;
+  const { videoId, positionMs, onRequestSeek, onManualPaste, onExplainTerm, onCues } = props;
   const [phase, setPhase] = useState<Phase>('idle');
   const [result, setResult] = useState<FetchResult | null>(null);
   /** loadSubtitles 抛异常（瀑布约定不抛，占位/接线期兜底） */
@@ -260,6 +262,7 @@ export function SubtitleTab(props: SubtitleTabProps) {
       .then((r) => {
         if (cancelled) return;
         setResult(r);
+        if (r.cues.length > 0) onCues?.(r.cues);
         // 有 cues 即渲染（manual_pasted 也算）；无 cues 且无降级信息 → empty
         setPhase(
           r.cues.length > 0

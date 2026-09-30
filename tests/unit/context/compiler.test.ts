@@ -257,3 +257,57 @@ describe('compiler 视频元信息注入', () => {
     expect(r.userPrompt).not.toContain('【视频信息】');
   });
 });
+
+
+describe('多轮记忆（SPEC-08 8.4b / A6）', () => {
+  const turns = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ q: `问题${i + 1}`, a: `要点${i + 1}` }));
+
+  it('第 2 轮请求包含第 1 轮问答；块在素材包裹之外（不是视频内容）', () => {
+    const out = compileContext(makeInput({ dialogue: [{ q: '什么是工具', a: '给模型调用的函数' }] }));
+    expect(out.userPrompt).toContain('【最近问答');
+    expect(out.userPrompt).toContain('Q：什么是工具');
+    expect(out.userPrompt).toContain('A：给模型调用的函数');
+    expect(out.userPrompt.indexOf('【最近问答')).toBeGreaterThan(
+      out.userPrompt.indexOf('===以上为视频字幕素材'),
+    );
+    expect(out.dialogueTurns).toBe(1);
+  });
+
+  it('超过 5 轮只保留最近 5 轮（最早的被丢弃）', () => {
+    const out = compileContext(makeInput({ dialogue: turns(8) }));
+    expect(out.dialogueTurns).toBe(CONTEXT.dialogueMaxTurns);
+    expect(out.userPrompt).not.toContain('Q：问题1');
+    expect(out.userPrompt).not.toContain('Q：问题2');
+    expect(out.userPrompt).not.toContain('Q：问题3');
+    expect(out.userPrompt).toContain('Q：问题4');
+    expect(out.userPrompt).toContain('Q：问题8');
+  });
+
+  it('单轮超长被截断到 dialogueTurnMaxChars', () => {
+    const long = '长'.repeat(CONTEXT.dialogueTurnMaxChars + 50);
+    const out = compileContext(makeInput({ dialogue: [{ q: long, a: long }] }));
+    expect(out.userPrompt).toContain('…');
+  });
+
+  it('预算不足时对话记忆最先被裁（区间字幕 / 章节列表 / 知识库优先）', () => {
+    const withKnowledge = makeInput({
+      dialogue: turns(5),
+      knowledgeContext: '知识'.repeat(200),
+    });
+    const full = compileContext(withKnowledge);
+    // 比满编少 10 字：只能靠裁对话满足（每轮约 20 字），章节列表此后才动
+    const tight = compileContext(withKnowledge, { maxChars: full.totalChars - 10 });
+    expect(tight.dialogueTurns).toBeLessThan(5);
+    // 预算极其紧张时对话可被清空，但区间字幕永远保留
+    const starving = compileContext(withKnowledge, { maxChars: 600 });
+    expect(starving.dialogueTurns).toBe(0);
+    expect(starving.rangeCueText.length).toBeGreaterThan(0);
+  });
+
+  it('无对话时行为与旧版一致（无最近问答块）', () => {
+    const out = compileContext(makeInput());
+    expect(out.userPrompt).not.toContain('【最近问答');
+    expect(out.dialogueTurns).toBe(0);
+  });
+});

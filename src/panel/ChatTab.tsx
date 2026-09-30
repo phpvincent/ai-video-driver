@@ -39,6 +39,8 @@ export interface ExplainRequest {
   positionMs: number;
   /** 学生上传的图片（题目 / 截图）；仅当模型支持多模态时由 ChatTab 附带 */
   uploads?: UploadedImage[];
+  /** 最近问答（多轮记忆，SPEC-08 8.4b）：q=问题原文，a=回答要点摘要 */
+  history?: ReadonlyArray<{ q: string; a: string }>;
 }
 
 export interface ExplainResponse {
@@ -80,6 +82,19 @@ export interface ChatTabProps {
 // ---------------------------------------------------------------------------
 // 纯函数（导出供单测）
 // ---------------------------------------------------------------------------
+
+/** 回答要点 → 多轮记忆摘要（纯函数，导出供单测）：前 3 条要点、每条截 40 字 */
+export function digestSegmentAnswer(answer: { keyPoints?: string[]; answer?: string }): string {
+  const points = (answer.keyPoints ?? []).filter((k) => (k ?? '').trim().length > 0).slice(0, 3);
+  if (points.length > 0) {
+    return points.map((k) => cut(k.trim(), 40)).join('；');
+  }
+  return cut((answer.answer ?? '').replace(/\s+/g, ' ').trim(), 80);
+}
+
+function cut(s: string, max: number): string {
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
 
 export type RangeMode = 'around' | 'chapter' | 'custom';
 
@@ -299,6 +314,8 @@ function formatTermText(term: TermPayload): string {
   ].join('\n\n');
 }
 
+const DIALOGUE_MAX_TURNS = 5;
+
 export function ChatTab(props: ChatTabProps) {
   const videoId = props.videoId ?? null;
   const sections = props.sections ?? [];
@@ -307,6 +324,8 @@ export function ChatTab(props: ChatTabProps) {
   const modelReady = props.modelReady ?? false;
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  /** 多轮记忆（最近 5 轮；术语解释不入记忆，换视频清空） */
+  const [dialogue, setDialogue] = useState<Array<{ q: string; a: string }>>([]);
   const [input, setInput] = useState('');
   /** 待发送的上传图 */
   const [uploads, setUploads] = useState<UploadedImage[]>([]);
@@ -358,6 +377,9 @@ export function ChatTab(props: ChatTabProps) {
     busyRef.current = true;
     setBusy(true);
     props.onPause?.();
+    // 多轮记忆：随请求发送当前记忆快照（成功后追加本轮）
+    const historySnapshot = req.term ? [] : dialogue.slice(-DIALOGUE_MAX_TURNS);
+    const askReq: ExplainRequest = { ...req, history: historySnapshot };
     pushMessage({
       id: nextId(),
       role: 'user',
@@ -365,7 +387,7 @@ export function ChatTab(props: ChatTabProps) {
       attachments: (req.uploads ?? []).map((u) => `data:${u.mime};base64,${u.dataBase64}`),
     });
     try {
-      const res = await props.explain(req);
+      const res = await props.explain(askReq);
       if (res.term) {
         const full = formatTermText(res.term);
         pushMessage({
@@ -382,6 +404,10 @@ export function ChatTab(props: ChatTabProps) {
         });
       } else if (res.answer) {
         const full = res.answer.answer;
+        // 问答成功 → 入记忆（保持最近 N 轮；术语解释不入）
+        setDialogue((prev) =>
+          [...prev, { q: req.question, a: digestSegmentAnswer(res.answer!) }].slice(-DIALOGUE_MAX_TURNS),
+        );
         pushMessage({
           id: nextId(),
           role: 'assistant',
@@ -434,6 +460,7 @@ export function ChatTab(props: ChatTabProps) {
   useEffect(() => {
     let cancelled = false;
     setMessages([]);
+    setDialogue([]);
     const load = loadHistoryRef.current;
     if (!videoId || !load) {
       return () => {

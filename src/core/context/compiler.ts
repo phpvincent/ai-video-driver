@@ -11,6 +11,12 @@
 import { CONTEXT } from '../../config';
 import type { Cue, Section } from '../../types';
 
+/** 多轮记忆的单轮摘要：q = 问题原文；a = 回答要点摘要（调用方压缩） */
+export interface DialogueTurn {
+  q: string;
+  a: string;
+}
+
 export interface CompileInput {
   /** 全片章节（标题+时间） */
   sections: Section[];
@@ -27,6 +33,11 @@ export interface CompileInput {
   videoMeta?: { title?: string; durationMs?: number };
   /** 上轮摘要（≤150 token，调用方截断） */
   prevSummary?: string;
+  /**
+   * 最近问答（多轮记忆，SPEC-08 8.4b）：只含问题与回答要点摘要，
+   * 不是视频素材，置于包裹标记之外。预算不足时**最先被裁**（优先级低于章节列表）。
+   */
+  dialogue?: ReadonlyArray<DialogueTurn>;
   /** 个人知识库素材（SPEC-05 范围变更第 4 条：由 knowledge/retriever 组装，未命中为空串） */
   knowledgeContext?: string;
 }
@@ -42,6 +53,8 @@ export interface CompiledContext {
   userPrompt: string;
   /** user prompt 总字符数（供预算断言） */
   totalChars: number;
+  /** 实际注入的对话轮次（预算裁剪后；供多轮记忆断言） */
+  dialogueTurns: number;
 }
 
 /** 素材包裹开始标记（红线 3 防注入面） */
@@ -113,12 +126,19 @@ function compressRangeCueText(text: string, budgetChars: number): string {
 }
 
 /** 组装 user prompt：素材（章节列表+区间字幕+知识库素材）包裹 + 标记外的问题区 */
+function dialogueBlock(dialogue: ReadonlyArray<DialogueTurn> | undefined): string {
+  if (!dialogue || dialogue.length === 0) return '';
+  const lines = dialogue.map((d) => `Q：${d.q}\nA：${d.a}`);
+  return `【最近问答（供理解追问用，不是视频内容）】\n${lines.join('\n\n')}`;
+}
+
 function assemblePrompt(
   sectionListText: string,
   rangeCueText: string,
   knowledgeBlocks: string[],
   input: CompileInput,
   range: [number, number],
+  dialogue: ReadonlyArray<DialogueTurn> = input.dialogue ?? [],
 ): string {
   const parts: string[] = [
     MATERIAL_BEGIN_MARK,
@@ -145,6 +165,8 @@ function assemblePrompt(
     parts.push('', knowledgeBlocks.join('\n\n'));
   }
   parts.push(MATERIAL_END_MARK, '');
+  const dialogueText = dialogueBlock(dialogue);
+  if (dialogueText) parts.push(dialogueText, '');
   if (input.prevSummary) {
     parts.push(`上一轮问答摘要：${input.prevSummary}`, '');
   }
@@ -185,14 +207,37 @@ export function compileContext(
       ? (input.knowledgeContext as string).split('\n\n')
       : [];
 
+  // 预算 0：先裁对话记忆（从最旧一轮开始，可清空——它的优先级低于一切视频素材）
+  const dialogue = [...(input.dialogue ?? [])].slice(-CONTEXT.dialogueMaxTurns).map(trimTurn);
+  let userPrompt = assemblePrompt(
+    baseSectionList,
+    rangeCueText,
+    knowledgeBlocks,
+    input,
+    range,
+    dialogue,
+  );
+  while (userPrompt.length > maxChars && dialogue.length > 0) {
+    dialogue.shift();
+    userPrompt = assemblePrompt(
+      baseSectionList,
+      rangeCueText,
+      knowledgeBlocks,
+      input,
+      range,
+      dialogue,
+    );
+  }
+
   // 预算 1：截章节列表尾部（区间字幕与知识库素材不动）
   const sectionLines = baseSectionList.split('\n');
-  let userPrompt = assemblePrompt(
+  userPrompt = assemblePrompt(
     sectionLines.join('\n'),
     rangeCueText,
     knowledgeBlocks,
     input,
     range,
+    dialogue,
   );
   while (userPrompt.length > maxChars && sectionLines.length > 0) {
     sectionLines.pop();
@@ -202,6 +247,7 @@ export function compileContext(
       knowledgeBlocks,
       input,
       range,
+      dialogue,
     );
   }
   // 预算 2：仍超限则截知识库素材（逐块弹出；全部弹完仍超限则整段丢弃）
@@ -213,6 +259,7 @@ export function compileContext(
       knowledgeBlocks,
       input,
       range,
+      dialogue,
     );
   }
 
@@ -222,5 +269,14 @@ export function compileContext(
     knowledgeText: knowledgeBlocks.join('\n\n'),
     userPrompt,
     totalChars: userPrompt.length,
+    /** 实际注入的对话轮次（预算裁剪后；供 A6 断言） */
+    dialogueTurns: dialogue.length,
   };
+}
+
+/** 单轮摘要限长（超长截断，保尾部结论不如保开头问题 + 前几条要点） */
+function trimTurn(turn: DialogueTurn): DialogueTurn {
+  const cut = (s: string): string =>
+    s.length > CONTEXT.dialogueTurnMaxChars ? `${s.slice(0, CONTEXT.dialogueTurnMaxChars - 1)}…` : s;
+  return { q: cut(turn.q), a: cut(turn.a) };
 }
