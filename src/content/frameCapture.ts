@@ -40,6 +40,9 @@ export interface HTMLVideoElementLike {
   videoHeight: number;
   paused: boolean;
   addEventListener?: (type: string, listener: () => void) => void;
+  /** 抽帧结束时用于恢复播放状态（浏览器环境提供） */
+  pause?: () => void;
+  play?: () => Promise<void> | void;
   removeEventListener?: (type: string, listener: () => void) => void;
 }
 
@@ -185,6 +188,9 @@ export async function captureFrames(
 ): Promise<CapturedFrame[]> {
   const maxFrames = opts.maxFrames ?? DEFAULT_MAX_FRAMES;
   const targets = Array.isArray(targetsMs) ? targetsMs.slice(0, Math.max(0, maxFrames)) : [];
+  // 抽帧要连续 seek，会让用户看到画面来回跳；记录起点，抽完恢复位置与播放状态
+  const originMs = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+  const wasPlaying = !video.paused;
   const frames: CapturedFrame[] = [];
   for (const targetMs of targets) {
     try {
@@ -193,7 +199,23 @@ export async function captureFrames(
       // 单帧失败（seek 失败 / canvas 被污染 / 编码失败）跳过该帧
     }
   }
+  await restorePlayback(video, originMs, wasPlaying);
   return frames;
+}
+
+/** 抽帧结束：回到起点，并恢复原来的播放/暂停状态（失败也不影响主流程） */
+async function restorePlayback(
+  video: HTMLVideoElementLike,
+  originMs: number,
+  wasPlaying: boolean,
+): Promise<void> {
+  try {
+    if (!wasPlaying) video.pause?.();
+    video.currentTime = originMs;
+    if (wasPlaying) await video.play?.();
+  } catch {
+    /* 恢复失败不影响已抽到的帧 */
+  }
 }
 
 /**

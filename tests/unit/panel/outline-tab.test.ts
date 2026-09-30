@@ -4,11 +4,16 @@
  * 纯逻辑直接断言；渲染用 react-dom/server 的 renderToString（不含 effect，
  * 挂载自动加载等 effect 驱动逻辑不在本文件覆盖范围）。
  */
-import { createElement } from 'react';
-import { renderToString } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
-import { densityFromScore } from '../../../src/core/pipeline/density';
 import {
+  createElement } from 'react';
+import {
+  renderToString } from 'react-dom/server';
+import {
+  describe, expect, it } from 'vitest';
+import {
+  densityFromScore } from '../../../src/core/pipeline/density';
+import {
+  describeOutlineFailure,
   OUTLINE_MODEL_NOT_READY_TEXT,
   OUTLINE_PHASE_TEXT,
   OUTLINE_REGEN_PLACEHOLDER,
@@ -421,5 +426,37 @@ describe('renderToString 冒烟', () => {
       }),
     );
     expect(html).toContain('生成大纲');
+  });
+});
+
+describe('describeOutlineFailure 失败原因可读', () => {
+  it('分块未过校验 → 说明失败块数与可尝试动作', () => {
+    const r = {
+      sections: [],
+      chunkState: [{ index: 0, status: 'failed', startMs: 0, endMs: 1000, error: 'zod: bullets 缺失' }],
+      droppedBySnap: 0,
+      budgetHit: false,
+      failedChunks: 1,
+    } as never;
+    const text = describeOutlineFailure(r);
+    expect(text).toContain('1/1');
+    expect(text).toContain('未通过格式校验');
+    expect(text).toContain('zod: bullets 缺失');
+  });
+
+  it('预算熔断时额外提示', () => {
+    const r = {
+      sections: [],
+      chunkState: [{ index: 0, status: 'failed', startMs: 0, endMs: 1000 }],
+      droppedBySnap: 0,
+      budgetHit: true,
+      failedChunks: 1,
+    } as never;
+    expect(describeOutlineFailure(r)).toContain('预算熔断');
+  });
+
+  it('无分块信息 → 通用文案', () => {
+    const r = { sections: [], chunkState: [], droppedBySnap: 0, budgetHit: false, failedChunks: 0 } as never;
+    expect(describeOutlineFailure(r)).toBe('大纲生成失败，请重试');
   });
 });

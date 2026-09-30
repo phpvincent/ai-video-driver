@@ -294,6 +294,28 @@ export function OutlineSectionList({
  * - 有分块失败 → degraded（真实原因是模型输出未通过校验，不是缺少字幕）
  * - 有章节 → ready；无章节且无失败 → empty（需先加载字幕再生成）
  */
+/**
+ * 失败原因可读化（导出供测试）：degraded 态不能只说"请重试"——
+ * 要告诉用户是哪一步失败（模型输出未过校验 / 预算熔断 / 无章节），以及能做什么。
+ */
+export function describeOutlineFailure(r: OutlineResult): string {
+  const total = r.chunkState?.length ?? 0;
+  const failed = r.failedChunks ?? 0;
+  const firstError = (r.chunkState ?? []).find((c) => c.error)?.error;
+  if (total > 0 && failed > 0) {
+    const hint = r.budgetHit ? '；本次触发了 token 预算熔断' : '';
+    const detail = firstError ? `（首个错误：${firstError.slice(0, 80)}）` : '';
+    return (
+      `大纲生成失败：${failed}/${total} 个分块的模型输出未通过格式校验${hint}${detail}。` +
+      '可尝试：更换更稳定的模型、关闭"结合画面（抽帧）"后重试，或在设置中调高 maxTokens。'
+    );
+  }
+  if (total > 0) {
+    return '大纲生成失败：模型未返回可解析的章节；可尝试更换模型或关闭抽帧后重试。';
+  }
+  return '大纲生成失败，请重试';
+}
+
 export function pickPhase(r: OutlineResult): Phase {
   if (r.sections.length > 0) return 'ready';
   if (r.failedChunks > 0 || (r.chunkState?.length ?? 0) > 0) return 'degraded';
@@ -376,6 +398,7 @@ export function OutlineTab(props: OutlineTabProps) {
         if (reqId !== reqIdRef.current) return;
         setResult(r);
         setPhase(pickPhase(r));
+        if (pickPhase(r) === 'degraded') setErrorText(describeOutlineFailure(r));
       })
       .catch(() => {
         if (reqId !== reqIdRef.current) return;
@@ -387,6 +410,7 @@ export function OutlineTab(props: OutlineTabProps) {
               if (reqId !== reqIdRef.current) return;
               setResult(r);
               setPhase(pickPhase(r));
+              if (pickPhase(r) === 'degraded') setErrorText(describeOutlineFailure(r));
             })
             .catch(() => {
               if (reqId !== reqIdRef.current) return;

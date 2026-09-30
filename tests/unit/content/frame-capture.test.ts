@@ -375,4 +375,22 @@ describe('registerFrameCaptureHandler（CAPTURE_FRAMES）', () => {
     expect(ret).toBeUndefined();
     expect(responses).toHaveLength(0);
   });
+  it('抽帧结束回到原始播放位置（避免画面停在最后一帧）', async () => {
+    const video = new FakeVideo({ autoSeek: true });
+    video.currentTime = 42; // 用户当前位置
+    const { draw } = fakeDraw();
+    const frames = await captureFrames(video, [10_000, 20_000], { drawToDataUrl: draw });
+    expect(frames.length).toBe(2);
+    // 抽完回到用户原来的位置（42s），而不是停在最后一个抽帧点
+    expect(video.currentTime).toBe(42);
+  });
+
+  it('原本暂停 → 抽帧后仍暂停；恢复失败不影响已抽到的帧', async () => {
+    const video = new FakeVideo({ autoSeek: true });
+    video.paused = true;
+    const { draw } = fakeDraw();
+    await captureFrames(video, [10_000], { drawToDataUrl: draw });
+    expect(video.paused).toBe(true);
+    expect(video.currentTime).toBe(0);
+  });
 });
