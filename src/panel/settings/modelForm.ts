@@ -42,10 +42,46 @@ export function applyPreset(form: ModelConfig, preset: PresetKey): ModelConfig {
   return { ...form, baseUrl: p.baseUrl, model: p.model };
 }
 
+/** 写入某端点的 Key（保留其他端点；空字符串表示清空该端点） */
+export function setEndpointKey(settings: Settings, baseUrl: string, apiKey: string): Settings {
+  const b = (baseUrl ?? '').trim();
+  if (!b) return settings;
+  const keys = { ...(settings.endpointKeys ?? {}) };
+  const value = (apiKey ?? '').trim();
+  if (value) keys[b] = value;
+  else delete keys[b];
+  return { ...settings, endpointKeys: keys };
+}
+
+/** 已知端点列表：预设端点 ∪ 端点 Key 表 ∪ 默认模型/方案的端点 */
+export function knownEndpoints(settings: Settings): string[] {
+  const set = new Set<string>();
+  for (const key of Object.keys(MODEL_PRESETS) as Array<keyof typeof MODEL_PRESETS>) {
+    set.add(MODEL_PRESETS[key].baseUrl);
+  }
+  for (const k of Object.keys(settings.endpointKeys ?? {})) if (k.trim()) set.add(k.trim());
+  if (settings.model?.baseUrl?.trim()) set.add(settings.model.baseUrl.trim());
+  for (const p of (settings.modelProfiles ?? []) as Array<ModelConfig>) {
+    if (p?.baseUrl?.trim()) set.add(p.baseUrl.trim());
+  }
+  return [...set];
+}
+
+/** 端点展示名（优先匹配预设短名，否则显示主机） */
+export function endpointLabel(baseUrl: string): string {
+  for (const key of Object.keys(MODEL_PRESETS) as Array<keyof typeof MODEL_PRESETS>) {
+    if (MODEL_PRESETS[key].baseUrl === baseUrl) return presetShortLabel(key);
+  }
+  return hostOf(baseUrl);
+}
+
 /** 端点 → 已保存的 Key：优先同名同端点的方案，其次端点相同的默认模型；都没有返回 null */
 export function savedKeyForEndpoint(settings: Settings, baseUrl: string): string | null {
   const b = (baseUrl ?? '').trim();
   if (!b) return null;
+  // ① 端点级 Key 表（权威来源：一个平台一个 Key，互不影响）
+  const byEndpoint = (settings.endpointKeys ?? {})[b];
+  if (byEndpoint?.trim()) return byEndpoint.trim();
   const profile = ((settings.modelProfiles ?? []) as Array<ModelConfig>).find(
     (q) => (q?.baseUrl ?? '').trim() === b && Boolean(q?.apiKey?.trim()),
   );
@@ -251,7 +287,20 @@ export function mergeSavedSecrets(next: Settings, stored: Settings): Settings {
         })
       : next.modelProfiles;
 
-  return { ...next, model: model ?? next.model, modelProfiles: profiles ?? next.modelProfiles };
+  // 端点级 Key 表：新值里缺失的端点沿用已保存的 Key（不得因某次保存而丢失其他平台的 Key）
+  const storedKeys = stored.endpointKeys ?? {};
+  const nextKeys = { ...(next.endpointKeys ?? {}) };
+  for (const [endpoint, key] of Object.entries(storedKeys)) {
+    const incoming = nextKeys[endpoint];
+    if (!incoming?.trim() && key?.trim()) nextKeys[endpoint] = key;
+  }
+
+  return {
+    ...next,
+    model: model ?? next.model,
+    modelProfiles: profiles ?? next.modelProfiles,
+    endpointKeys: nextKeys,
+  };
 }
 
 /** 脱敏展示：让用户能确认"Key 还在"，但不暴露内容 */

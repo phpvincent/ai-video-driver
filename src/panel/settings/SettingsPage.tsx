@@ -33,6 +33,9 @@ import {
   preserveSecrets,
   mergeSavedSecrets,
   maskKey,
+  knownEndpoints,
+  endpointLabel,
+  setEndpointKey,
   mergeSettings,
   savedKeyForEndpoint,
   normalizeModelConfig,
@@ -173,6 +176,9 @@ export function SettingsPage({
   const [profiles, setProfiles] = useState<ModelConfig[]>([]);
   const [profileFeedback, setProfileFeedback] = useState<Feedback>(null);
   const [profileSaving, setProfileSaving] = useState(false);
+  /** 各平台（端点）API Key 表单：baseUrl → 输入值 */
+  const [endpointKeys, setEndpointKeys] = useState<Record<string, string>>({});
+  const [endpointFeedback, setEndpointFeedback] = useState<Feedback>(null);
   /** 最近一次读到的整份 settings：所有分区的合并写基线（避免分区互相覆盖） */
   const savedRef = useRef<Settings>({});
 
@@ -221,6 +227,8 @@ export function SettingsPage({
         setProfiles(listProfiles(stored));
         // 禁用思考默认开启（未配置视为禁用）
         setDisableThinking(stored.disableThinking !== false);
+        // 各平台 Key 独立回填：一个平台一行，保存互不影响
+        setEndpointKeys({ ...(stored.endpointKeys ?? {}) });
         // 全局抽帧开关默认关闭；模块开关默认全开（未配置视为开启）
         setVisionEnabled(stored.visionEnabled === true);
         setVisionModules({
@@ -315,7 +323,15 @@ export function SettingsPage({
       setSaveFeedback({ kind: 'error', text: error });
       return;
     }
-    savePatch({ model: { ...model, supportsVision }, disableThinking })
+    // Key 同时归入端点表：即便之后把默认模型切成别的平台，本平台的 Key 依然保留
+    const withEndpointKey = model.apiKey?.trim()
+      ? setEndpointKey(savedRef.current, model.baseUrl, model.apiKey.trim()).endpointKeys
+      : undefined;
+    savePatch({
+      model: { ...model, supportsVision },
+      disableThinking,
+      ...(withEndpointKey ? { endpointKeys: withEndpointKey } : {}),
+    })
       .then((ok) => {
         setSaveFeedback(
           ok ? { kind: 'ok', text: '已保存' } : { kind: 'error', text: '保存失败：background 未确认' },
@@ -327,6 +343,40 @@ export function SettingsPage({
    * 保存当前表单为命名方案（modelProfiles，同名覆盖）：
    * 方案携带表单全部字段（含「支持图像输入」勾选），供各模块下拉选择。
    */
+  /**
+   * 保存某平台的 API Key（端点维度）。
+   * 关键：只改 endpointKeys 中该端点一项，其他平台的 Key 与默认模型配置都不受影响。
+   */
+  const handleSaveEndpointKey = (baseUrl: string) => {
+    const value = (endpointKeys[baseUrl] ?? '').trim();
+    if (!value) {
+      setEndpointFeedback({ kind: 'error', text: '请输入该平台的 API Key（清空请点右侧清除）' });
+      return;
+    }
+    const next = setEndpointKey(savedRef.current, baseUrl, value);
+    savePatch({ endpointKeys: next.endpointKeys })
+      .then((ok) => {
+        setEndpointFeedback(
+          ok
+            ? { kind: 'ok', text: `已保存 ${endpointLabel(baseUrl)} 的 API Key` }
+            : { kind: 'error', text: '保存失败' },
+        );
+      });
+  };
+
+  /** 清除某平台的 API Key */
+  const handleClearEndpointKey = (baseUrl: string) => {
+    const next = setEndpointKey(savedRef.current, baseUrl, '');
+    savePatch({ endpointKeys: next.endpointKeys }).then(() => {
+      setEndpointKeys((prev) => {
+        const copy = { ...prev };
+        delete copy[baseUrl];
+        return copy;
+      });
+      setEndpointFeedback({ kind: 'ok', text: `已清除 ${endpointLabel(baseUrl)} 的 API Key` });
+    });
+  };
+
   const handleSaveProfile = () => {
     const name = profileName.trim();
     if (!name) {
@@ -683,6 +733,39 @@ export function SettingsPage({
             {testFeedback.text}
           </p>
         )}
+      </section>
+
+      {/* ①a 各平台 API Key：Key 按平台保存，互不干扰（默认模型槽位只有一个，不能承载多个平台的 Key） */}
+      <section className="settings-section">
+        <h4>各平台 API Key</h4>
+        <p className="settings-hint">
+          每个平台（接口地址）一个 Key，各自独立保存：配置 Qwen 不会动 DeepSeek 的 Key。
+          内置方案会自动继承所在平台的 Key，无需重复填写
+        </p>
+        {knownEndpoints(savedRef.current).map((endpoint) => (
+          <div className="endpoint-key-row" key={endpoint}>
+            <span className="endpoint-key-label">{endpointLabel(endpoint)}</span>
+            <input
+              type="password"
+              className="endpoint-key-input"
+              placeholder="粘贴该平台的 API Key"
+              value={endpointKeys[endpoint] ?? ''}
+              onChange={(e) =>
+                setEndpointKeys((prev) => ({ ...prev, [endpoint]: e.target.value }))
+              }
+            />
+            <span className="endpoint-key-state">
+              {maskKey(savedKeyForEndpoint(savedRef.current, endpoint) ?? undefined)}
+            </span>
+            <button type="button" className="btn" onClick={() => handleSaveEndpointKey(endpoint)}>
+              保存
+            </button>
+            <button type="button" className="btn" onClick={() => handleClearEndpointKey(endpoint)}>
+              清除
+            </button>
+          </div>
+        ))}
+        {endpointFeedback && <p className="settings-feedback">{endpointFeedback.text}</p>}
       </section>
 
       {/* ①b 模型方案：把当前表单另存为命名方案，供各模块（大纲/导图/问答）下拉选择 */}

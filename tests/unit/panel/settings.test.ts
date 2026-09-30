@@ -27,6 +27,8 @@ import {
   mergeSavedSecrets,
   maskKey,
   savedKeyForEndpoint,
+  setEndpointKey,
+  knownEndpoints,
 } from '../../../src/panel/settings/modelForm';
 import type { ModelConfig, Settings } from '../../../src/types';
 
@@ -702,5 +704,48 @@ describe('mergeSettings', () => {
     const out = resolveModuleModel(settings, 'qa');
     expect(out?.apiKey).toBe('sk-maas'); // 继承端点的 Key
     expect(out?.model).toBe('qwen-vl-plus'); // 端点/模型名仍是方案的
+  });
+  it('setEndpointKey：配 Qwen 不会影响 DeepSeek 的 Key（各平台独立）', () => {
+    let settings = { endpointKeys: { 'https://deepseek': 'sk-ds' } } as never;
+    settings = setEndpointKey(settings, 'https://maas', 'sk-qwen') as never;
+    const keys = (settings as unknown as { endpointKeys: Record<string, string> }).endpointKeys;
+    expect(keys['https://deepseek']).toBe('sk-ds');
+    expect(keys['https://maas']).toBe('sk-qwen');
+  });
+
+  it('savedKeyForEndpoint：优先端点表（端点维度是 Key 的权威来源）', () => {
+    const settings = {
+      endpointKeys: { 'https://maas': 'sk-endpoint' },
+      model: { ...DEFAULT_MODEL, baseUrl: 'https://maas', apiKey: 'sk-model' },
+      modelProfiles: [{ name: 'Q', apiKey: 'sk-profile', baseUrl: 'https://maas', model: 'm' }],
+    } as never;
+    expect(savedKeyForEndpoint(settings, 'https://maas')).toBe('sk-endpoint');
+  });
+
+  it('mergeSavedSecrets：保存默认模型切换平台时，端点表里其他平台的 Key 不丢', () => {
+    const stored = {
+      endpointKeys: { 'https://maas': 'sk-qwen', 'https://deepseek': 'sk-ds' },
+      model: { ...DEFAULT_MODEL, baseUrl: 'https://maas', apiKey: 'sk-qwen' },
+    } as never;
+    // 用户把默认模型切到 DeepSeek 并保存（表单里是新端点的 Key）
+    const next = {
+      endpointKeys: { 'https://deepseek': 'sk-ds-new' },
+      model: { ...DEFAULT_MODEL, baseUrl: 'https://deepseek', apiKey: 'sk-ds-new' },
+    } as never;
+    const out = mergeSavedSecrets(next, stored);
+    expect(out.endpointKeys?.['https://maas']).toBe('sk-qwen'); // 另一平台完好
+    expect(out.endpointKeys?.['https://deepseek']).toBe('sk-ds-new'); // 新值生效
+  });
+
+  it('knownEndpoints：含预设端点、端点表与已用端点，去重', () => {
+    const settings = {
+      endpointKeys: { 'https://custom': 'k' },
+      model: { ...DEFAULT_MODEL, baseUrl: 'https://maas', apiKey: 'k' },
+      modelProfiles: [{ name: 'Q', apiKey: 'k', baseUrl: 'https://maas', model: 'm' }],
+    } as never;
+    const eps = knownEndpoints(settings);
+    expect(eps).toContain(MODEL_PRESETS.deepseek.baseUrl);
+    expect(eps).toContain('https://custom');
+    expect(eps.filter((e) => e === 'https://maas').length).toBe(1);
   });
 });

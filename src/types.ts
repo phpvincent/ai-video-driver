@@ -256,6 +256,12 @@ export interface Settings {
   modelProfiles?: ModelConfig[];
   /** 各模块选择的方案名（缺省 = 默认模型）：outline / mindmap / qa */
   moduleModel?: { outline?: string; mindmap?: string; qa?: string };
+  /**
+   * 端点级 API Key（baseUrl → Key）：**Key 按平台存储，各平台互不干扰**
+   * —— 解决了"配了 A 平台，B 平台的 Key 就没了"的根因（默认模型只有一个槽位）。
+   * 内置方案通过 savedKeyForEndpoint 继承同端点 Key。
+   */
+  endpointKeys?: Record<string, string>;
   /** 禁用模型思考过程（默认开启禁用）：结构化任务更快更省，避免思考耗尽输出 token。设为 false 才启用思考 */
   disableThinking?: boolean;
   /** 全局抽帧开关（默认 false，避免不必要的成本与延迟） */
