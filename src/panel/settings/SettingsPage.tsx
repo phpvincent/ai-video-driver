@@ -26,6 +26,8 @@ import {
   describeModelStrategy,
   migrateLegacyVisionModel,
   mergeSettings,
+  normalizeModelConfig,
+  presetShortLabel,
   presetVisionDefault,
   validateModelForm,
   type ModelFormErrors,
@@ -256,7 +258,8 @@ export function SettingsPage({
 
   /** 保存模型配置：连同「是否支持图像输入」一起合并写（单次合并，不覆盖其他分区） */
   const handleSave = () => {
-    const model = formToModelConfig(form, outlineTokenBudget);
+    // 归一化：去掉粘贴带来的首尾空白（Key 前后空格会直接导致 401）
+    const model = normalizeModelConfig(formToModelConfig(form, outlineTokenBudget));
     const errors = validateModelForm(model);
     const error = firstError(errors);
     if (error) {
@@ -272,7 +275,7 @@ export function SettingsPage({
   };
 
   const handleTestConnection = () => {
-    const model = formToModelConfig(form, outlineTokenBudget);
+    const model = normalizeModelConfig(formToModelConfig(form, outlineTokenBudget));
     const error = firstError(validateModelForm(model));
     if (error) {
       setTestFeedback({ kind: 'error', text: error });
@@ -442,7 +445,9 @@ export function SettingsPage({
         <h4>模型配置（大纲 / 导图 / 问答）</h4>
         <p className="settings-hint">
           只配置一个模型：纯文本请求与带画面的请求都发给它。模型名可自填，按厂商文档填写当前可用版本；
-          成本与能力由你选择——便宜的多模态与更强的多模态差异较大，按需填写
+          成本与能力由你选择——便宜的多模态与更强的多模态差异较大，按需填写。
+          <strong>注意：API Key 必须与接口地址所属平台一致</strong>（百炼官方 Key 与 maas 网关 Key 不通用，
+          混用会返回 401）；填好后先点「测试连接」确认
         </p>
         <div className="field-row">
           {presetKeys.map((key) => (
@@ -453,7 +458,7 @@ export function SettingsPage({
               onClick={() => applyPresetToForm(key)}
               title={MODEL_PRESETS[key].label}
             >
-              {key === 'deepseek' ? 'DeepSeek' : 'Qwen'}
+              {presetShortLabel(key)}
             </button>
           ))}
         </div>

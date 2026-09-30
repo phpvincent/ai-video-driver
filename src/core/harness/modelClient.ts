@@ -49,6 +49,17 @@ export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 /** 错误摘要最大长度：防超长 body 污染 trace 与 UI */
 const ERROR_SUMMARY_MAX_CHARS = 200;
 
+/**
+ * 认证类错误的诊断提示：401/403 绝大多数是「Key 与端点不匹配」或「Key 复制带了空白」，
+ * 直接告诉用户排查方向，避免只看到一个状态码。
+ */
+function authHint(status: number): string {
+  if (status === 401 || status === 403) {
+    return ' — 请检查：①API Key 是否完整且未带空格；②Key 所属平台是否与接口地址匹配（如百炼官方 Key 不能打到 maas 网关，反之亦然）';
+  }
+  return '';
+}
+
 function summarize(text: string): string {
   const compact = text.replace(/\s+/g, ' ').trim();
   return compact.length > ERROR_SUMMARY_MAX_CHARS
@@ -122,7 +133,7 @@ export async function chatCompletion(req: ChatRequest, fetchFn: FetchLike = fetc
   const text = await res.text();
 
   if (!res.ok) {
-    throw new Error(`model http ${res.status}: ${summarize(text)}`);
+    throw new Error(`model http ${res.status}: ${summarize(text)}${authHint(res.status)}`);
   }
 
   let parsed: unknown;

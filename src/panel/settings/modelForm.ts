@@ -77,7 +77,8 @@ export function canEnableVision(settings: Settings): boolean {
  * DeepSeek 为纯文本 → false；Qwen 兼容模式支持图文 → true。
  */
 export function presetVisionDefault(preset: PresetKey): boolean {
-  return preset === 'qwen';
+  // DeepSeek 文本模型不支持图像；Qwen 两个端点均可使用多模态模型（由用户选的模型名决定）
+  return preset !== 'deepseek';
 }
 
 /**
@@ -115,6 +116,30 @@ export function migrateLegacyVisionModel(settings: Settings): Settings {
 }
 
 /** 合并写回：把局部更新合并进整份 settings（不动其他分区） */
+/** 预设按钮短名（避免多个 Qwen 端点按钮同名） */
+export function presetShortLabel(preset: PresetKey): string {
+  switch (preset) {
+    case 'deepseek':
+      return 'DeepSeek';
+    case 'qwen':
+      return 'Qwen · 百炼官方';
+    case 'qwenMaas':
+      return 'Qwen · maas 网关';
+    default:
+      return preset;
+  }
+}
+
+/** 归一化：去除粘贴带来的首尾空白（API Key 前后空格是 401 的常见成因） */
+export function normalizeModelConfig(form: ModelConfig): ModelConfig {
+  return {
+    ...form,
+    baseUrl: (form.baseUrl ?? '').trim().replace(/\/+$/, ''),
+    apiKey: (form.apiKey ?? '').trim(),
+    model: (form.model ?? '').trim(),
+  };
+}
+
 export function mergeSettings(current: Settings, patch: Partial<Settings>): Settings {
   return { ...current, ...patch };
 }

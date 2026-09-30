@@ -122,9 +122,15 @@ export const MODEL_PRESETS = {
     model: 'deepseek-chat',
   },
   qwen: {
-    label: '通义千问 Qwen（兼容模式，支持多模态）',
+    label: '通义千问 Qwen · 百炼官方（兼容模式，支持多模态）',
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     // 便宜的多模态模型；更可选 qwen-vl-max / qwen2.5-vl-72b-instruct
+    model: 'qwen-vl-plus',
+  },
+  qwenMaas: {
+    // 注意：此网关与百炼官方端点使用不同体系的 API Key，两者不通用
+    label: '通义千问 Qwen · maas 网关（兼容模式）',
+    baseUrl: 'https://maas.qianwenaiapi.com/compatible-mode/v1',
     model: 'qwen-vl-plus',
   },
 } as const;

@@ -15,6 +15,8 @@ import {
   presetVisionDefault,
   validateModelForm,
   visionActiveFor,
+  normalizeModelConfig,
+  presetShortLabel,
 } from '../../../src/panel/settings/modelForm';
 import type { ModelConfig, Settings } from '../../../src/types';
 
@@ -362,5 +364,25 @@ describe('mergeSettings', () => {
     expect(s.model?.model).toBe(MODEL_PRESETS.qwen.model);
     expect(visionActiveFor({ settings: s, module: 'qa' })).toBe(false);
     expect(visionActiveFor({ settings: mergeSettings(s, { modelSupportsVision: true }), module: 'qa' })).toBe(true);
+  });
+  it('normalizeModelConfig：去除首尾空白与 baseUrl 尾斜杠（401 常见成因）', () => {
+    const raw = { ...DEFAULT_MODEL, baseUrl: '  https://example.com/  ', apiKey: '  test-key  ', model: ' m1 ' };
+    const n = normalizeModelConfig(raw as never);
+    expect(n.apiKey).toBe('test-key');
+    expect(n.model).toBe('m1');
+    expect(n.baseUrl).toBe('https://example.com');
+  });
+
+  it('presetShortLabel：三个预设各自可区分', () => {
+    expect(presetShortLabel('deepseek')).toBe('DeepSeek');
+    expect(presetShortLabel('qwen')).toContain('百炼');
+    expect(presetShortLabel('qwenMaas')).toContain('maas');
+    expect(presetShortLabel('qwen')).not.toBe(presetShortLabel('qwenMaas'));
+  });
+
+  it('presetVisionDefault：DeepSeek 不支持图像，Qwen 两端点默认支持', () => {
+    expect(presetVisionDefault('deepseek')).toBe(false);
+    expect(presetVisionDefault('qwen')).toBe(true);
+    expect(presetVisionDefault('qwenMaas')).toBe(true);
   });
 });

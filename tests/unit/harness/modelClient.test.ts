@@ -109,6 +109,9 @@ describe('chatCompletion', () => {
       okResponse({ error: { message: 'Invalid API key' } }, 401),
     );
     await expect(chatCompletion(makeRequest(), fetchFn)).rejects.toThrow('401');
+    // 401 需带排查方向提示（Key 与端点不匹配是最常见原因）；mock 响应体只能读一次，新建一份
+    const again = mockFetch(okResponse({ error: { message: 'Invalid API key' } }, 401));
+    await expect(chatCompletion(makeRequest(), again.fetchFn)).rejects.toThrow(/端点|Key/);
   });
 
   it('500 → throw 且消息含 500', async () => {
