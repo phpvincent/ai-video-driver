@@ -1,14 +1,19 @@
 /**
- * 导图 Tab 单元测试（SPEC-04：渲染 + 跳播 + 播放跟随）。
+ * 导图 Tab 单元测试（SPEC-04 范围变更：概念知识图）。
  * 环境为 node 且无 DOM：纯函数（buildMindmapMarkdown / parseNodeTimestamp /
- * findActiveSectionIndex）直接断言；组件渲染只覆盖"空大纲引导"分支
- * （markmap 为 effect 内动态 import，renderToString 不触发 effect，
- * 也不会把 markmap-lib / markmap-view 拉入 node 测试环境）。
+ * findActiveSectionIndex / matchConcepts / formatRange / shortenLabel）直接断言；
+ * 组件渲染只覆盖无 effect 分支（markmap / 滚动聚焦均为 effect 内动态行为，
+ * renderToString 不触发；flextree 布局为纯 JS，渲染期可跑）。
  */
 import { createElement } from 'react';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
+import { shortenLabel } from '../../../src/core/pipeline/conceptMap';
+import type { ConceptNode, Section } from '../../../src/types';
 import {
+  CHRONO_VIEW_LABEL,
+  CONCEPT_MODEL_HINT,
+  CONCEPT_VIEW_LABEL,
   MINDMAP_EMPTY_ACTION_TEXT,
   MINDMAP_EMPTY_TEXT,
   MINDMAP_ROOT_TEXT,
@@ -16,10 +21,11 @@ import {
   MindmapTab,
   buildMindmapMarkdown,
   findActiveSectionIndex,
+  formatRange,
+  matchConcepts,
   parseNodeTimestamp,
   sectionHeadingText,
 } from '../../../src/panel/MindmapTab';
-import type { Section } from '../../../src/types';
 
 const section = (
   id: string,
@@ -45,10 +51,49 @@ const section = (
 });
 
 const sections = [
-  section('sec_0001', 0, 60_000, '开场与环境准备', { score: 85 }),
-  section('sec_0002', 60_000, 180_000, '核心概念讲解', { score: 60, density: 'high' }),
-  section('sec_0003', 180_000, 300_000, '实战演示'),
+  section('sec_0001', 0, 60_000, '开场与环境准备', { score: 85, terms: ['上下文窗口', 'Token'] }),
+  section('sec_0002', 60_000, 180_000, '核心概念讲解', { score: 60, density: 'high', terms: ['注意力机制', '上下文窗口'] }),
+  section('sec_0003', 180_000, 300_000, '实战演示', { terms: ['注意力机制'] }),
 ];
+
+/** 概念图测试树：根 → 域（基础概念）→ 概念（上下文窗口 / Token） */
+const conceptRoot = (): ConceptNode => ({
+  id: 'cm_root',
+  label: '大模型入门',
+  kind: 'domain',
+  importance: 5,
+  anchors: [],
+  children: [
+    {
+      id: 'cm_0001',
+      label: '基础概念',
+      kind: 'domain',
+      importance: 5,
+      anchors: [],
+      children: [
+        {
+          id: 'cm_0002',
+          label: '上下文窗口',
+          kind: 'concept',
+          importance: 5,
+          anchors: [
+            { tMs: 0, sectionId: 'sec_0001' },
+            { tMs: 60_000, sectionId: 'sec_0002' },
+          ],
+          children: [],
+        },
+        {
+          id: 'cm_0003',
+          label: 'Token',
+          kind: 'concept',
+          importance: 4,
+          anchors: [{ tMs: 0, sectionId: 'sec_0001' }],
+          children: [],
+        },
+      ],
+    },
+  ],
+});
 
 describe('buildMindmapMarkdown', () => {
   it('空 sections 只有根节点 `# 大纲`', () => {
@@ -159,7 +204,56 @@ describe('findActiveSectionIndex', () => {
   });
 });
 
-describe('MindmapTab 渲染冒烟（renderToString，仅空大纲分支）', () => {
+describe('matchConcepts（概念跟随命中，大小写不敏感）', () => {
+  it('当前章节 terms 命中概念 label（包含匹配）', () => {
+    expect(matchConcepts(sections, 0, conceptRoot())).toEqual(['上下文窗口', 'Token']);
+  });
+
+  it('跨章合并：第一章只命中该章出现的概念', () => {
+    expect(matchConcepts(sections, 60_000, conceptRoot())).toEqual(['上下文窗口']);
+    expect(matchConcepts(sections, 200_000, conceptRoot())).toEqual([]);
+  });
+
+  it('大小写不敏感：术语与 label 大小写不同仍命中', () => {
+    const root: ConceptNode = {
+      ...conceptRoot(),
+      children: [
+        {
+          ...conceptRoot().children[0],
+          children: [
+            { id: 'cm_x', label: 'Context Window', kind: 'concept', importance: 3, anchors: [], children: [] },
+          ],
+        },
+      ],
+    };
+    const secs = [section('s1', 0, 1000, '开场', { terms: ['CONTEXT window'] })];
+    expect(matchConcepts(secs, 0, root)).toEqual(['Context Window']);
+  });
+
+  it('章节标题命中概念 label', () => {
+    const secs = [section('s1', 0, 1000, '上下文窗口详解')];
+    expect(matchConcepts(secs, 0, conceptRoot())).toEqual(['上下文窗口']);
+  });
+
+  it('positionMs 早于首章或空 sections 返回空数组', () => {
+    expect(matchConcepts([], 0, conceptRoot())).toEqual([]);
+    const late = [section('s1', 5_000, 10_000, '晚开始')];
+    expect(matchConcepts(late, 4_999, conceptRoot())).toEqual([]);
+  });
+});
+
+describe('formatRange', () => {
+  it('单时间点 → mm:ss', () => {
+    expect(formatRange(0)).toBe('00:00');
+    expect(formatRange(125_000)).toBe('02:05');
+  });
+
+  it('区间 → mm:ss-mm:ss', () => {
+    expect(formatRange(0, 60_000)).toBe('00:00-01:00');
+  });
+});
+
+describe('MindmapTab 渲染冒烟（renderToString，仅无 effect 分支）', () => {
   const noop = () => {};
 
   it('空大纲显示引导文案，未传 onGoOutline 时无按钮', () => {
@@ -172,7 +266,8 @@ describe('MindmapTab 渲染冒烟（renderToString，仅空大纲分支）', () 
     );
     expect(html).toContain(MINDMAP_EMPTY_TEXT);
     expect(html).not.toContain(MINDMAP_EMPTY_ACTION_TEXT);
-    expect(html).not.toContain('<svg');
+    expect(html).toContain(CONCEPT_VIEW_LABEL);
+    expect(html).toContain(CHRONO_VIEW_LABEL);
   });
 
   it('传 onGoOutline 时渲染引导按钮', () => {
@@ -182,5 +277,62 @@ describe('MindmapTab 渲染冒烟（renderToString，仅空大纲分支）', () 
     expect(html).toContain(MINDMAP_EMPTY_TEXT);
     expect(html).toContain(MINDMAP_EMPTY_ACTION_TEXT);
     expect(html).toContain('<button');
+  });
+
+  it('无 generateConceptMap 接线且有 sections：降级渲染本地术语关联图（含 SVG）', () => {
+    const html = renderToString(
+      createElement(MindmapTab, {
+        sections,
+        positionMs: 0,
+        onRequestSeek: noop,
+      }),
+    );
+    expect(html).toContain('<svg');
+    // domain 默认折叠：只显示根与「核心术语」域 + 子节点数角标，概念收起
+    expect(html).toContain('术语关联图');
+    expect(html).toContain('核心术语');
+    expect(html).toContain('+3');
+    expect(html).not.toContain('>上下文窗口<');
+  });
+
+  it('有 generateConceptMap 且未就绪：显示模型配置引导', () => {
+    const html = renderToString(
+      createElement(MindmapTab, {
+        sections,
+        positionMs: 0,
+        onRequestSeek: noop,
+        generateConceptMap: async () => {},
+        modelReady: false,
+      }),
+    );
+    expect(html).toContain(CONCEPT_MODEL_HINT);
+    expect(html).not.toContain('<svg');
+  });
+
+  it('缓存命中（conceptMap 注入）：直接渲染概念图', () => {
+    const html = renderToString(
+      createElement(MindmapTab, {
+        sections,
+        positionMs: 0,
+        onRequestSeek: noop,
+        conceptMap: {
+          videoId: 'bv1x_p1',
+          promptVersion: '0.1.0',
+          model: 'test-model',
+          root: conceptRoot(),
+          generatedAt: '2026-09-30T00:00:00.000Z',
+        },
+      }),
+    );
+    expect(html).toContain('大模型入门');
+    expect(html).toContain('基础概念');
+    // domain 默认折叠：概念节点收起，以 +N 角标提示
+    expect(html).toContain('+2');
+    expect(html).not.toContain('>上下文窗口<');
+  });
+
+  it('shortenLabel 复用（panel 与 pipeline 共用同一实现）', () => {
+    expect(shortenLabel('一二三四五六七八九十一二三')).toBe('一二三四五六七八九十一…');
+    expect(shortenLabel('上下文窗口')).toBe('上下文窗口');
   });
 });

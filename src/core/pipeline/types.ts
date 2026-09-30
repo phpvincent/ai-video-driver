@@ -88,3 +88,36 @@ export interface RunOutlineOptions {
     totalChunks: number,
   ) => void;
 }
+
+// ---------------------------------------------------------------------------
+// 概念知识图（SPEC-04 范围变更）：模型输出原始结构（zod Schema 定义在
+// conceptMap.ts，此处只放与 OutlineModelFn 同构的注入接口与原始形状）。
+// ---------------------------------------------------------------------------
+
+/**
+ * 概念图模型调用注入接口：content 应为 ConceptTree JSON 字符串。
+ * 与 OutlineModelFn 同构，由调用方适配到 core/harness/modelClient。
+ */
+export type ConceptModelFn = (req: {
+  systemPrompt: string;
+  userPrompt: string;
+}) => Promise<{ content: string }>;
+
+/** 模型输出的单个概念（原始形状，Schema 校验后） */
+export interface ConceptRaw {
+  label: string;
+  importance: number;
+  anchorSections: number[];
+  details: string[];
+}
+
+/** 模型输出的单个概念域（原始形状，Schema 校验后） */
+export interface ConceptDomainRaw {
+  label: string;
+  concepts: ConceptRaw[];
+}
+
+/** 模型输出整体（原始形状，Schema 校验后） */
+export interface ConceptTreeRaw {
+  domains: ConceptDomainRaw[];
+}

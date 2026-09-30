@@ -7,6 +7,7 @@
  */
 import outlinePromptMd from './outline.md?raw';
 import outlineRegenerateMd from './outline-regenerate.md?raw';
+import conceptMapMd from './concept-map.md?raw';
 import segmentQaMd from './segment-qa.md?raw';
 import termExplainerMd from './term-explainer.md?raw';
 
@@ -38,6 +39,7 @@ export function stripPromptHeaderComments(raw: string): string {
 
 const OUTLINE_HEADER = parsePromptHeader(outlinePromptMd);
 const OUTLINE_REGENERATE_HEADER = parsePromptHeader(outlineRegenerateMd);
+const CONCEPT_MAP_HEADER = parsePromptHeader(conceptMapMd);
 const TERM_EXPLAINER_HEADER = parsePromptHeader(termExplainerMd);
 const SEGMENT_QA_HEADER = parsePromptHeader(segmentQaMd);
 
@@ -45,6 +47,7 @@ const SEGMENT_QA_HEADER = parsePromptHeader(segmentQaMd);
 export const PROMPT_VERSIONS = {
   outline: OUTLINE_HEADER.promptVersion,
   outlineRegenerate: OUTLINE_REGENERATE_HEADER.promptVersion,
+  conceptMap: CONCEPT_MAP_HEADER.promptVersion,
   termExplainer: TERM_EXPLAINER_HEADER.promptVersion,
   segmentQa: SEGMENT_QA_HEADER.promptVersion,
 } as const;
@@ -57,6 +60,11 @@ export function getOutlineSystemPrompt(): string {
 /** 单章重生成 system prompt 正文（单一事实源：src/prompts/outline-regenerate.md） */
 export function getOutlineRegenerateSystemPrompt(): string {
   return stripPromptHeaderComments(outlineRegenerateMd);
+}
+
+/** 概念知识图 system prompt 正文（单一事实源：src/prompts/concept-map.md，SPEC-04 范围变更） */
+export function getConceptMapSystemPrompt(): string {
+  return stripPromptHeaderComments(conceptMapMd);
 }
 
 /** 术语解释 system prompt 正文（单一事实源：src/prompts/term-explainer.md，SPEC-05） */

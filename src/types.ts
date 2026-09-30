@@ -170,6 +170,40 @@ export interface ObsidianConfig {
   rootDir: string;
 }
 
+// ---------------------------------------------------------------------------
+// 概念知识图（SPEC-04 范围变更：导图 = 知识导航，非时间导航）
+// ---------------------------------------------------------------------------
+
+/** 概念时间锚：tMs 为该概念出现章节的 startMs（吸附产物，红线 2） */
+export interface ConceptAnchor {
+  tMs: number;
+  sectionId: string;
+}
+
+/** 概念图节点：根为 kind='domain' 的虚拟根，其下为概念域 → 概念 → 细节 */
+export interface ConceptNode {
+  /** cm_0001...（根为 cm_root） */
+  id: string;
+  /** ≤12 字短语（根 ≤16 字） */
+  label: string;
+  kind: 'domain' | 'concept' | 'detail';
+  /** 1-5（domain = 子概念 importance 最大值） */
+  importance: number;
+  /** 时间锚（detail 无锚；concept 跨章节合并出现点） */
+  anchors: ConceptAnchor[];
+  children: ConceptNode[];
+}
+
+/** 概念图完整数据（缓存于 outlines store，键 concept:: 前缀） */
+export interface ConceptMapData {
+  videoId: VideoId;
+  promptVersion: string;
+  model: string;
+  /** kind='domain' 的虚拟根，label = 视频主题短语（≤16 字） */
+  root: ConceptNode;
+  generatedAt: string;
+}
+
 export type TraceKind = 'outline' | 'term' | 'segment' | 'capture';
 
 /** pipeline 运行轨迹（TECH-DESIGN §5.4），traces store 保留最近 50 条 */

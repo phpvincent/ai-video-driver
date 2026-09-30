@@ -45,6 +45,28 @@ export const DENSITY = {
   lowQuantile: 0.25,
 } as const;
 
+/** 概念知识图（SPEC-04 范围变更）：结构与阈值约束（pipeline zod 与 UI 共用） */
+export const CONCEPT_MAP = {
+  /** 概念域数量下/上限（模型输出 zod 约束） */
+  domainsMin: 3,
+  domainsMax: 6,
+  /** 每域概念数量上限 */
+  conceptsPerDomainMax: 5,
+  /** 节点标签长度上限（含根节点以外的所有层级） */
+  labelMax: 12,
+  /** 根节点（视频主题短语）长度上限 */
+  rootLabelMax: 16,
+  /** 细节短语数量上限 / 单条长度上限 */
+  detailsMax: 4,
+  detailLabelMax: 20,
+  /** 术语关联图（降级）最多展示的术语数 */
+  termsTop: 12,
+  /** 降级 domain 名称 */
+  fallbackDomainLabel: '核心术语',
+  /** 解析失败重试次数（附错误信息重试） */
+  maxRetries: 1,
+} as const;
+
 export const CONTEXT = {
   /** 单次提问上下文上限（红线 3 的量化边界） */
   maxTokens: 4_000,

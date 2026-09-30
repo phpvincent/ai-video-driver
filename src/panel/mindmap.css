@@ -1,4 +1,4 @@
-/* 导图 Tab（SPEC-04）：容器撑满 tab 区域、svg 100%、播放跟随高亮 */
+/* 导图 Tab（SPEC-04 范围变更）：概念知识图（自绘 SVG）+ 章节时间轴（markmap） */
 
 .mindmap-tab {
   display: flex;
@@ -6,6 +6,227 @@
   height: 100%;
   min-height: 0;
 }
+
+/* 视图切换条（概念图 / 时间轴） */
+.mm-view-switch {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px 0;
+}
+
+.mm-view-btn {
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  font-size: 12px;
+  border: 1px solid #e5e6eb;
+  border-radius: 999px;
+  background: #fff;
+  color: #646a73;
+  cursor: pointer;
+}
+
+.mm-view-btn.active {
+  background: #165dff;
+  border-color: #165dff;
+  color: #fff;
+}
+
+.mm-view-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------------- 概念图视图（浅色主题） ---------------- */
+
+.cm-container {
+  flex: 1;
+  min-height: 320px;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+}
+
+.cm-fallback-hint {
+  padding: 4px 10px;
+  font-size: 11px;
+  color: #8a919f;
+  background: #f7f8fa;
+  border-bottom: 1px solid #f0f1f3;
+}
+
+.cm-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+}
+
+/* 连线：贝塞尔，按层级淡色 */
+.cm-link {
+  fill: none;
+  stroke: #c9cdd4;
+  stroke-width: 1.2;
+}
+
+.cm-link--concept {
+  stroke: #a9b8e8;
+}
+
+.cm-link--detail {
+  stroke: #d5d9e0;
+}
+
+/* 节点：位置变化走 CSS transition（展开/收起动画） */
+.cm-node {
+  transition: transform 0.25s ease, opacity 0.2s ease;
+  animation: cm-fade-in 0.25s ease;
+  cursor: default;
+}
+
+@keyframes cm-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.cm-node--domain,
+.cm-node--concept {
+  cursor: pointer;
+}
+
+/* 节点矩形：三级尺寸与色深（domain 实底 / concept 浅底 / detail 灰底） */
+.cm-node--domain .cm-rect {
+  fill: #165dff;
+  stroke: #0e42d2;
+}
+
+.cm-node--domain .cm-text {
+  fill: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cm-node--domain .cm-badge {
+  fill: rgba(255, 255, 255, 0.85);
+  font-size: 11px;
+}
+
+.cm-node--concept .cm-rect {
+  fill: #f0f5ff;
+  stroke: #94bfff;
+}
+
+/* 概念视觉权重 ∝ importance（描边与字重分级） */
+.cm-node--concept[data-importance='4'] .cm-rect,
+.cm-node--concept[data-importance='5'] .cm-rect {
+  fill: #e0eaff;
+  stroke: #165dff;
+  stroke-width: 1.4;
+}
+
+.cm-node--concept .cm-text {
+  fill: #1f2329;
+  font-size: 11px;
+}
+
+.cm-node--concept[data-importance='4'] .cm-text,
+.cm-node--concept[data-importance='5'] .cm-text {
+  font-weight: 600;
+  fill: #0e42d2;
+}
+
+.cm-node--detail .cm-rect {
+  fill: #f7f8fa;
+  stroke: #e5e6eb;
+}
+
+.cm-node--detail .cm-text {
+  fill: #646a73;
+  font-size: 10px;
+}
+
+.cm-node--detail {
+  cursor: default;
+}
+
+/* 概念跟随：当前章节命中的概念节点高亮（醒目光晕 + 主题色加粗） */
+.cm-node.cm-active {
+  filter: drop-shadow(0 0 3px rgba(22, 93, 255, 0.65));
+}
+
+.cm-node.cm-active .cm-rect {
+  fill: #165dff;
+  stroke: #0e42d2;
+}
+
+.cm-node.cm-active .cm-text {
+  fill: #fff !important;
+  font-weight: 600 !important;
+}
+
+/* 锚点小圆点（可点跳播，红线 2：锚 = 章节 startMs） */
+.cm-anchor {
+  fill: #94bfff;
+  cursor: pointer;
+}
+
+.cm-anchor:hover {
+  fill: #165dff;
+}
+
+/* 生成入口 / 设置引导 / 降级说明 */
+.cm-gate {
+  flex: 1;
+  display: flex;
+}
+
+/* 生成中骨架动画 */
+.cm-skeleton {
+  flex: 1;
+  padding: 24px 16px;
+}
+
+.cm-skeleton-bar {
+  height: 28px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #f2f3f5 25%, #e8eaee 50%, #f2f3f5 75%);
+  background-size: 200% 100%;
+  animation: cm-shimmer 1.2s infinite;
+}
+
+.cm-skeleton-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.cm-skeleton-row .cm-skeleton-bar {
+  flex: 1;
+}
+
+.cm-skeleton-text {
+  margin-top: 12px;
+  font-size: 12px;
+  color: #8a919f;
+  text-align: center;
+}
+
+@keyframes cm-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* ---------------- 章节时间轴视图（markmap，原样式保留） ---------------- */
 
 .mindmap-container {
   flex: 1;

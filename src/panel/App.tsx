@@ -12,6 +12,8 @@ import { generateOutline, loadOutlineCached, regenerateOne } from './outlineLoad
 import { SettingsPage } from './settings/SettingsPage';
 import { SubtitleTab } from './SubtitleTab';
 import { currentVideoIdRef, explain as explainFn } from './explainLoader';
+import { generateConceptMap as genConceptMap, getConceptMapCached, termIndexFallback } from './mindmapLoader';
+import type { ConceptMapData } from '../types';
 import type { Section } from '../types';
 import { loadSubtitles as runWaterfall, loadSubtitlesManual } from './subtitleLoader';
 
@@ -48,6 +50,9 @@ export function App() {
   const [sections, setSections] = useState<Section[]>([]);
   /** 划词待解释术语（SubtitleTab → ChatTab 联动） */
   const [pendingTerm, setPendingTerm] = useState<{ term: string; consumed: () => void } | null>(null);
+  /** 概念知识图（缓存/生成产物；null=未生成，组件会降级本地术语图） */
+  const [conceptMap, setConceptMap] = useState<ConceptMapData | null>(null);
+  const [conceptGenerating, setConceptGenerating] = useState(false);
   /** 设置中的模型配置（modelReady 判断用；生成时 loadOutlineForVideo 会实时重读） */
   const [modelConfig, setModelConfig] = useState<ModelConfig | null>(null);
 
@@ -76,7 +81,25 @@ export function App() {
     currentVideoIdRef.value = video?.videoId ?? null;
     setSections([]);
     setPendingTerm(null);
+    setConceptMap(null);
   }, [video?.videoId]);
+
+  /** 概念图缓存回填（模型就绪且 videoId 存在时） */
+  useEffect(() => {
+    const vid = video?.videoId;
+    if (!vid || !modelConfig?.apiKey) return;
+    let cancelled = false;
+    getConceptMapCached(vid, modelConfig)
+      .then((data) => {
+        if (!cancelled) setConceptMap(data);
+      })
+      .catch(() => {
+        if (!cancelled) setConceptMap(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [video?.videoId, modelConfig?.apiKey]);
 
   useEffect(() => {
     refreshModelConfig();
@@ -132,6 +155,19 @@ export function App() {
         .catch(() => {});
     } catch {
       /* 静默 */
+    }
+  };
+
+  /** 生成概念知识图；失败降级为本地术语关联图（零成本兜底） */
+  const handleGenerateConceptMap = async (secs: Section[], title: string) => {
+    setConceptGenerating(true);
+    try {
+      const data = await genConceptMap(video?.videoId ?? '', secs, title);
+      setConceptMap(data);
+    } catch {
+      setConceptMap(termIndexFallback(secs));
+    } finally {
+      setConceptGenerating(false);
     }
   };
 
@@ -242,8 +278,14 @@ export function App() {
             {tab === 'mindmap' && (
               <MindmapTab
                 sections={sections}
+                videoTitle={video?.title ?? ''}
                 positionMs={playback?.positionMs ?? 0}
                 onRequestSeek={handleRequestSeek}
+                modelReady={!!modelConfig?.apiKey}
+                onOpenSettings={() => setShowSettings(true)}
+                generateConceptMap={handleGenerateConceptMap}
+                conceptMap={conceptMap}
+                generating={conceptGenerating}
                 onGoOutline={() => setTab('outline')}
               />
             )}
