@@ -12,7 +12,6 @@
     "verify": "tsc --noEmit && vitest run && node scripts/check-redlines.mjs && vite build"
   },
   "dependencies": {
-    "d3-flextree": "^2.1.2",
     "markmap-lib": "^0.18.12",
     "markmap-view": "^0.18.12",
     "react": "18.3",

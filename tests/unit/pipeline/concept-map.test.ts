@@ -84,10 +84,29 @@ describe('parseConceptTree', () => {
     expect(() => parseConceptTree(JSON.stringify(seven))).toThrow('Schema 校验');
   });
 
-  it('label 超长（13 字）被 zod 拒', () => {
+  it('label 13~16 字（二次迭代：模型常见输出）通过 zod，不再硬拒', () => {
     const long = JSON.parse(validJson) as { domains: Array<{ concepts: Array<{ label: string }> }> };
-    long.domains[0].concepts[0].label = '一二三四五六七八九十一二三四五';
+    long.domains[0].concepts[0].label = '一二三四五六七八九十一二三四五'; // 15 字
+    expect(() => parseConceptTree(JSON.stringify(long))).not.toThrow();
+    const raw = parseConceptTree(JSON.stringify(long));
+    // zod 收原始值，截断由构树代码负责（shortenLabel）
+    expect(raw.domains[0].concepts[0].label).toBe('一二三四五六七八九十一二三四五');
+  });
+
+  it('label 超 zod 硬上限（31 字 > labelHardMax 30）仍被拒（防注入式超长）', () => {
+    const long = JSON.parse(validJson) as { domains: Array<{ concepts: Array<{ label: string }> }> };
+    long.domains[0].concepts[0].label = '一二三四五六七八九十'.repeat(3) + '一'; // 31 字
     expect(() => parseConceptTree(JSON.stringify(long))).toThrow('Schema 校验');
+  });
+
+  it('detail 超 zod 硬上限（41 字 > detailHardMax 40）被拒；30 字通过', () => {
+    const parsed = JSON.parse(validJson) as {
+      domains: Array<{ concepts: Array<{ details: string[] }> }>,
+    };
+    parsed.domains[0].concepts[0].details = ['x'.repeat(41)];
+    expect(() => parseConceptTree(JSON.stringify(parsed))).toThrow('Schema 校验');
+    parsed.domains[0].concepts[0].details = ['y'.repeat(30)];
+    expect(() => parseConceptTree(JSON.stringify(parsed))).not.toThrow();
   });
 
   it('缺字段（concept 缺 importance）被 zod 拒', () => {
@@ -164,6 +183,28 @@ describe('buildConceptMap', () => {
     });
     expect(Array.from(root.label)).toHaveLength(16);
     expect(root.label.endsWith('…')).toBe(true);
+  });
+
+  it('二次迭代：16 字概念 label 通过 zod 且构树强制截断为 12（降级根因修复）', async () => {
+    const parsed = JSON.parse(validJson) as {
+      domains: Array<{ concepts: Array<{ label: string; details: string[] }> }>,
+    };
+    parsed.domains[0].concepts[0].label = '一二三四五六七八九十一二三四五六'; // 16 字
+    parsed.domains[0].concepts[0].details = ['z'.repeat(30)]; // detail 30 字（< hardMax 40）
+    const { fn } = stubModelFn([JSON.stringify(parsed)]);
+    const { root, degraded } = await buildConceptMap({
+      sections,
+      videoTitle: '大模型入门',
+      modelFn: fn,
+      getSystemPrompt,
+    });
+    expect(degraded).toBe(false);
+    const concept = root.children[0].children[0];
+    // 代码截断：label → 12（11 字 + 省略号），detail → 20（19 字 + 省略号）
+    expect(Array.from(concept.label)).toHaveLength(12);
+    expect(concept.label).toBe('一二三四五六七八九十一…');
+    expect(Array.from(concept.children[0].label)).toHaveLength(20);
+    expect(concept.children[0].label.endsWith('…')).toBe(true);
   });
 
   it('重试后成功：第一次非法 JSON，第二次合法，重试 prompt 附带错误信息', async () => {

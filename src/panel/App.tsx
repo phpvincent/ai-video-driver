@@ -53,6 +53,8 @@ export function App() {
   /** 概念知识图（缓存/生成产物；null=未生成，组件会降级本地术语图） */
   const [conceptMap, setConceptMap] = useState<ConceptMapData | null>(null);
   const [conceptGenerating, setConceptGenerating] = useState(false);
+  /** 概念图是否为降级产物（模型生成失败回退本地术语图时为 true） */
+  const [conceptDegraded, setConceptDegraded] = useState(false);
   /** 设置中的模型配置（modelReady 判断用；生成时 loadOutlineForVideo 会实时重读） */
   const [modelConfig, setModelConfig] = useState<ModelConfig | null>(null);
 
@@ -91,7 +93,10 @@ export function App() {
     let cancelled = false;
     getConceptMapCached(vid, modelConfig)
       .then((data) => {
-        if (!cancelled) setConceptMap(data);
+        if (!cancelled) {
+          setConceptMap(data);
+          setConceptDegraded(false);
+        }
       })
       .catch(() => {
         if (!cancelled) setConceptMap(null);
@@ -161,11 +166,13 @@ export function App() {
   /** 生成概念知识图；失败降级为本地术语关联图（零成本兜底） */
   const handleGenerateConceptMap = async (secs: Section[], title: string) => {
     setConceptGenerating(true);
+    setConceptDegraded(false);
     try {
       const data = await genConceptMap(video?.videoId ?? '', secs, title);
       setConceptMap(data);
     } catch {
       setConceptMap(termIndexFallback(secs));
+      setConceptDegraded(true);
     } finally {
       setConceptGenerating(false);
     }
@@ -285,6 +292,7 @@ export function App() {
                 onOpenSettings={() => setShowSettings(true)}
                 generateConceptMap={handleGenerateConceptMap}
                 conceptMap={conceptMap}
+                degraded={conceptDegraded}
                 generating={conceptGenerating}
                 onGoOutline={() => setTab('outline')}
               />

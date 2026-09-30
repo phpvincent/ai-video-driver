@@ -52,13 +52,18 @@ export const CONCEPT_MAP = {
   domainsMax: 6,
   /** 每域概念数量上限 */
   conceptsPerDomainMax: 5,
-  /** 节点标签长度上限（含根节点以外的所有层级） */
+  /** 节点标签展示长度上限（代码截断目标，所有构树路径强制 shortenLabel） */
   labelMax: 12,
+  /** 节点标签 zod 硬上限（防注入式超长仍拒；labelMax~hardMax 之间由代码截断，
+   *  二次迭代：模型输出 13~16 字常见，12 字硬拒是降级根因） */
+  labelHardMax: 30,
   /** 根节点（视频主题短语）长度上限 */
   rootLabelMax: 16,
-  /** 细节短语数量上限 / 单条长度上限 */
+  /** 细节短语数量上限 / 展示长度上限（代码截断目标） */
   detailsMax: 4,
   detailLabelMax: 20,
+  /** 细节短语 zod 硬上限（防注入式超长） */
+  detailHardMax: 40,
   /** 术语关联图（降级）最多展示的术语数 */
   termsTop: 12,
   /** 降级 domain 名称 */

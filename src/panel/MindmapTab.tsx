@@ -1,29 +1,26 @@
 /**
- * 导图 Tab（SPEC-04 范围变更：概念知识图）：
- * - 概念图（默认视图）：props.conceptMap（缓存命中）或本地术语关联图降级，
- *   d3-flextree 布局（nodeSize [36,120]，根在左向右展开）+ 自绘 SVG
- *   （圆角矩形节点三级尺寸、贝塞尔连线、CSS transition 展开/收起动画）；
- *   domain 点击折叠/展开；concept 点击跳播第一个锚点，锚点小圆点可点
- *   （红线 2：锚 = 章节 startMs，大纲管线吸附产物）；
- *   概念跟随：matchConcepts（当前章节 terms/标题 ↔ 概念 label，大小写不敏感）
- *   → .cm-active 高亮 + 滚出可视区时平滑滚动；
- * - 章节时间轴（次要视图）：原 markmap 实现整体保留为 ChronoView。
- *
- * 布局用 d3-flextree（纯 JS，node 测试环境可用）；展开动画走 CSS transition
- * （transform/opacity，避免引入 d3-selection/d3-transition 命令式操作与 React 冲突）。
+ * 导图 Tab（SPEC-04 范围变更二次迭代：概念图改为 HTML 知识卡片流）：
+ * - 概念图（默认视图）：props.conceptMap（缓存/生成）或本地术语关联图降级；
+ *   纯 HTML/CSS 卡片流（窄边栏媒介适配，SVG/d3-flextree 已移除）：
+ *   概念域卡（域名 + 概念数徽标）→ 概念行（名称粗体点击跳播第一个锚点、
+ *   重要度文字徽标〔核心/重要/常用/了解，替换圆点〕、时间 chips [mm:ss]
+ *   可点跳播、细节折叠 grid 0fr/1fr 过渡）；
+ * - 降级横幅（degraded=true）：黄底"模型生成失败，当前为术语关联图（降级）"
+ *   + 重试按钮（调 props.generateConceptMap），消除静默降级；
+ * - 概念跟随：matchConcepts 精确匹配（概念 label 归一化后 ∈ 当前章节 terms，
+ *  且该 section 覆盖 positionMs；不命中不亮，修复 substring 过松亮起多个）
+ *   → .concept-active 高亮（过渡动画）+ 滚出可视区时平滑滚动；
+ * - 章节时间轴（次要视图）：markmap 实现整体保留为 ChronoView。
+ * 组件完全 props 驱动。降级判定双手段并存（types.ts 不得加字段）：
+ * props.degraded（App 生成 catch 路径设置）+ 根 label/model 约定（isTermIndexData）。
  * markmap 仅由 ChronoView 的 effect 内动态 import（概念视图不加载引擎）。
- * 组件完全 props 驱动，App.tsx 新增接线由父 agent 完成（新 props 全可选）。
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Markmap } from 'markmap-view';
 import type { ConceptMapData, ConceptNode, Section } from '../types';
-import { buildTermIndexMap, shortenLabel } from '../core/pipeline/conceptMap';
+import { TERM_INDEX_ROOT_LABEL, buildTermIndexMap } from '../core/pipeline/conceptMap';
 import { formatTimestamp } from './SubtitleTab';
 import './mindmap.css';
-
-// d3-flextree 未附带类型声明（仅用 flextree 工厂函数，绑定按 any 处理）
-// @ts-expect-error no declaration file for module 'd3-flextree'
-import { flextree } from 'd3-flextree';
 
 export interface MindmapTabProps {
   /** 大纲章节（空数组 = 未生成，显示引导） */
@@ -44,6 +41,8 @@ export interface MindmapTabProps {
   conceptMap?: ConceptMapData | null;
   /** 生成中（骨架动画） */
   generating?: boolean;
+  /** conceptMap 为降级术语关联图（App 生成 catch 路径设置；与根 label 约定双手段并存） */
+  degraded?: boolean;
   /** 无大纲时引导去大纲 Tab 生成（可选） */
   onGoOutline?: () => void;
 }
@@ -133,10 +132,14 @@ export function findActiveSectionIndex(sections: Section[], positionMs: number):
   return ans;
 }
 
+/** 概念跟随的归一化（trim + 小写，两侧同规则才能精确相等） */
+const normalizeTerm = (s: string): string => s.trim().toLowerCase();
+
 /**
- * 概念跟随命中（纯函数，导出供单测）：
- * 当前章节（二分）的 terms + 标题对概念 label 做包含匹配（大小写不敏感），
- * 返回命中的概念 label 列表（去重，遍历顺序稳定）。
+ * 概念跟随命中（纯函数，导出供单测；二次迭代改精确匹配）：
+ * 当前章节（二分，覆盖 positionMs）的 terms 与概念 label 双侧归一化后
+ * **精确相等**才命中（修复 substring 包含匹配过松导致"亮起好多个"）；
+ * 章节标题不再参与匹配。返回命中的概念 label 列表（去重，遍历顺序稳定）。
  */
 export function matchConcepts(
   sections: Section[],
@@ -145,15 +148,15 @@ export function matchConcepts(
 ): string[] {
   const idx = findActiveSectionIndex(sections, positionMs);
   if (idx < 0) return [];
-  const sec = sections[idx];
-  const candidates = [sec.title, ...sec.terms].map((s) => s.toLowerCase());
+  const termSet = new Set(sections[idx].terms.map(normalizeTerm));
   const out: string[] = [];
   const walk = (n: ConceptNode) => {
-    if (n.kind === 'concept') {
-      const label = n.label.toLowerCase();
-      if (candidates.some((c) => c.includes(label)) && !out.includes(n.label)) {
-        out.push(n.label);
-      }
+    if (
+      n.kind === 'concept' &&
+      termSet.has(normalizeTerm(n.label)) &&
+      !out.includes(n.label)
+    ) {
+      out.push(n.label);
     }
     for (const child of n.children) walk(child);
   };
@@ -166,6 +169,25 @@ export function formatRange(startMs: number, endMs?: number): string {
   return endMs != null && Number.isFinite(endMs)
     ? `${formatTimestamp(startMs)}-${formatTimestamp(endMs)}`
     : formatTimestamp(startMs);
+}
+
+/**
+ * 重要度文字徽标（二次迭代：替换无语义圆点）：
+ * >=5 核心 / >=4 重要 / >=3 常用 / 其他 了解。
+ */
+export function importanceBadge(importance: number): string {
+  if (importance >= 5) return '核心';
+  if (importance >= 4) return '重要';
+  if (importance >= 3) return '常用';
+  return '了解';
+}
+
+/**
+ * 降级数据判定（ConceptMapData 无 degraded 字段的约定手段，导出供单测）：
+ * termIndexFallback 产物 model='term-index' 且根 label='术语关联图'。
+ */
+export function isTermIndexData(data: ConceptMapData): boolean {
+  return data.model === 'term-index' || data.root.label === TERM_INDEX_ROOT_LABEL;
 }
 
 /** 空大纲引导（独立导出：不依赖 markmap/DOM，renderToString 可测） */
@@ -325,128 +347,71 @@ export function ChronoView({
 }
 
 // ---------------------------------------------------------------------------
-// 概念图视图（自绘 SVG + d3-flextree）
+// 概念图视图（HTML 知识卡片流，二次迭代：SVG/d3-flextree 已移除）
 // ---------------------------------------------------------------------------
 
-/** 深度轴步长：宽方向每层 120px；兄弟轴：每节点 36px（SPEC-04 范围变更） */
-const CM_X_STEP = 120;
-const CM_SIBLING = 36;
-/** 兄弟节点额外间距（flextree spacing） */
-const CM_SPACING = 8;
+/** 概念图标签与引导文案（导出供单测断言） */
+export const CONCEPT_VIEW_LABEL = '概念图';
+export const CHRONO_VIEW_LABEL = '时间轴';
+export const CONCEPT_GENERATE_TEXT = '生成知识图';
+export const CONCEPT_GENERATING_TEXT = '正在生成概念知识图…';
+export const CONCEPT_MODEL_HINT = '需先配置模型才能生成概念知识图';
+export const CONCEPT_OPEN_SETTINGS_TEXT = '去设置';
+/** 降级横幅文案（模型生成失败 → 术语关联图，显式告知不再静默） */
+export const CONCEPT_DEGRADED_TEXT = '模型生成失败，当前为术语关联图（降级）';
+/** 未接线模型路径的本地降级横幅文案 */
+export const CONCEPT_FALLBACK_HINT = '模型生成未接线，已降级为本地术语关联图';
+/** 降级横幅重试按钮文案 */
+export const CONCEPT_RETRY_TEXT = '重试';
+/** 细节折叠切换文案（▸ 收起态 / ▾ 展开态） */
+export const CONCEPT_DETAILS_TOGGLE_TEXT = '细节 ▸';
+export const CONCEPT_DETAILS_TOGGLE_OPEN_TEXT = '细节 ▾';
 
-/** 布局树节点（ConceptNode 的渲染副本：flextree 会就地写入 x/y，不污染 props） */
-interface LayoutNode {
-  id: string;
-  label: string;
-  kind: ConceptNode['kind'];
-  importance: number;
-  anchors: ConceptNode['anchors'];
-  childCount: number;
-  children: LayoutNode[];
-  /** flextree 就地写入：兄弟轴中心（纵向） */
-  x: number;
-  /** flextree 就地写入：深度轴起点（横向） */
-  y: number;
-}
-
-/** 概念图 → 布局树（domain 按 expanded 折叠；根永远展开） */
-function toLayoutTree(node: ConceptNode, expanded: ReadonlySet<string>): LayoutNode {
-  const isOpen = node.id === 'cm_root' || expanded.has(node.id);
-  const visibleChildren =
-    node.kind === 'domain' ? (isOpen ? node.children : []) : node.children;
-  return {
-    id: node.id,
-    label: node.label,
-    kind: node.kind,
-    importance: node.importance,
-    anchors: node.anchors,
-    childCount: node.children.length,
-    children: visibleChildren.map((c) => toLayoutTree(c, expanded)),
-    x: 0,
-    y: 0,
-  };
-}
-
-/** 概念图渲染节点尺寸（三级：domain / concept / detail） */
-const NODE_SHAPE: Record<ConceptNode['kind'], { w: number; h: number; rx: number }> = {
-  domain: { w: 116, h: 34, rx: 8 },
-  concept: { w: 116, h: 30, rx: 6 },
-  detail: { w: 116, h: 24, rx: 4 },
-};
-
-const conceptLayout = flextree({
-  nodeSize: () => [CM_SIBLING, CM_X_STEP] as [number, number],
-  spacing: () => CM_SPACING,
-});
-
-/** 布局后的平铺节点（含父节点引用，用于贝塞尔连线） */
-interface PlacedNode {
-  node: LayoutNode;
-  parent: LayoutNode | null;
-}
-
-function placeTree(root: LayoutNode): PlacedNode[] {
-  conceptLayout(root); // 就地写入 x/y
-  const out: PlacedNode[] = [];
-  const walk = (node: LayoutNode, parent: LayoutNode | null) => {
-    out.push({ node, parent });
-    for (const child of node.children) walk(child, node);
-  };
-  walk(root, null);
-  return out;
-}
-
-/** 贝塞尔连线（父右缘 → 子左缘，水平方向 C 曲线） */
-function linkPath(parent: LayoutNode, child: LayoutNode): string {
-  const x0 = parent.y + NODE_SHAPE[parent.kind].w;
-  const y0 = parent.x;
-  const x1 = child.y;
-  const y1 = child.x;
-  const mx = (x0 + x1) / 2;
-  return `M ${x0} ${y0} C ${mx} ${y0}, ${mx} ${y1}, ${x1} ${y1}`;
-}
-
-/** 概念图视图（数据 + 布局 + 交互；root 由调用方决定来源：缓存或本地降级） */
+/** 概念图视图（HTML 卡片流；root 由调用方决定来源：缓存、App 降级或本地降级） */
 function ConceptView({
   root,
   sections,
   positionMs,
   onRequestSeek,
-  fallbackHint,
+  degraded,
+  degradedText,
+  onRetry,
 }: {
   root: ConceptNode;
   sections: Section[];
   positionMs: number;
   onRequestSeek?: (ms: number) => void;
-  fallbackHint?: boolean;
+  /** 降级横幅开关（仅 degraded=true 时渲染，黄底） */
+  degraded?: boolean;
+  degradedText?: string;
+  onRetry?: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  /** 展开的 domain 节点 id（默认全部折叠，只显示概念域） */
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  /** 展开细节区的概念 id（默认全部收起） */
+  const [openDetails, setOpenDetails] = useState<ReadonlySet<string>>(() => new Set());
   /** 首次挂载新图时重置折叠态 */
-  const rootIdRef = useRef<string | null>(null);
-  if (rootIdRef.current !== root.id + root.children.map((c) => c.id).join(',')) {
-    rootIdRef.current = root.id + root.children.map((c) => c.id).join(',');
-    if (expanded.size > 0) setExpanded(new Set());
+  const rootKeyRef = useRef('');
+  const rootKey = `${root.id}:${root.children.map((c) => c.id).join(',')}`;
+  if (rootKeyRef.current !== rootKey) {
+    rootKeyRef.current = rootKey;
+    if (openDetails.size > 0) setOpenDetails(new Set());
   }
 
-  const placed = useMemo(() => placeTree(toLayoutTree(root, expanded)), [root, expanded]);
-
-  // 概念跟随：命中 label 集合（大小写不敏感）
+  // 概念跟随：命中 label 集合（精确匹配，归一化后比较）
   const activeLabels = useMemo(
     () => new Set(matchConcepts(sections, positionMs, root).map((l) => l.toLowerCase())),
     [sections, positionMs, root],
   );
   const lastActiveKeyRef = useRef('');
 
-  // 高亮变化且节点滚出可视区时平滑滚动聚焦
+  // 高亮变化且概念行滚出可视区时平滑滚动聚焦
   useEffect(() => {
     const container = containerRef.current;
     if (!container || activeLabels.size === 0) return;
     const key = [...activeLabels].sort().join('|');
     if (key === lastActiveKeyRef.current) return;
     lastActiveKeyRef.current = key;
-    const target = container.querySelector('.cm-node.cm-active');
+    const target = container.querySelector('.cm-concept.concept-active');
     if (target) {
       const rect = target.getBoundingClientRect();
       const view = container.getBoundingClientRect();
@@ -456,26 +421,8 @@ function ConceptView({
     }
   }, [activeLabels]);
 
-  // 布局包围盒 → viewBox（窄栏整体 fit 可见）
-  const viewBox = useMemo(() => {
-    if (placed.length === 0) return '0 0 100 100';
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
-    for (const { node } of placed) {
-      const shape = NODE_SHAPE[node.kind];
-      minX = Math.min(minX, node.y);
-      maxX = Math.max(maxX, node.y + shape.w);
-      minY = Math.min(minY, node.x - shape.h / 2);
-      maxY = Math.max(maxY, node.x + shape.h / 2);
-    }
-    const pad = 16;
-    return `${minX - pad} ${minY - pad} ${maxX - minX + pad * 2} ${maxY - minY + pad * 2}`;
-  }, [placed]);
-
-  const toggle = (id: string) => {
-    setExpanded((prev) => {
+  const toggleDetails = (id: string) => {
+    setOpenDetails((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -483,83 +430,100 @@ function ConceptView({
     });
   };
 
+  const domains = root.children.filter((n) => n.kind === 'domain');
+
   return (
     <div className="cm-container" ref={containerRef}>
-      {fallbackHint && <div className="cm-fallback-hint">模型生成未接线，已降级为本地术语关联图</div>}
-      <svg className="cm-svg" viewBox={viewBox} preserveAspectRatio="xMidYMid meet">
-        {placed.map(({ node, parent }) =>
-          parent ? (
-            <path key={`l-${node.id}`} className={`cm-link cm-link--${node.kind}`} d={linkPath(parent, node)} />
-          ) : null,
-        )}
-        {placed.map(({ node }) => {
-          const shape = NODE_SHAPE[node.kind];
-          const isOpen = expanded.has(node.id);
-          const active = node.kind === 'concept' && activeLabels.has(node.label.toLowerCase());
-          return (
-            <g
-              key={node.id}
-              className={[
-                'cm-node',
-                `cm-node--${node.kind}`,
-                active ? 'cm-active' : '',
-                node.kind === 'domain' && node.childCount > 0 ? 'cm-toggle' : '',
-              ]
-                .filter(Boolean)
-                .join(' ')}
-              data-importance={node.importance}
-              style={{ transform: `translate(${node.y}px, ${node.x}px)` }}
-              onClick={() => {
-                if (node.kind === 'domain') {
-                  if (node.childCount > 0) toggle(node.id);
-                  return;
-                }
-                if (node.kind === 'concept' && node.anchors.length > 0) {
-                  onRequestSeek?.(node.anchors[0].tMs);
-                }
-              }}
-            >
-              <rect
-                className="cm-rect"
-                x={0}
-                y={-shape.h / 2}
-                width={shape.w}
-                height={shape.h}
-                rx={shape.rx}
-              />
-              <text
-                className="cm-text"
-                x={node.kind === 'domain' ? 10 : 8}
-                y={0}
-                dominantBaseline="central"
-              >
-                {node.kind === 'detail' ? shortenLabel(node.label, 20) : node.label}
-              </text>
-              {node.kind === 'domain' && node.childCount > 0 && (
-                <text className="cm-badge" x={shape.w - 8} y={0} dominantBaseline="central">
-                  {isOpen ? '−' : `+${node.childCount}`}
-                </text>
-              )}
-              {node.kind === 'concept' &&
-                node.anchors.map((a, i) => (
-                  <circle
-                    key={`${node.id}-a${i}`}
-                    className="cm-anchor"
-                    cx={10 + i * 10}
-                    cy={shape.h / 2 - 5}
-                    r={2.5}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onRequestSeek?.(a.tMs);
-                    }}
-                  >
-                    <title>{`跳播到 ${formatRange(a.tMs)}`}</title>
-                  </circle>
-                ))}
-            </g>
-          );
-        })}
-      </svg>
+      {degraded && (
+        <div className="cm-degraded-banner" role="status">
+          <span className="cm-degraded-text">{degradedText ?? CONCEPT_DEGRADED_TEXT}</span>
+          {onRetry && (
+            <button type="button" className="cm-retry-btn" onClick={onRetry}>
+              {CONCEPT_RETRY_TEXT}
+            </button>
+          )}
+        </div>
+      )}
+      {domains.map((domain) => (
+        <section className="cm-card" key={domain.id}>
+          <header className="cm-card-header">
+            <span className="cm-card-title">{domain.label}</span>
+            <span className="cm-card-count">{`${domain.children.length} 概念`}</span>
+          </header>
+          <div className="cm-card-body">
+            {domain.children
+              .filter((n) => n.kind === 'concept')
+              .map((concept) => {
+                const active = activeLabels.has(normalizeTerm(concept.label));
+                const open = openDetails.has(concept.id);
+                return (
+                  <div key={concept.id} className={`cm-concept${active ? ' concept-active' : ''}`}>
+                    <div className="cm-concept-main">
+                      <button
+                        type="button"
+                        className="cm-concept-label"
+                        disabled={concept.anchors.length === 0}
+                        title={
+                          concept.anchors.length > 0
+                            ? `跳播到 ${formatRange(concept.anchors[0].tMs)}`
+                            : undefined
+                        }
+                        onClick={() => {
+                          if (concept.anchors.length > 0) {
+                            onRequestSeek?.(concept.anchors[0].tMs);
+                          }
+                        }}
+                      >
+                        {concept.label}
+                      </button>
+                      <span
+                        className="cm-importance-badge"
+                        data-importance={concept.importance}
+                      >
+                        {importanceBadge(concept.importance)}
+                      </span>
+                    </div>
+                    {concept.anchors.length > 0 && (
+                      <div className="cm-chips">
+                        {concept.anchors.map((a, i) => (
+                          <button
+                            key={`${concept.id}-a${i}`}
+                            type="button"
+                            className="cm-chip"
+                            title={`跳播到 ${formatRange(a.tMs)}`}
+                            onClick={() => onRequestSeek?.(a.tMs)}
+                          >
+                            {`[${formatTimestamp(a.tMs)}]`}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {concept.children.length > 0 && (
+                      <>
+                        <button
+                          type="button"
+                          className="cm-details-toggle"
+                          aria-expanded={open}
+                          onClick={() => toggleDetails(concept.id)}
+                        >
+                          {open ? CONCEPT_DETAILS_TOGGLE_OPEN_TEXT : CONCEPT_DETAILS_TOGGLE_TEXT}
+                        </button>
+                        {/* 细节折叠：常驻渲染 + grid 0fr/1fr 过渡（参考 outline-regen-collapse） */}
+                        <div className={`cm-details-collapse${open ? ' open' : ''}`}>
+                          <ul className="cm-details">
+                            {concept.children.map((d) => (
+                              <li key={d.id}>{d.label}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }
@@ -583,18 +547,10 @@ function ConceptSkeleton() {
   );
 }
 
-/** 概念图标签与引导文案（导出供单测断言） */
-export const CONCEPT_VIEW_LABEL = '概念图';
-export const CHRONO_VIEW_LABEL = '时间轴';
-export const CONCEPT_GENERATE_TEXT = '生成知识图';
-export const CONCEPT_GENERATING_TEXT = '正在生成概念知识图…';
-export const CONCEPT_MODEL_HINT = '需先配置模型才能生成概念知识图';
-export const CONCEPT_OPEN_SETTINGS_TEXT = '去设置';
-
 /**
  * 组件完全 props 驱动（App.tsx 接线由父 agent 完成）。
  * 现有 props（sections/positionMs/onRequestSeek/onGoOutline）保持可选 + 默认值，
- * 新增 props（videoTitle/modelReady/onOpenSettings/generateConceptMap/conceptMap/generating）
+ * 新增 props（videoTitle/modelReady/onOpenSettings/generateConceptMap/conceptMap/generating/degraded）
  * 全可选：未接线时概念图视图自动降级为本地术语关联图（零模型）。
  */
 export function MindmapTab(props: MindmapTabProps) {
@@ -608,6 +564,7 @@ export function MindmapTab(props: MindmapTabProps) {
     generateConceptMap,
     conceptMap = null,
     generating = false,
+    degraded = false,
     onGoOutline,
   } = props;
 
@@ -626,6 +583,10 @@ export function MindmapTab(props: MindmapTabProps) {
       /* 生成失败由父组件状态呈现；组件不重复处理 */
     });
   };
+
+  // 降级判定双手段并存：props.degraded（App 生成 catch 路径设置）优先，
+  // 根 label 约定 / model='term-index' 兜底（types.ts 的 ConceptMapData 无字段）
+  const mapDegraded = degraded || (conceptMap != null && isTermIndexData(conceptMap));
 
   const showEmptyGuide = view === 'concept' && sections.length === 0 && !conceptMap;
 
@@ -658,6 +619,9 @@ export function MindmapTab(props: MindmapTabProps) {
               sections={sections}
               positionMs={positionMs}
               onRequestSeek={onRequestSeek}
+              degraded={mapDegraded}
+              degradedText={CONCEPT_DEGRADED_TEXT}
+              onRetry={generateConceptMap ? handleGenerate : undefined}
             />
           ) : generating ? (
             <ConceptSkeleton />
@@ -689,7 +653,8 @@ export function MindmapTab(props: MindmapTabProps) {
               sections={sections}
               positionMs={positionMs}
               onRequestSeek={onRequestSeek}
-              fallbackHint
+              degraded
+              degradedText={CONCEPT_FALLBACK_HINT}
             />
           ) : (
             <MindmapEmptyGuide onGoOutline={onGoOutline} />

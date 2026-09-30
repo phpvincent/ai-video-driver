@@ -121,6 +121,9 @@ export async function generateConceptMap(
 /**
  * 本地术语关联图（零模型确定性降级，红线 1）：
  * 供组件在未接线模型路径时直接计算。
+ * 降级标记约定（types.ts 的 ConceptMapData 无 degraded 字段）：
+ * model='term-index' + root.label='术语关联图'（TERM_INDEX_ROOT_LABEL），
+ * MindmapTab 以 isTermIndexData 识别并渲染降级横幅（二次迭代）。
  */
 export function termIndexFallback(sections: Section[]): ConceptMapData {
   const { root } = buildTermIndexMap(sections);

@@ -23,20 +23,23 @@ import { z } from 'zod';
 // Schema 与解析（红线 4 同款：JSON.parse + zod，失败 throw 由重试捕获）
 // ---------------------------------------------------------------------------
 
-/** 模型输出整体 Schema：{domains:[{label, concepts:[...]}]} */
+/** 模型输出整体 Schema：{domains:[{label, concepts:[...]}]}
+ * （二次迭代：label/detail 用硬上限（30/40）防注入式超长；超 labelMax 的
+ * 常见输出（13~16 字）不再硬拒，由 buildTreeFromRaw 的 shortenLabel 截断，
+ * 消除"12 字硬拒 → 重试再败 → 静默降级"的根因） */
 export const ConceptTreeSchema = z.object({
   domains: z
     .array(
       z.object({
-        label: z.string().min(1).max(CONCEPT_MAP.labelMax),
+        label: z.string().min(1).max(CONCEPT_MAP.labelHardMax),
         concepts: z
           .array(
             z.object({
-              label: z.string().min(1).max(CONCEPT_MAP.labelMax),
+              label: z.string().min(1).max(CONCEPT_MAP.labelHardMax),
               importance: z.number().int().min(1).max(5),
               anchorSections: z.array(z.number().int().nonnegative()),
               details: z
-                .array(z.string().min(1).max(CONCEPT_MAP.detailLabelMax))
+                .array(z.string().min(1).max(CONCEPT_MAP.detailHardMax))
                 .max(CONCEPT_MAP.detailsMax),
             }),
           )
@@ -239,6 +242,10 @@ export interface TermIndexResult {
   degraded: true;
 }
 
+/** 降级图根节点 label 约定（types.ts 的 ConceptMapData 无 degraded 字段，
+ *  UI 以此 + model='term-index' 判定降级，SPEC-04 二次迭代） */
+export const TERM_INDEX_ROOT_LABEL = '术语关联图';
+
 /**
  * 确定性降级（零模型，红线 1）：全片术语去重（大小写不敏感）后
  * 按出现章节数降序取前 N，单 domain「核心术语」，每术语一个 concept
@@ -284,7 +291,7 @@ export function buildTermIndexMap(sections: Section[]): TermIndexResult {
 
   const root: ConceptNode = {
     id: 'cm_root',
-    label: '术语关联图',
+    label: TERM_INDEX_ROOT_LABEL,
     kind: 'domain',
     importance: concepts.length
       ? Math.max(...concepts.map((c) => c.importance))

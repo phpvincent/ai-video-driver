@@ -1,18 +1,23 @@
 /**
- * 导图 Tab 单元测试（SPEC-04 范围变更：概念知识图）。
+ * 导图 Tab 单元测试（SPEC-04 二次迭代：HTML 知识卡片流）。
  * 环境为 node 且无 DOM：纯函数（buildMindmapMarkdown / parseNodeTimestamp /
- * findActiveSectionIndex / matchConcepts / formatRange / shortenLabel）直接断言；
+ * findActiveSectionIndex / matchConcepts〔精确匹配〕/ importanceBadge /
+ * isTermIndexData / formatRange / shortenLabel）直接断言；
  * 组件渲染只覆盖无 effect 分支（markmap / 滚动聚焦均为 effect 内动态行为，
- * renderToString 不触发；flextree 布局为纯 JS，渲染期可跑）。
+ * renderToString 不触发；概念卡片流为纯 HTML，渲染期可跑）。
  */
 import { createElement } from 'react';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { shortenLabel } from '../../../src/core/pipeline/conceptMap';
-import type { ConceptNode, Section } from '../../../src/types';
+import type { ConceptMapData, ConceptNode, Section } from '../../../src/types';
 import {
   CHRONO_VIEW_LABEL,
+  CONCEPT_DEGRADED_TEXT,
+  CONCEPT_DETAILS_TOGGLE_TEXT,
+  CONCEPT_FALLBACK_HINT,
   CONCEPT_MODEL_HINT,
+  CONCEPT_RETRY_TEXT,
   CONCEPT_VIEW_LABEL,
   MINDMAP_EMPTY_ACTION_TEXT,
   MINDMAP_EMPTY_TEXT,
@@ -22,6 +27,8 @@ import {
   buildMindmapMarkdown,
   findActiveSectionIndex,
   formatRange,
+  importanceBadge,
+  isTermIndexData,
   matchConcepts,
   parseNodeTimestamp,
   sectionHeadingText,
@@ -56,7 +63,7 @@ const sections = [
   section('sec_0003', 180_000, 300_000, '实战演示', { terms: ['注意力机制'] }),
 ];
 
-/** 概念图测试树：根 → 域（基础概念）→ 概念（上下文窗口 / Token） */
+/** 概念图测试树：根 → 域（基础概念）→ 概念（上下文窗口〔带细节〕/ Token） */
 const conceptRoot = (): ConceptNode => ({
   id: 'cm_root',
   label: '大模型入门',
@@ -80,7 +87,16 @@ const conceptRoot = (): ConceptNode => ({
             { tMs: 0, sectionId: 'sec_0001' },
             { tMs: 60_000, sectionId: 'sec_0002' },
           ],
-          children: [],
+          children: [
+            {
+              id: 'cm_0004',
+              label: '决定单次可见文本量',
+              kind: 'detail',
+              importance: 5,
+              anchors: [],
+              children: [],
+            },
+          ],
         },
         {
           id: 'cm_0003',
@@ -93,6 +109,15 @@ const conceptRoot = (): ConceptNode => ({
       ],
     },
   ],
+});
+
+/** 缓存注入用的 ConceptMapData 包装 */
+const mapData = (root: ConceptNode, model = 'test-model'): ConceptMapData => ({
+  videoId: 'bv1x_p1',
+  promptVersion: '0.1.0',
+  model,
+  root,
+  generatedAt: '2026-09-30T00:00:00.000Z',
 });
 
 describe('buildMindmapMarkdown', () => {
@@ -204,8 +229,8 @@ describe('findActiveSectionIndex', () => {
   });
 });
 
-describe('matchConcepts（概念跟随命中，大小写不敏感）', () => {
-  it('当前章节 terms 命中概念 label（包含匹配）', () => {
+describe('matchConcepts（概念跟随命中，二次迭代：精确匹配）', () => {
+  it('当前章节 terms 与概念 label 归一化后相等才命中', () => {
     expect(matchConcepts(sections, 0, conceptRoot())).toEqual(['上下文窗口', 'Token']);
   });
 
@@ -214,7 +239,7 @@ describe('matchConcepts（概念跟随命中，大小写不敏感）', () => {
     expect(matchConcepts(sections, 200_000, conceptRoot())).toEqual([]);
   });
 
-  it('大小写不敏感：术语与 label 大小写不同仍命中', () => {
+  it('大小写不敏感：术语与 label 大小写不同仍精确命中', () => {
     const root: ConceptNode = {
       ...conceptRoot(),
       children: [
@@ -230,15 +255,93 @@ describe('matchConcepts（概念跟随命中，大小写不敏感）', () => {
     expect(matchConcepts(secs, 0, root)).toEqual(['Context Window']);
   });
 
-  it('章节标题命中概念 label', () => {
+  it('精确匹配（正向）：term="token" 命中 label="token"', () => {
+    const root: ConceptNode = {
+      ...conceptRoot(),
+      children: [
+        {
+          ...conceptRoot().children[0],
+          children: [
+            { id: 'cm_x', label: 'token', kind: 'concept', importance: 3, anchors: [], children: [] },
+          ],
+        },
+      ],
+    };
+    const secs = [section('s1', 0, 1000, '开场', { terms: ['token'] })];
+    expect(matchConcepts(secs, 0, root)).toEqual(['token']);
+  });
+
+  it('精确匹配（反向，必须）：term="token" 不命中 label="token 长度"（substring 过松已修复）', () => {
+    const root: ConceptNode = {
+      ...conceptRoot(),
+      children: [
+        {
+          ...conceptRoot().children[0],
+          children: [
+            { id: 'cm_x', label: 'token 长度', kind: 'concept', importance: 3, anchors: [], children: [] },
+          ],
+        },
+      ],
+    };
+    const secs = [section('s1', 0, 1000, '开场', { terms: ['token'] })];
+    expect(matchConcepts(secs, 0, root)).toEqual([]);
+  });
+
+  it('精确匹配（反向）：term 比概念 label 长也不命中（如 term="上下文窗口详解" ≠ label="上下文窗口"）', () => {
+    const secs = [section('s1', 0, 1000, '任意标题', { terms: ['上下文窗口详解'] })];
+    expect(matchConcepts(secs, 0, conceptRoot())).toEqual([]);
+  });
+
+  it('精确匹配（反向）：章节标题含概念 label 但 terms 不含 → 不命中（标题不再参与）', () => {
     const secs = [section('s1', 0, 1000, '上下文窗口详解')];
-    expect(matchConcepts(secs, 0, conceptRoot())).toEqual(['上下文窗口']);
+    expect(matchConcepts(secs, 0, conceptRoot())).toEqual([]);
+  });
+
+  it('label 两侧空白不参与比较（trim 归一化）', () => {
+    const root: ConceptNode = {
+      ...conceptRoot(),
+      children: [
+        {
+          ...conceptRoot().children[0],
+          children: [
+            { id: 'cm_x', label: '  Token  ', kind: 'concept', importance: 3, anchors: [], children: [] },
+          ],
+        },
+      ],
+    };
+    const secs = [section('s1', 0, 1000, '开场', { terms: ['Token'] })];
+    expect(matchConcepts(secs, 0, root)).toEqual(['  Token  ']);
   });
 
   it('positionMs 早于首章或空 sections 返回空数组', () => {
     expect(matchConcepts([], 0, conceptRoot())).toEqual([]);
     const late = [section('s1', 5_000, 10_000, '晚开始')];
     expect(matchConcepts(late, 4_999, conceptRoot())).toEqual([]);
+  });
+});
+
+describe('importanceBadge（重要度文字徽标，替换圆点）', () => {
+  it('5 → 核心；4 → 重要', () => {
+    expect(importanceBadge(5)).toBe('核心');
+    expect(importanceBadge(4)).toBe('重要');
+  });
+
+  it('3 → 常用；2/1 → 了解（其他）', () => {
+    expect(importanceBadge(3)).toBe('常用');
+    expect(importanceBadge(2)).toBe('了解');
+    expect(importanceBadge(1)).toBe('了解');
+  });
+});
+
+describe('isTermIndexData（降级数据判定约定）', () => {
+  it('model="term-index" 或根 label="术语关联图" 判为降级', () => {
+    expect(isTermIndexData(mapData(conceptRoot(), 'term-index'))).toBe(true);
+    const termRoot: ConceptNode = { ...conceptRoot(), label: '术语关联图' };
+    expect(isTermIndexData(mapData(termRoot))).toBe(true);
+  });
+
+  it('模型生成的正常图不误判', () => {
+    expect(isTermIndexData(mapData(conceptRoot()))).toBe(false);
   });
 });
 
@@ -279,7 +382,7 @@ describe('MindmapTab 渲染冒烟（renderToString，仅无 effect 分支）', (
     expect(html).toContain('<button');
   });
 
-  it('无 generateConceptMap 接线且有 sections：降级渲染本地术语关联图（含 SVG）', () => {
+  it('无 generateConceptMap 接线且有 sections：降级渲染本地术语关联图（卡片流 + 降级横幅，无 SVG）', () => {
     const html = renderToString(
       createElement(MindmapTab, {
         sections,
@@ -287,12 +390,16 @@ describe('MindmapTab 渲染冒烟（renderToString，仅无 effect 分支）', (
         onRequestSeek: noop,
       }),
     );
-    expect(html).toContain('<svg');
-    // domain 默认折叠：只显示根与「核心术语」域 + 子节点数角标，概念收起
-    expect(html).toContain('术语关联图');
+    // 二次迭代：卡片流为纯 HTML，概念视图不含 SVG
+    expect(html).not.toContain('<svg');
+    // 降级横幅（未接线文案，无重试按钮）
+    expect(html).toContain('cm-degraded-banner');
+    expect(html).toContain(CONCEPT_FALLBACK_HINT);
+    expect(html).not.toContain(CONCEPT_RETRY_TEXT);
+    // 概念卡：域名 + 概念名 + 概念数徽标（卡片流默认展开显示概念）
     expect(html).toContain('核心术语');
-    expect(html).toContain('+3');
-    expect(html).not.toContain('>上下文窗口<');
+    expect(html).toContain('上下文窗口');
+    expect(html).toContain('3 概念');
   });
 
   it('有 generateConceptMap 且未就绪：显示模型配置引导', () => {
@@ -309,26 +416,88 @@ describe('MindmapTab 渲染冒烟（renderToString，仅无 effect 分支）', (
     expect(html).not.toContain('<svg');
   });
 
-  it('缓存命中（conceptMap 注入）：直接渲染概念图', () => {
+  it('缓存命中（conceptMap 注入）：渲染概念卡（域名 + 概念名 + 徽标），无降级横幅', () => {
     const html = renderToString(
       createElement(MindmapTab, {
         sections,
         positionMs: 0,
         onRequestSeek: noop,
-        conceptMap: {
-          videoId: 'bv1x_p1',
-          promptVersion: '0.1.0',
-          model: 'test-model',
-          root: conceptRoot(),
-          generatedAt: '2026-09-30T00:00:00.000Z',
-        },
+        conceptMap: mapData(conceptRoot()),
       }),
     );
-    expect(html).toContain('大模型入门');
+    // 概念卡渲染域名与概念名（卡片流默认全部可见）
     expect(html).toContain('基础概念');
-    // domain 默认折叠：概念节点收起，以 +N 角标提示
-    expect(html).toContain('+2');
-    expect(html).not.toContain('>上下文窗口<');
+    expect(html).toContain('上下文窗口');
+    expect(html).toContain('Token');
+    expect(html).toContain('2 概念');
+    // 正常图无降级横幅
+    expect(html).not.toContain('cm-degraded-banner');
+    expect(html).not.toContain(CONCEPT_DEGRADED_TEXT);
+    // 重要度文字徽标（替换圆点）：5 → 核心、4 → 重要
+    expect(html).toContain('核心');
+    expect(html).toContain('重要');
+    expect(html).not.toContain('<svg');
+  });
+
+  it('降级图（model=term-index 约定）：显示降级横幅 + 重试按钮（调 generateConceptMap）', () => {
+    const html = renderToString(
+      createElement(MindmapTab, {
+        sections,
+        positionMs: 0,
+        onRequestSeek: noop,
+        generateConceptMap: async () => {},
+        modelReady: true,
+        conceptMap: mapData(conceptRoot(), 'term-index'),
+      }),
+    );
+    expect(html).toContain('cm-degraded-banner');
+    expect(html).toContain(CONCEPT_DEGRADED_TEXT);
+    expect(html).toContain('cm-retry-btn');
+    expect(html).toContain(CONCEPT_RETRY_TEXT);
+  });
+
+  it('props.degraded=true（App 生成 catch 路径设置）：即使数据无约定标记也显示降级横幅', () => {
+    const html = renderToString(
+      createElement(MindmapTab, {
+        sections,
+        positionMs: 0,
+        onRequestSeek: noop,
+        generateConceptMap: async () => {},
+        modelReady: true,
+        conceptMap: mapData(conceptRoot()),
+        degraded: true,
+      }),
+    );
+    expect(html).toContain('cm-degraded-banner');
+    expect(html).toContain(CONCEPT_DEGRADED_TEXT);
+  });
+
+  it('details 折叠区默认收起：有"细节 ▸"切换且无 open 类（grid 0fr/1fr 过渡）', () => {
+    const html = renderToString(
+      createElement(MindmapTab, {
+        sections,
+        positionMs: 0,
+        onRequestSeek: noop,
+        conceptMap: mapData(conceptRoot()),
+      }),
+    );
+    expect(html).toContain(CONCEPT_DETAILS_TOGGLE_TEXT);
+    expect(html).toContain('cm-details-collapse');
+    expect(html).not.toContain('cm-details-collapse open');
+  });
+
+  it('时间 chips：概念锚点渲染 [mm:ss] 小按钮', () => {
+    const html = renderToString(
+      createElement(MindmapTab, {
+        sections,
+        positionMs: 0,
+        onRequestSeek: noop,
+        conceptMap: mapData(conceptRoot()),
+      }),
+    );
+    expect(html).toContain('cm-chip');
+    expect(html).toContain('[00:00]');
+    expect(html).toContain('[01:00]');
   });
 
   it('shortenLabel 复用（panel 与 pipeline 共用同一实现）', () => {

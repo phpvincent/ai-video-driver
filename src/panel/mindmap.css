@@ -1,4 +1,4 @@
-/* 导图 Tab（SPEC-04 范围变更）：概念知识图（自绘 SVG）+ 章节时间轴（markmap） */
+/* 导图 Tab（SPEC-04 二次迭代）：概念知识图（HTML 知识卡片流）+ 章节时间轴（markmap） */
 
 .mindmap-tab {
   display: flex;
@@ -38,7 +38,7 @@
   flex-direction: column;
 }
 
-/* ---------------- 概念图视图（浅色主题） ---------------- */
+/* ---------------- 概念图视图：HTML 知识卡片流（浅色主题） ---------------- */
 
 .cm-container {
   flex: 1;
@@ -49,41 +49,87 @@
   border-radius: 8px;
 }
 
-.cm-fallback-hint {
-  padding: 4px 10px;
+/* 降级横幅（黄底 + 重试按钮，替代静默降级） */
+.cm-degraded-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #fff7e0;
+  border-bottom: 1px solid #f5e3b3;
+}
+
+.cm-degraded-text {
+  flex: 1;
   font-size: 11px;
-  color: #8a919f;
-  background: #f7f8fa;
+  color: #8a5a00;
+}
+
+.cm-retry-btn {
+  flex: 0 0 auto;
+  padding: 2px 10px;
+  font-size: 11px;
+  color: #8a5a00;
+  background: #fff;
+  border: 1px solid #e5c26b;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.cm-retry-btn:hover {
+  background: #fdf3d6;
+}
+
+/* 概念域卡片 */
+.cm-card {
+  margin: 8px;
+  background: #fff;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.cm-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #f0f5ff;
+  border-bottom: 1px solid #e5e6eb;
+}
+
+.cm-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0e42d2;
+}
+
+/* 概念数徽标 */
+.cm-card-count {
+  flex: 0 0 auto;
+  padding: 1px 8px;
+  font-size: 11px;
+  color: #165dff;
+  background: #fff;
+  border: 1px solid #94bfff;
+  border-radius: 999px;
+}
+
+.cm-card-body {
+  padding: 2px 0;
+}
+
+/* 概念行块（淡入 + 高亮过渡） */
+.cm-concept {
+  padding: 6px 10px;
   border-bottom: 1px solid #f0f1f3;
-}
-
-.cm-svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-  min-height: 320px;
-}
-
-/* 连线：贝塞尔，按层级淡色 */
-.cm-link {
-  fill: none;
-  stroke: #c9cdd4;
-  stroke-width: 1.2;
-}
-
-.cm-link--concept {
-  stroke: #a9b8e8;
-}
-
-.cm-link--detail {
-  stroke: #d5d9e0;
-}
-
-/* 节点：位置变化走 CSS transition（展开/收起动画） */
-.cm-node {
-  transition: transform 0.25s ease, opacity 0.2s ease;
+  transition: background-color 0.25s ease, box-shadow 0.25s ease;
   animation: cm-fade-in 0.25s ease;
-  cursor: default;
+}
+
+.cm-concept:last-child {
+  border-bottom: none;
 }
 
 @keyframes cm-fade-in {
@@ -95,92 +141,147 @@
   }
 }
 
-.cm-node--domain,
-.cm-node--concept {
+.cm-concept-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 概念名（粗体，点击跳播第一个锚点） */
+.cm-concept-label {
+  flex: 1 1 auto;
+  padding: 0;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f2329;
+  background: none;
+  border: none;
   cursor: pointer;
 }
 
-/* 节点矩形：三级尺寸与色深（domain 实底 / concept 浅底 / detail 灰底） */
-.cm-node--domain .cm-rect {
-  fill: #165dff;
-  stroke: #0e42d2;
-}
-
-.cm-node--domain .cm-text {
-  fill: #fff;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.cm-node--domain .cm-badge {
-  fill: rgba(255, 255, 255, 0.85);
-  font-size: 11px;
-}
-
-.cm-node--concept .cm-rect {
-  fill: #f0f5ff;
-  stroke: #94bfff;
-}
-
-/* 概念视觉权重 ∝ importance（描边与字重分级） */
-.cm-node--concept[data-importance='4'] .cm-rect,
-.cm-node--concept[data-importance='5'] .cm-rect {
-  fill: #e0eaff;
-  stroke: #165dff;
-  stroke-width: 1.4;
-}
-
-.cm-node--concept .cm-text {
-  fill: #1f2329;
-  font-size: 11px;
-}
-
-.cm-node--concept[data-importance='4'] .cm-text,
-.cm-node--concept[data-importance='5'] .cm-text {
-  font-weight: 600;
-  fill: #0e42d2;
-}
-
-.cm-node--detail .cm-rect {
-  fill: #f7f8fa;
-  stroke: #e5e6eb;
-}
-
-.cm-node--detail .cm-text {
-  fill: #646a73;
-  font-size: 10px;
-}
-
-.cm-node--detail {
+.cm-concept-label:disabled {
   cursor: default;
+  color: #646a73;
 }
 
-/* 概念跟随：当前章节命中的概念节点高亮（醒目光晕 + 主题色加粗） */
-.cm-node.cm-active {
-  filter: drop-shadow(0 0 3px rgba(22, 93, 255, 0.65));
+.cm-concept-label:not(:disabled):hover {
+  color: #165dff;
 }
 
-.cm-node.cm-active .cm-rect {
-  fill: #165dff;
-  stroke: #0e42d2;
+/* 重要度文字徽标（data-importance 分级着色，替换无语义圆点） */
+.cm-importance-badge {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  font-size: 10px;
+  color: #646a73;
+  background: #f2f3f5;
+  border-radius: 4px;
 }
 
-.cm-node.cm-active .cm-text {
-  fill: #fff !important;
-  font-weight: 600 !important;
+.cm-importance-badge[data-importance='3'] {
+  color: #0f8a5f;
+  background: #e8f7f0;
 }
 
-/* 锚点小圆点（可点跳播，红线 2：锚 = 章节 startMs） */
-.cm-anchor {
-  fill: #94bfff;
+.cm-importance-badge[data-importance='4'] {
+  color: #0e42d2;
+  background: #e0eaff;
+}
+
+.cm-importance-badge[data-importance='5'] {
+  color: #fff;
+  background: #165dff;
+}
+
+/* 时间 chips（[mm:ss] 小按钮，点击跳播） */
+.cm-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.cm-chip {
+  padding: 1px 6px;
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #165dff;
+  background: #f0f5ff;
+  border: 1px solid #d5e3ff;
+  border-radius: 4px;
   cursor: pointer;
 }
 
-.cm-anchor:hover {
-  fill: #165dff;
+.cm-chip:hover {
+  color: #fff;
+  background: #165dff;
+  border-color: #165dff;
 }
 
-/* 生成入口 / 设置引导 / 降级说明 */
+/* 细节折叠切换（"细节 ▸"） */
+.cm-details-toggle {
+  margin-top: 4px;
+  padding: 0;
+  font-size: 11px;
+  color: #646a73;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.cm-details-toggle:hover {
+  color: #165dff;
+}
+
+/* 细节折叠区：grid 0fr/1fr 过渡（参考 outline-regen-collapse 模式，
+   常驻渲染避免条件渲染硬切） */
+.cm-details-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.28s ease;
+}
+
+.cm-details-collapse.open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.cm-details-collapse > .cm-details {
+  overflow: hidden;
+  min-height: 0;
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.cm-details-collapse > .cm-details li {
+  font-size: 11px;
+  line-height: 1.7;
+  color: #646a73;
+}
+
+/* 概念跟随：当前章节精确命中的概念行高亮（过渡动画，不命中不亮） */
+.cm-concept.concept-active {
+  background: #f0f5ff;
+  box-shadow: inset 3px 0 0 #165dff;
+}
+
+.cm-concept.concept-active .cm-concept-label {
+  color: #0e42d2;
+}
+
+/* 动效弱化偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .cm-concept,
+  .cm-details-collapse {
+    transition: none;
+    animation: none;
+  }
+}
+
+/* 生成入口 / 设置引导 */
 .cm-gate {
   flex: 1;
   display: flex;
