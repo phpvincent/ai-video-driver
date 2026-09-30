@@ -696,3 +696,78 @@ body {
 .btn.preset-active::after {
   content: ' ✓';
 }
+
+/* ===== 模块模型选择器（ModelPicker：三个 Tab 头部的紧凑下拉） ===== */
+.model-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  color: #4e5969;
+}
+.model-picker-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.model-picker-select {
+  max-width: 140px;
+  padding: 2px 4px;
+  font-size: 12px;
+  color: #1f2329;
+  background: #fff;
+  border: 1px solid #e5e6eb;
+  border-radius: 4px;
+  outline: none;
+}
+.model-picker-select:focus {
+  border-color: #63c2fd;
+}
+.model-picker-warn {
+  color: #d93026;
+  font-size: 11px;
+  white-space: nowrap;
+}
+/* 导图 Tab：选择器靠右对齐（视图切换条同行） */
+.mm-view-switch .model-picker {
+  margin-left: auto;
+}
+
+/* ===== 设置页：模型方案列表 ===== */
+.model-profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 0 !important;
+  list-style: none !important;
+}
+.model-profile-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.model-profile-name {
+  font-weight: 600;
+  color: #1f2329;
+  white-space: nowrap;
+}
+.model-profile-model {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #86909c;
+}
+.model-profile-delete {
+  flex: 0 0 auto;
+  padding: 2px 10px;
+  font-size: 12px;
+  color: #d93026;
+  border-color: #f2c1bd;
+}
+.model-profile-delete:hover {
+  background: #fef1f0;
+}

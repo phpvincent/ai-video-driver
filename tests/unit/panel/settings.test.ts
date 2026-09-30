@@ -10,9 +10,12 @@ import {
   describeModelStrategy,
   hostOf,
   isModelConfigured,
+  listProfiles,
   mergeSettings,
   migrateLegacyVisionModel,
+  migrateVisionToModel,
   presetVisionDefault,
+  resolveModuleModel,
   validateModelForm,
   visionActiveFor,
   normalizeModelConfig,
@@ -223,6 +226,143 @@ describe('visionActiveFor', () => {
     expect(visionActiveFor({ settings, module: 'outline' })).toBe(true);
     expect(visionActiveFor({ settings, module: 'mindmap' })).toBe(true);
   });
+
+  // ---- 按模块选模型的新语义：能力随各模块所选方案走 ----
+
+  it('方案声明支持图像输入且问答选它 → 问答 true / 未选的大纲 false（按模块差异化）', () => {
+    const profile = { ...textConfig(), name: 'Qwen 视觉', supportsVision: true };
+    const settings = baseSettings({
+      modelSupportsVision: false,
+      modelProfiles: [profile],
+      moduleModel: { qa: 'Qwen 视觉' },
+    });
+    expect(visionActiveFor({ settings, module: 'qa' })).toBe(true);
+    expect(visionActiveFor({ settings, module: 'outline' })).toBe(false);
+    expect(visionActiveFor({ settings, module: 'mindmap' })).toBe(false);
+  });
+
+  it('默认模型不支持但问答选了支持的方案 → 问答 true（关键用例：按模块差异化）', () => {
+    const profile = {
+      ...textConfig(),
+      name: '视觉方案',
+      baseUrl: MODEL_PRESETS.qwen.baseUrl,
+      model: MODEL_PRESETS.qwen.model,
+      supportsVision: true,
+    };
+    const settings = baseSettings({
+      modelSupportsVision: false,
+      modelProfiles: [profile],
+      moduleModel: { qa: '视觉方案' },
+    });
+    expect(visionActiveFor({ settings, module: 'qa' })).toBe(true);
+  });
+
+  it('旧字段兼容：model.supportsVision 缺失时回退 modelSupportsVision', () => {
+    // baseSettings 未在 model 上声明 supportsVision，仅旧字段 modelSupportsVision: true
+    const settings = baseSettings({ visionModules: undefined });
+    expect(settings.model?.supportsVision).toBeUndefined();
+    expect(visionActiveFor({ settings, module: 'qa' })).toBe(true);
+  });
+
+  it('模块选中无 Key 的方案 → 回退默认模型的能力（不生效）', () => {
+    const keyless = { ...textConfig(), name: '无 Key 方案', apiKey: '' };
+    const settings = baseSettings({
+      modelSupportsVision: true,
+      modelProfiles: [keyless],
+      moduleModel: { qa: '无 Key 方案' },
+    });
+    // 方案被过滤 → 问答用默认模型（支持）→ true；同时验证解析回退
+    expect(resolveModuleModel(settings, 'qa')?.model).toBe(MODEL_PRESETS.deepseek.model);
+    expect(visionActiveFor({ settings, module: 'qa' })).toBe(true);
+  });
+});
+
+describe('resolveModuleModel', () => {
+  it('无 moduleModel → 默认模型', () => {
+    const settings = baseSettings();
+    expect(resolveModuleModel(settings, 'outline')).toBe(settings.model);
+    expect(resolveModuleModel(settings, 'mindmap')).toBe(settings.model);
+    expect(resolveModuleModel(settings, 'qa')).toBe(settings.model);
+  });
+
+  it('命中方案名 → 返回该方案', () => {
+    const profile = {
+      ...textConfig(),
+      name: 'Qwen 视觉',
+      baseUrl: MODEL_PRESETS.qwen.baseUrl,
+      model: MODEL_PRESETS.qwen.model,
+    };
+    const settings = baseSettings({ modelProfiles: [profile], moduleModel: { outline: 'Qwen 视觉' } });
+    expect(resolveModuleModel(settings, 'outline')?.model).toBe(MODEL_PRESETS.qwen.model);
+    // 未选方案的模块仍走默认
+    expect(resolveModuleModel(settings, 'qa')?.model).toBe(MODEL_PRESETS.deepseek.model);
+  });
+
+  it('引用不存在的方案名 → 回退默认模型', () => {
+    const settings = baseSettings({ moduleModel: { qa: '不存在的方案' } });
+    expect(resolveModuleModel(settings, 'qa')).toBe(settings.model);
+  });
+
+  it('默认模型缺失 → null', () => {
+    const settings = baseSettings({ model: undefined, moduleModel: { qa: '不存在' } });
+    expect(resolveModuleModel(settings, 'qa')).toBeNull();
+    expect(resolveModuleModel({}, 'outline')).toBeNull();
+  });
+});
+
+describe('listProfiles', () => {
+  it('过滤无 name / 无 apiKey 的方案', () => {
+    const settings = baseSettings({
+      modelProfiles: [
+        { ...textConfig(), name: 'ok' },
+        { ...textConfig(), apiKey: '' , name: '无 Key' },
+        { ...textConfig() },
+      ],
+    });
+    const names = listProfiles(settings).map((p) => p.name);
+    expect(names).toEqual(['ok']);
+  });
+
+  it('name 唯一：同名时先出现者优先', () => {
+    const first = { ...textConfig(), name: '同名', maxTokens: 111 };
+    const second = { ...textConfig(), name: '同名', maxTokens: 222 };
+    const settings = baseSettings({ modelProfiles: [first, second] });
+    const profiles = listProfiles(settings);
+    expect(profiles).toHaveLength(1);
+    expect(profiles[0].maxTokens).toBe(111);
+  });
+});
+
+describe('migrateVisionToModel', () => {
+  it('旧 modelSupportsVision=true 且 model.supportsVision 缺失 → 写入 model.supportsVision', () => {
+    const settings = baseSettings({ modelSupportsVision: true });
+    expect(settings.model?.supportsVision).toBeUndefined();
+    const next = migrateVisionToModel(settings);
+    expect(next.model?.supportsVision).toBe(true);
+  });
+
+  it('已有 supportsVision 不覆盖（false 也保留）', () => {
+    const settings = baseSettings({
+      modelSupportsVision: true,
+      model: { ...textConfig(), supportsVision: false },
+    });
+    const next = migrateVisionToModel(settings);
+    expect(next.model?.supportsVision).toBe(false);
+  });
+
+  it('幂等：跑两次结果相同', () => {
+    const settings = baseSettings({ modelSupportsVision: true });
+    const once = migrateVisionToModel(settings);
+    const twice = migrateVisionToModel(once);
+    expect(twice).toEqual(once);
+  });
+
+  it('旧字段非 true / model 缺失 → 原样返回', () => {
+    const noLegacy = baseSettings({ modelSupportsVision: false });
+    expect(migrateVisionToModel(noLegacy)).toBe(noLegacy);
+    const noModel: Settings = { modelSupportsVision: true };
+    expect(migrateVisionToModel(noModel)).toBe(noModel);
+  });
 });
 
 describe('migrateLegacyVisionModel', () => {
@@ -268,13 +408,17 @@ describe('hostOf', () => {
 describe('describeModelStrategy', () => {
   const joined = (settings: Settings): string => describeModelStrategy(settings).join('\n');
 
-  it('四行：当前模型 / 多模态 / 抽帧 / 说明', () => {
+  // 语义变化（按模块选模型）：摘要新增三行模块模型（大纲/导图/问答），共七行
+  it('七行：当前模型 / 大纲 / 导图 / 问答 / 多模态 / 抽帧 / 说明', () => {
     const lines = describeModelStrategy(baseSettings());
-    expect(lines).toHaveLength(4);
+    expect(lines).toHaveLength(7);
     expect(lines[0].startsWith('当前模型：')).toBe(true);
-    expect(lines[1].startsWith('多模态：')).toBe(true);
-    expect(lines[2].startsWith('抽帧：')).toBe(true);
-    expect(lines[3].startsWith('说明：')).toBe(true);
+    expect(lines[1].startsWith('大纲：')).toBe(true);
+    expect(lines[2].startsWith('导图：')).toBe(true);
+    expect(lines[3].startsWith('问答：')).toBe(true);
+    expect(lines[4].startsWith('多模态：')).toBe(true);
+    expect(lines[5].startsWith('抽帧：')).toBe(true);
+    expect(lines[6].startsWith('说明：')).toBe(true);
   });
 
   it('单模型已配置：显示主机名 / 模型', () => {
@@ -288,14 +432,18 @@ describe('describeModelStrategy', () => {
     expect(joined({})).toContain('当前模型：未配置（功能不可用）');
   });
 
-  it('声明支持图像输入 → 多模态：支持', () => {
-    expect(joined(baseSettings({ modelSupportsVision: true }))).toContain('多模态：支持');
+  // 语义变化（能力随模块所选模型走）：多模态行按模块打标
+  it('声明支持图像输入 → 多模态按模块打标（三模块均 ✓）', () => {
+    expect(joined(baseSettings({ modelSupportsVision: true }))).toContain(
+      '多模态：大纲✓ 导图✓ 问答✓',
+    );
   });
 
   it('未声明支持图像输入 → 多模态：不支持（抽帧不可用）', () => {
     const text = joined(baseSettings({ modelSupportsVision: false }));
     expect(text).toContain('多模态：不支持（抽帧不可用）');
-    expect(text).toContain('抽帧：不可用（当前模型未声明支持图像输入）');
+    // 语义变化（按模块选模型）：不可用文案改为"各模块所选模型均未声明…"
+    expect(text).toContain('抽帧：不可用（各模块所选模型均未声明支持图像输入）');
   });
 
   it('抽帧开启且三模块全开 → 大纲✓ 导图✓ 问答✓', () => {
@@ -313,7 +461,7 @@ describe('describeModelStrategy', () => {
   });
 
   it('说明行：图片与文本一起发给同一个模型', () => {
-    const line = describeModelStrategy(baseSettings())[3];
+    const line = describeModelStrategy(baseSettings())[6];
     expect(line).toContain('图片与文本一起发给同一个模型');
     expect(line).toContain('未开启抽帧时为纯文本问答');
   });
@@ -322,6 +470,30 @@ describe('describeModelStrategy', () => {
     const text = joined(baseSettings());
     expect(text).not.toContain(MODEL_PRESETS.deepseek.baseUrl);
     expect(text).not.toContain('https://');
+  });
+
+  it('三行模块模型显示各模块实际会用的模型（未另选 → 默认模型）', () => {
+    const lines = describeModelStrategy(baseSettings());
+    const host = new URL(MODEL_PRESETS.deepseek.baseUrl).hostname;
+    expect(lines[1]).toBe(`大纲：${host} / ${MODEL_PRESETS.deepseek.model}`);
+    expect(lines[2]).toBe(`导图：${host} / ${MODEL_PRESETS.deepseek.model}`);
+    expect(lines[3]).toBe(`问答：${host} / ${MODEL_PRESETS.deepseek.model}`);
+  });
+
+  it('模块另选方案 → 对应行显示该方案的主机名 / 模型', () => {
+    const profile = {
+      ...textConfig(),
+      name: 'Qwen 视觉',
+      baseUrl: MODEL_PRESETS.qwen.baseUrl,
+      model: MODEL_PRESETS.qwen.model,
+    };
+    const lines = describeModelStrategy(
+      baseSettings({ modelProfiles: [profile], moduleModel: { qa: 'Qwen 视觉' } }),
+    );
+    const qwenHost = new URL(MODEL_PRESETS.qwen.baseUrl).hostname;
+    const deepseekHost = new URL(MODEL_PRESETS.deepseek.baseUrl).hostname;
+    expect(lines[1]).toBe(`大纲：${deepseekHost} / ${MODEL_PRESETS.deepseek.model}`);
+    expect(lines[3]).toBe(`问答：${qwenHost} / ${MODEL_PRESETS.qwen.model}`);
   });
 });
 

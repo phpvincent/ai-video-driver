@@ -25,7 +25,10 @@ import {
   activePreset,
   applyPreset,
   describeModelStrategy,
+  hostOf,
+  listProfiles,
   migrateLegacyVisionModel,
+  migrateVisionToModel,
   mergeSettings,
   normalizeModelConfig,
   presetShortLabel,
@@ -159,6 +162,11 @@ export function SettingsPage({
   const [webSearch, setWebSearch] = useState<WebSearchSettings>(INITIAL_WEB_SEARCH_FORM);
   const [webSearchFeedback, setWebSearchFeedback] = useState<Feedback>(null);
   const [webSearchSaving, setWebSearchSaving] = useState(false);
+  /** 模型方案区：方案名输入 / 已存方案列表 / 区内提示 */
+  const [profileName, setProfileName] = useState('');
+  const [profiles, setProfiles] = useState<ModelConfig[]>([]);
+  const [profileFeedback, setProfileFeedback] = useState<Feedback>(null);
+  const [profileSaving, setProfileSaving] = useState(false);
   /** 最近一次读到的整份 settings：所有分区的合并写基线（避免分区互相覆盖） */
   const savedRef = useRef<Settings>({});
 
@@ -173,7 +181,8 @@ export function SettingsPage({
           webSearch?: Partial<WebSearchSettings>;
         };
         // 旧设置迁移：无 model 但有 visionModel → 提升为 model（避免老用户配置丢失）
-        const stored = migrateLegacyVisionModel(raw);
+        // + modelSupportsVision → model.supportsVision（能力随 ModelConfig 走，各执行一次幂等迁移）
+        const stored = migrateVisionToModel(migrateLegacyVisionModel(raw));
         savedRef.current = stored;
         const merged = { ...DEFAULT_MODEL, ...(stored.model ?? {}) } as Partial<ModelConfig>;
         const obs = (stored.obsidian ?? {}) as Partial<ObsidianConfig>;
@@ -199,8 +208,11 @@ export function SettingsPage({
           temperatureQa: String(merged.temperature?.qa ?? DEFAULT_MODEL.temperature.qa),
           maxTokens: String(merged.maxTokens ?? DEFAULT_MODEL.maxTokens),
         });
-        // 多模态能力以用户显式声明为准（未声明视为不支持 → 抽帧不可用）
-        setSupportsVision(stored.modelSupportsVision === true);
+        // 多模态能力随 model.supportsVision（载入时已迁移旧 modelSupportsVision；
+        // model 缺失时读旧字段做展示兜底）
+        setSupportsVision(stored.model?.supportsVision ?? stored.modelSupportsVision === true);
+        // 已存模型方案（过滤无 name / 无 Key 后）
+        setProfiles(listProfiles(stored));
         // 禁用思考默认开启（未配置视为禁用）
         setDisableThinking(stored.disableThinking !== false);
         // 全局抽帧开关默认关闭；模块开关默认全开（未配置视为开启）
@@ -261,7 +273,7 @@ export function SettingsPage({
     setSaveFeedback(null);
   };
 
-  /** 保存模型配置：连同「是否支持图像输入」一起合并写（单次合并，不覆盖其他分区） */
+  /** 保存模型配置：连同「是否支持图像输入」（写入 model.supportsVision）一起合并写 */
   const handleSave = () => {
     // 归一化：去掉粘贴带来的首尾空白（Key 前后空格会直接导致 401）
     const model = normalizeModelConfig(formToModelConfig(form, outlineTokenBudget));
@@ -271,11 +283,81 @@ export function SettingsPage({
       setSaveFeedback({ kind: 'error', text: error });
       return;
     }
-    savePatch({ model, modelSupportsVision: supportsVision, disableThinking })
+    savePatch({ model: { ...model, supportsVision }, disableThinking })
       .then((ok) => {
         setSaveFeedback(
           ok ? { kind: 'ok', text: '已保存' } : { kind: 'error', text: '保存失败：background 未确认' },
         );
+      });
+  };
+
+  /**
+   * 保存当前表单为命名方案（modelProfiles，同名覆盖）：
+   * 方案携带表单全部字段（含「支持图像输入」勾选），供各模块下拉选择。
+   */
+  const handleSaveProfile = () => {
+    const name = profileName.trim();
+    if (!name) {
+      setProfileFeedback({ kind: 'error', text: '方案名不能为空' });
+      return;
+    }
+    const model = normalizeModelConfig(formToModelConfig(form, outlineTokenBudget));
+    const error = firstError(validateModelForm(model));
+    if (error) {
+      setProfileFeedback({ kind: 'error', text: `当前表单无效：${error}` });
+      return;
+    }
+    const profile: ModelConfig = { ...model, name, supportsVision };
+    const next = [...(savedRef.current.modelProfiles ?? []).filter((p) => p.name !== name), profile];
+    setProfileSaving(true);
+    setProfileFeedback(null);
+    savePatch({ modelProfiles: next })
+      .then((ok) => {
+        setProfileSaving(false);
+        if (ok) {
+          setProfiles(listProfiles(savedRef.current));
+          setProfileName('');
+          setProfileFeedback({ kind: 'ok', text: `已保存方案「${name}」` });
+        } else {
+          setProfileFeedback({ kind: 'error', text: '保存失败：background 未确认' });
+        }
+      })
+      .catch(() => {
+        setProfileSaving(false);
+        setProfileFeedback({ kind: 'error', text: '保存失败：background 未确认' });
+      });
+  };
+
+  /**
+   * 删除方案：若某模块正引用它（moduleModel）→ 对应项一并清除（回退默认模型）。
+   */
+  const handleDeleteProfile = (name: string) => {
+    const modelProfiles = (savedRef.current.modelProfiles ?? []).filter((p) => p.name !== name);
+    const moduleModel = { ...(savedRef.current.moduleModel ?? {}) };
+    let referenced = false;
+    for (const key of ['outline', 'mindmap', 'qa'] as const) {
+      if (moduleModel[key] === name) {
+        delete moduleModel[key];
+        referenced = true;
+      }
+    }
+    const patch: Partial<Settings> = referenced
+      ? { modelProfiles, moduleModel }
+      : { modelProfiles };
+    savePatch(patch)
+      .then((ok) => {
+        if (ok) {
+          setProfiles(listProfiles(savedRef.current));
+          setProfileFeedback({
+            kind: 'ok',
+            text: referenced ? `已删除方案「${name}」（引用它的模块已回退默认模型）` : `已删除方案「${name}」`,
+          });
+        } else {
+          setProfileFeedback({ kind: 'error', text: '删除失败：background 未确认' });
+        }
+      })
+      .catch(() => {
+        setProfileFeedback({ kind: 'error', text: '删除失败：background 未确认' });
       });
   };
 
@@ -431,10 +513,11 @@ export function SettingsPage({
   const presetKeys = Object.keys(MODEL_PRESETS) as PresetKey[];
   /** 抽帧区是否可用：取决于「支持图像输入」勾选 */
   const visionSwitchUsable = supportsVision;
-  /** 当前策略摘要：由表单当前值合成 settings 后交给纯函数，随输入实时更新 */
+  /** 当前策略摘要：由表单当前值 + 已存方案与各模块选择合成 settings 后交给纯函数 */
   const strategyLines = describeModelStrategy({
-    model: formToModelConfig(form, outlineTokenBudget),
-    modelSupportsVision: supportsVision,
+    model: { ...formToModelConfig(form, outlineTokenBudget), supportsVision },
+    modelProfiles: savedRef.current.modelProfiles,
+    moduleModel: savedRef.current.moduleModel,
     visionEnabled,
     visionModules,
   });
@@ -566,6 +649,63 @@ export function SettingsPage({
         {testFeedback && (
           <p className={testFeedback.kind === 'ok' ? 'settings-hint' : 'settings-hint settings-error'}>
             {testFeedback.text}
+          </p>
+        )}
+      </section>
+
+      {/* ①b 模型方案：把当前表单另存为命名方案，供各模块（大纲/导图/问答）下拉选择 */}
+      <section className="settings-section">
+        <h4>模型方案</h4>
+        <p className="settings-hint">
+          把上方当前表单保存为命名方案（如「Qwen 视觉」「便宜文本」），再到大纲 / 导图 / 问答各 Tab
+          顶部的下拉框为本模块选择方案；各模块不选时使用默认模型
+        </p>
+        <div className="field-row">
+          <label className="field">
+            <span>方案名</span>
+            <input
+              type="text"
+              placeholder="如：Qwen 视觉"
+              value={profileName}
+              onChange={(e) => {
+                setProfileName(e.target.value);
+                setProfileFeedback(null);
+              }}
+            />
+          </label>
+          <button
+            type="button"
+            className="btn"
+            onClick={handleSaveProfile}
+            disabled={profileSaving}
+          >
+            {profileSaving ? '保存中…' : '保存当前表单为方案'}
+          </button>
+        </div>
+        {profiles.length > 0 && (
+          <ul className="settings-hint model-profile-list">
+            {profiles.map((p) => (
+              <li key={`model-profile-${p.name}`} className="model-profile-row">
+                <span className="model-profile-name">{p.name}</span>
+                <span className="model-profile-model">{`${hostOf(p.baseUrl)} / ${p.model}`}</span>
+                <button
+                  type="button"
+                  className="btn model-profile-delete"
+                  onClick={() => handleDeleteProfile(p.name ?? '')}
+                >
+                  删除
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {profileFeedback && (
+          <p
+            className={
+              profileFeedback.kind === 'ok' ? 'settings-hint' : 'settings-hint settings-error'
+            }
+          >
+            {profileFeedback.text}
           </p>
         )}
       </section>

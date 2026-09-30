@@ -19,6 +19,7 @@ import type { WebSnippet } from '../core/knowledge/webSearch';
 import type { SegmentAnswerPayload, TermPayload } from '../core/pipeline/explain';
 import { nearestCueStartMs } from '../core/pipeline/snap';
 import type { Cue, KnowledgeHit, Persona, QaRecord, Section } from '../types';
+import { ModelPicker } from './ModelPicker';
 import './chat.css';
 
 /** 划词/提问请求（父 agent 接线 loader 时组装 compiler + pipeline） */
@@ -740,6 +741,9 @@ export function ChatTab(props: ChatTabProps) {
           )}
         </div>
       )}
+
+      {/* 模块模型选择（问答模块；persona 随问答模块解析） */}
+      <ModelPicker module="qa" />
 
       <div className="chat-input-bar">
         <textarea

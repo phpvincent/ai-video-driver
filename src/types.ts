@@ -154,6 +154,8 @@ export interface OutlineRecord {
 }
 
 export interface ModelConfig {
+  /** 命名方案名（默认模型无 name；modelProfiles 中的方案必有） */
+  name?: string;
   baseUrl: string;
   apiKey: string;
   model: string;
@@ -161,6 +163,8 @@ export interface ModelConfig {
   maxTokens: number;
   /** 单视频大纲 token 预算上限（熔断） */
   outlineTokenBudget: number;
+  /** 该模型是否支持图像输入（多模态）。未声明视为不支持；能力随方案走 */
+  supportsVision?: boolean;
 }
 
 export interface ObsidianConfig {
@@ -242,12 +246,16 @@ export interface KnowledgeHit {
 
 /** 面板设置（GET_SETTINGS / SET_SETTINGS 的形状） */
 export interface Settings {
-  /** 统一模型（大纲、概念图、术语与区间问答；支持图像输入时一并接收抽帧画面） */
+  /** 默认模型（大纲、概念图、术语与区间问答的兜底；各模块可通过 moduleModel 另选方案） */
   model?: ModelConfig;
   /** @deprecated 不再区分视觉模型：统一使用 model；保留仅为兼容旧设置数据 */
   visionModel?: ModelConfig;
-  /** 用户声明：当前模型是否支持图像输入（多模态）。未声明视为不支持 */
+  /** @deprecated 多模态能力随 ModelConfig.supportsVision 走；保留仅为兼容旧设置数据（migrateVisionToModel 迁移） */
   modelSupportsVision?: boolean;
+  /** 命名模型方案（每项必有 name 与 apiKey）：设置页把当前表单另存为方案，供各模块选择 */
+  modelProfiles?: ModelConfig[];
+  /** 各模块选择的方案名（缺省 = 默认模型）：outline / mindmap / qa */
+  moduleModel?: { outline?: string; mindmap?: string; qa?: string };
   /** 禁用模型思考过程（默认开启禁用）：结构化任务更快更省，避免思考耗尽输出 token。设为 false 才启用思考 */
   disableThinking?: boolean;
   /** 全局抽帧开关（默认 false，避免不必要的成本与延迟） */

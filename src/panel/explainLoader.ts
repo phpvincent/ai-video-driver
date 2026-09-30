@@ -4,7 +4,7 @@
  * ChatTab 的 explain props 由本模块实现。
  */
 import { findSectionAt } from '../core/context/compiler';
-import { visionActiveFor } from './settings/modelForm';
+import { resolveModuleModel, visionActiveFor } from './settings/modelForm';
 import { VISION } from '../config';
 import { chatCompletion } from '../core/harness/modelClient';
 import {
@@ -26,7 +26,7 @@ import {
   PROMPT_VERSIONS,
 } from '../prompts';
 import { createSubtitleDb, getOutline, getSubtitle, saveQaRecord } from '../storage/db';
-import type { Cue, KnowledgeHit, ModelConfig, QaRecord, Section } from '../types';
+import type { Cue, KnowledgeHit, QaRecord, Section, Settings } from '../types';
 import type { ExplainRequest, ExplainResponse } from './ChatTab';
 import { getObsidianConfig, readIndex } from './obsidianLoader';
 import { personaInstruction } from '../core/pipeline/persona';
@@ -145,8 +145,9 @@ async function loadFrames(args: {
 }
 
 export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
-  const settings = await fetchSettings();
-  const model = (settings.model as ModelConfig | undefined) ?? null;
+  const settings = (await fetchSettings()) as unknown as Settings;
+  // 问答模块模型：moduleModel 命中方案 → 否则默认；方案缺 Key 回退默认
+  const model = resolveModuleModel(settings, 'qa');
   if (!model?.apiKey) throw new Error('模型未配置：请先在设置页配置模型');
   /** 问答时检索个人知识库（默认开启；未存过该项也视为开启） */
   const knowledgeSearch = settings.knowledgeSearch !== false;

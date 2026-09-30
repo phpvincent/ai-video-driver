@@ -67,9 +67,63 @@ export function validateModelForm(form: ModelConfig): ModelFormErrors {
   return errors;
 }
 
-/** 用户声明当前模型支持图像输入 → 抽帧开关才可用（未声明视为不支持） */
+/** 用户声明当前（默认）模型支持图像输入 → 抽帧开关才可用（未声明视为不支持） */
 export function canEnableVision(settings: Settings): boolean {
+  return modelSupportsVisionOf(settings.model ?? null, settings);
+}
+
+/**
+ * 模型的图像能力判定：model.supportsVision 优先（能力随方案走），
+ * 缺失时回退旧字段 settings.modelSupportsVision（旧数据兼容）。
+ */
+function modelSupportsVisionOf(model: ModelConfig | null, settings: Settings): boolean {
+  if (model) return model.supportsVision ?? settings.modelSupportsVision === true;
   return settings.modelSupportsVision === true;
+}
+
+/**
+ * 方案列表（纯函数）：过滤无 name / 无 apiKey 的项，并保证 name 唯一
+ * （同名时先出现者优先）。供设置页方案区与各模块下拉共用。
+ */
+export function listProfiles(settings: Settings): ModelConfig[] {
+  const out: ModelConfig[] = [];
+  const seen = new Set<string>();
+  for (const p of settings.modelProfiles ?? []) {
+    const name = p?.name?.trim();
+    if (!name || !p.apiKey?.trim()) continue;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    out.push({ ...p, name });
+  }
+  return out;
+}
+
+/**
+ * 按模块解析模型（纯函数，供 loader 与 visionActiveFor 共用）：
+ * moduleModel 命中的方案（须有 Key，缺失/不完整回退默认）→ 否则默认 settings.model。
+ * 默认模型也未配置时返回 null。
+ */
+export function resolveModuleModel(
+  settings: Settings,
+  module: VisionModule,
+): ModelConfig | null {
+  const wanted = settings.moduleModel?.[module];
+  if (wanted) {
+    const profile = listProfiles(settings).find((p) => p.name === wanted);
+    if (profile) return profile;
+  }
+  return settings.model ?? null;
+}
+
+/**
+ * 旧数据迁移（幂等）：settings.modelSupportsVision → settings.model.supportsVision。
+ * 仅当旧字段为 true 且 model.supportsVision 缺失时写入；已有值不覆盖。
+ */
+export function migrateVisionToModel(settings: Settings): Settings {
+  if (settings.modelSupportsVision !== true) return settings;
+  const model = settings.model;
+  if (!model || model.supportsVision !== undefined) return settings;
+  return { ...settings, model: { ...model, supportsVision: true } };
 }
 
 /**
@@ -82,8 +136,8 @@ export function presetVisionDefault(preset: PresetKey): boolean {
 }
 
 /**
- * 抽帧可用判断：全局开关 + 该模块开关（未配置视为开启）+ 当前模型已声明支持图像输入。
- * 不再区分视觉模型：图片与文本一起发给同一个 model。
+ * 抽帧可用判断：全局开关 + 该模块开关（未配置视为开启）+ 该模块实际使用模型的图像能力。
+ * 模型按 resolveModuleModel 解析（模块可另选方案，能力随方案走）；未配置模型即不支持。
  * 任一条件不满足即为 false（调用方据此跳过抽帧，不影响纯文本功能）。
  */
 export function visionActiveFor({
@@ -94,7 +148,8 @@ export function visionActiveFor({
   module: VisionModule;
 }): boolean {
   if (settings.visionEnabled !== true) return false;
-  if (!canEnableVision(settings)) return false;
+  const model = resolveModuleModel(settings, module);
+  if (!modelSupportsVisionOf(model, settings)) return false;
   return settings.visionModules?.[module] !== false;
 }
 
@@ -180,27 +235,49 @@ export function hostOf(baseUrl?: string): string {
 }
 
 /**
- * 「当前策略」摘要（设置页展示用纯函数，单模型口径）：
- * 当前模型 / 多模态能力 / 抽帧状态（含各模块生效情况）/ 说明，每行一条。
+ * 「当前策略」摘要（设置页展示用纯函数，按模块选模型口径）：
+ * 当前（默认）模型 / 三行模块模型（各模块实际会用到的模型）/ 多模态能力（按模块）/
+ * 抽帧状态（含各模块生效情况）/ 说明，每行一条。
  */
 export function describeModelStrategy(settings: Settings): string[] {
   const current = isModelConfigured(settings.model)
     ? `当前模型：${hostOf(settings.model?.baseUrl)} / ${settings.model?.model ?? ''}`
     : '当前模型：未配置（功能不可用）';
 
-  const multimodal = canEnableVision(settings)
-    ? '多模态：支持'
+  const modules = Object.keys(STRATEGY_MODULE_LABELS) as VisionModule[];
+
+  // 各模块实际使用的模型（moduleModel 命中方案 → 否则默认模型）
+  const moduleLines = modules.map((m) => {
+    const model = resolveModuleModel(settings, m);
+    return `${STRATEGY_MODULE_LABELS[m]}：${
+      model ? `${hostOf(model.baseUrl)} / ${model.model}` : '未配置'
+    }`;
+  });
+
+  // 多模态能力按模块：能力随各模块所选模型（model.supportsVision，兼容旧字段）
+  const anyCapable = modules.some((m) =>
+    modelSupportsVisionOf(resolveModuleModel(settings, m), settings),
+  );
+  const capabilityMarks = modules
+    .map(
+      (m) =>
+        `${STRATEGY_MODULE_LABELS[m]}${
+          modelSupportsVisionOf(resolveModuleModel(settings, m), settings) ? '✓' : '✗'
+        }`,
+    )
+    .join(' ');
+  const multimodal = anyCapable
+    ? `多模态：${capabilityMarks}（能力随各模块所选模型）`
     : '多模态：不支持（抽帧不可用）';
 
-  const modules = Object.keys(STRATEGY_MODULE_LABELS) as VisionModule[];
-  const marks = modules
-    .map((m) => `${STRATEGY_MODULE_LABELS[m]}${settings.visionModules?.[m] !== false ? '✓' : '✗'}`)
+  const activeMarks = modules
+    .map((m) => `${STRATEGY_MODULE_LABELS[m]}${visionActiveFor({ settings, module: m }) ? '✓' : '✗'}`)
     .join(' ');
-  const frame = !canEnableVision(settings)
-    ? '抽帧：不可用（当前模型未声明支持图像输入）'
+  const frame = !anyCapable
+    ? '抽帧：不可用（各模块所选模型均未声明支持图像输入）'
     : settings.visionEnabled === true
-      ? `抽帧：已开启（${marks}）`
+      ? `抽帧：已开启（${activeMarks}）`
       : '抽帧：已关闭';
 
-  return [current, multimodal, frame, ROUTING_RULE];
+  return [current, ...moduleLines, multimodal, frame, ROUTING_RULE];
 }

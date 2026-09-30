@@ -24,6 +24,7 @@ import type { Markmap } from 'markmap-view';
 import type { ConceptMapData, ConceptItem, ConceptStage, Section } from '../types';
 import { buildTermIndexMap } from '../core/pipeline/conceptMap';
 import { formatTimestamp } from './SubtitleTab';
+import { ModelPicker } from './ModelPicker';
 import './mindmap.css';
 
 export interface MindmapTabProps {
@@ -655,6 +656,8 @@ export function MindmapTab(props: MindmapTabProps) {
         >
           {CHRONO_VIEW_LABEL}
         </button>
+        {/* 模块模型选择（margin-left:auto 靠右；select 不参与 tablist 语义） */}
+        <ModelPicker module="mindmap" />
       </div>
 
       {showEmptyGuide && <MindmapEmptyGuide onGoOutline={onGoOutline} />}

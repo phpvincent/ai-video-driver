@@ -15,6 +15,7 @@ import type { OutlineResult } from '../core/pipeline/outline';
 import type { Density, Section, VideoMeta } from '../types';
 import { formatTimestamp } from './SubtitleTab';
 import { getInflightOutline } from './outlineLoader';
+import { ModelPicker } from './ModelPicker';
 
 export interface OutlineTabProps {
   videoId: string | null;
@@ -514,6 +515,7 @@ export function OutlineTab(props: OutlineTabProps) {
     <div className="outline-tab">
       <div className="outline-header">
         <span className="outline-count">共 {sections.length} 章</span>
+        <ModelPicker module="outline" />
         {props.onSaveVideoNote && (
           <button
             type="button"

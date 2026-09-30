@@ -25,7 +25,7 @@ import {
 import { chunkCues } from '../core/pipeline/chunk';
 import { VISION } from '../config';
 import { requestFrames, toPipelineImage } from './framesClient';
-import { visionActiveFor } from './settings/modelForm';
+import { resolveModuleModel, visionActiveFor } from './settings/modelForm';
 import type { Settings } from '../types';
 import { createSubtitleDb, getOutline, getSubtitle, saveOutline } from '../storage/db';
 import type { ModelConfig, Section } from '../types';
@@ -171,10 +171,10 @@ async function fetchSettings(): Promise<Settings> {
   return stored && typeof stored === 'object' ? stored : {};
 }
 
+/** 读设置并按大纲模块解析模型（moduleModel 命中方案 → 否则默认；方案缺 Key 回退默认） */
 async function fetchModelConfig(): Promise<ModelConfig | null> {
-  const response = await sendRuntimeMessage({ type: MSG.GET_SETTINGS });
-  const stored = (response ?? {}) as { model?: ModelConfig };
-  return stored.model ?? null;
+  const settings = await fetchSettings();
+  return resolveModuleModel(settings, 'outline');
 }
 
 /**
