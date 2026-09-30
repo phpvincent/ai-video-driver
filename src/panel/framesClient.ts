@@ -16,7 +16,7 @@ import {
   sectionMetaOf,
   sectionWindows,
 } from '../core/vision/framePlanner';
-import { requestFramePlan } from '../core/vision/llmFramePlan';
+import { mergeFrameTargets, requestFramePlan, suggestFrameRange } from '../core/vision/llmFramePlan';
 import { resolveModuleModel } from './settings/modelForm';
 import type { Cue, ModelConfig, Section } from '../types';
 
@@ -34,6 +34,8 @@ export interface FramePlanArgs {
   /** 视频总时长（毫秒） */
   durationMs: number;
   budget: number;
+  /** 视频元信息（给模型充足的参考上下文） */
+  meta?: { title?: string; page?: number };
 }
 
 /**
@@ -50,12 +52,15 @@ export async function planFrames(args: FramePlanArgs): Promise<number[]> {
   if (cues.length === 0 || budget <= 0) return [];
 
   const model = (await readModuleModel(args.module)) ?? null;
+  const suggested = suggestFrameRange(args.durationMs, budget);
   const req = {
     sections,
     cues,
     durationMs: args.durationMs,
     budget,
     minGapMs: VISION.minGapMs,
+    meta: args.meta,
+    suggested,
   };
 
   // ① 模型规划（可选）
@@ -79,17 +84,30 @@ export async function planFrames(args: FramePlanArgs): Promise<number[]> {
         }).then((res) => ({ content: res.content })),
       getFramePlanSystemPrompt,
     ).catch(() => null);
-    if (modelTargets && modelTargets.length > 0) return modelTargets;
+    if (modelTargets && modelTargets.length > 0) {
+      // 模型给得太少（内容会空洞）→ 用公式帧补到建议下限；给得太多由 merge 截断
+      if (modelTargets.length >= suggested.min) {
+        return mergeFrameTargets(modelTargets, [], { ...suggested, minGapMs: VISION.minGapMs });
+      }
+      const filler = planFrameTargets(
+        sections.length > 0 ? sectionWindows(sections, cues) : cueWindows(cues, Math.max(60_000, Math.ceil(args.durationMs / 8))),
+        cues,
+        { budget: suggested.max, minGapMs: VISION.minGapMs, minScore: VISION.minScore },
+        sections.length > 0 ? sectionMetaOf(sections) : undefined,
+      ).map((w) => w.targetMs);
+      return mergeFrameTargets(modelTargets, filler, { ...suggested, minGapMs: VISION.minGapMs });
+    }
   }
 
   // ② 公式回退：有章节按章节打分，无章节按固定窗口（大纲生成阶段）
   const windows =
     sections.length > 0 ? sectionWindows(sections, cues) : cueWindows(cues, Math.max(60_000, Math.ceil(args.durationMs / 8)));
-  return planFrameTargets(windows, cues, {
-    budget,
+  const formula = planFrameTargets(windows, cues, {
+    budget: suggested.max,
     minGapMs: VISION.minGapMs,
     minScore: VISION.minScore,
   }, sections.length > 0 ? sectionMetaOf(sections) : undefined).map((w) => w.targetMs);
+  return mergeFrameTargets([], formula, { ...suggested, minGapMs: VISION.minGapMs });
 }
 
 /** 读取模块模型（与 loader 同一解析口径） */

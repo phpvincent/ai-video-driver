@@ -103,8 +103,9 @@ export async function generateConceptMap(
       module: 'mindmap',
       cues,
       sections,
-      durationMs: cues[cues.length - 1]?.endMs ?? 0,
+      durationMs: rec?.meta?.durationMs ?? cues[cues.length - 1]?.endMs ?? 0,
       budget: VISION.mindmapFrames,
+      meta: { title: videoTitle || rec?.meta?.title, page: rec?.meta?.page },
     });
     images = (await requestFrames({ videoId, targetsMs: targets })).map(toPipelineImage);
   }

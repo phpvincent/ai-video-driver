@@ -141,6 +141,9 @@ async function loadFrames(args: {
       sections: [],
       durationMs: Math.max(end, args.cues[args.cues.length - 1]?.endMs ?? end),
       budget: VISION.qaFrames,
+      meta: currentVideoMetaRef.value
+        ? { title: currentVideoMetaRef.value.title, page: undefined }
+        : undefined,
     })
   )
     .filter((t) => Number.isFinite(t) && t >= 0)
