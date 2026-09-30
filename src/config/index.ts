@@ -108,6 +108,9 @@ export const DB = {
     qaHistory: 'qaHistory',
     terms: 'terms',
     traces: 'traces',
+    /** SPEC-07 追加：使用统计（键 videoId，值 UsageRecord，纯本地、不上报）。
+     *  注意：已有 v1 库需升版本才会建该 store（版本常量在 storage/db.ts 的 open 调用处，留给父 agent 统一处理）。 */
+    usage: 'usage',
   },
   traceKeep: 50,
 } as const;

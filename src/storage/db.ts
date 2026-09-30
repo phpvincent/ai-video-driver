@@ -12,6 +12,7 @@
  * 红线 8 的兜底在调用方（waterfall）：本模块异常向上传播，不在 DB 层吞错。
  */
 import type { OutlineRecord, QaRecord, SubtitleRecord } from '../types';
+import type { UsageRecord } from '../core/metrics/usage';
 import { DB } from '../config';
 
 /** 最小数据库契约：注入点，单测用内存实现替换 */
@@ -48,7 +49,8 @@ export function createSubtitleDb(idbFactory?: IDBFactory): DbLike {
           reject(new Error('indexedDB unavailable'));
           return;
         }
-        const req = factory.open(DB.name, 1);
+        // 版本号：v2 起新增 usage（验证期埋点）store；升级时为已存在的库补建缺失 store
+        const req = factory.open(DB.name, 2);
         req.onupgradeneeded = () => {
           const db = req.result;
           for (const storeName of Object.values(DB.stores)) {
@@ -159,4 +161,32 @@ export async function listQaByVideo(db: DbLike, videoId: string): Promise<QaReco
   return all
     .filter((r) => r.videoId === videoId)
     .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
+}
+
+// ---------------------------------------------------------------------------
+// usage（SPEC-07 追加）：键 videoId，值为 UsageRecord（纯本地使用统计，不上报）。
+// listAllUsage 与 qaHistory 同法：全量 getAll + 过滤（量级低，不建索引）。
+// ---------------------------------------------------------------------------
+
+/** 读使用统计，未命中返回 null */
+export async function getUsage(db: DbLike, videoId: string): Promise<UsageRecord | null> {
+  await db.open();
+  const rec = await db.get<UsageRecord>(DB.stores.usage, videoId);
+  return rec ?? null;
+}
+
+/** 写使用统计（键 rec.videoId；时间戳由调用方的注入时钟在 applyUsageEvent 时写入） */
+export async function saveUsage(db: DbLike, rec: UsageRecord): Promise<void> {
+  await db.open();
+  await db.put(DB.stores.usage, rec.videoId, rec);
+}
+
+/** 全量列出使用统计（过滤掉非 UsageRecord 的脏数据） */
+export async function listAllUsage(db: DbLike): Promise<UsageRecord[]> {
+  await db.open();
+  const all = await db.getAll<UsageRecord>(DB.stores.usage);
+  return all.filter(
+    (r): r is UsageRecord =>
+      typeof r === 'object' && r !== null && typeof (r as UsageRecord).videoId === 'string',
+  );
 }

@@ -1,0 +1,75 @@
+/**
+ * SPEC-07 使用统计埋点（子任务 7.1）。
+ *
+ * 全部数据只落本机 IndexedDB（SPEC-07 §1 明确不做远程上报）。埋点层只提供
+ * 纯函数：输入（旧记录 + 事件 + 注入时钟）→ 新记录，不改原对象（红线 1
+ * 确定性：同一输入恒定同一输出，不读全局 Date.now、不产生随机数）。
+ *
+ * 上层（父 agent 接线）负责在跳播 / 字幕瀑布成功 / 大纲生成 / 概念图生成
+ * 处调用 applyUsageEvent 并经 storage/db 的 saveUsage 落库。
+ */
+
+/** 埋点事件种类：与 UsageRecord 的四个计数器/布尔位一一对应 */
+export type UsageEventKind = 'seek' | 'subtitle' | 'outline' | 'conceptMap';
+
+export interface UsageEvent {
+  kind: UsageEventKind;
+}
+
+export interface UsageRecord {
+  videoId: string;
+  /** 大纲/导图/字幕的跳转（seek）次数 */
+  seeks: number;
+  /** 是否成功加载字幕（瀑布 ok/manual_pasted） */
+  subtitleLoaded: boolean;
+  /** 是否生成过大纲 */
+  outlineGenerated: boolean;
+  /** 是否生成过概念图 */
+  conceptMapGenerated: boolean;
+  /** 首次/最近使用时间 ISO */
+  firstUsedAt: string;
+  lastUsedAt: string;
+}
+
+/** 空记录：四个计数位归零，首末次时间同为注入时钟 */
+export function createEmptyUsage(videoId: string, now: () => number): UsageRecord {
+  const at = new Date(now()).toISOString();
+  return {
+    videoId,
+    seeks: 0,
+    subtitleLoaded: false,
+    outlineGenerated: false,
+    conceptMapGenerated: false,
+    firstUsedAt: at,
+    lastUsedAt: at,
+  };
+}
+
+/**
+ * 合并一次事件，返回新记录（原对象不被修改）。
+ * lastUsedAt 每次事件都刷新；firstUsedAt 仅在已有值为空时补齐（兼容旧数据）。
+ */
+export function applyUsageEvent(
+  rec: UsageRecord,
+  event: UsageEvent,
+  now: () => number,
+): UsageRecord {
+  const at = new Date(now()).toISOString();
+  const base: UsageRecord = {
+    ...rec,
+    firstUsedAt: rec.firstUsedAt || at,
+    lastUsedAt: at,
+  };
+  switch (event.kind) {
+    case 'seek':
+      return { ...base, seeks: rec.seeks + 1 };
+    case 'subtitle':
+      return { ...base, subtitleLoaded: true };
+    case 'outline':
+      return { ...base, outlineGenerated: true };
+    case 'conceptMap':
+      return { ...base, conceptMapGenerated: true };
+    default:
+      return base;
+  }
+}
