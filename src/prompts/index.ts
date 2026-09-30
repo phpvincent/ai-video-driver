@@ -11,6 +11,7 @@ import conceptMapMd from './concept-map.md?raw';
 import segmentQaMd from './segment-qa.md?raw';
 import termExplainerMd from './term-explainer.md?raw';
 import knowledgeCaptureMd from './knowledge-capture.md?raw';
+import personaMd from './persona.md?raw';
 
 export interface PromptHeader {
   promptVersion: string;
@@ -44,6 +45,7 @@ const CONCEPT_MAP_HEADER = parsePromptHeader(conceptMapMd);
 const TERM_EXPLAINER_HEADER = parsePromptHeader(termExplainerMd);
 const SEGMENT_QA_HEADER = parsePromptHeader(segmentQaMd);
 const KNOWLEDGE_CAPTURE_HEADER = parsePromptHeader(knowledgeCaptureMd);
+const PERSONA_HEADER = parsePromptHeader(personaMd);
 
 /** 各 prompt 当前版本（来自文件头注释，单一事实源） */
 export const PROMPT_VERSIONS = {
@@ -53,6 +55,7 @@ export const PROMPT_VERSIONS = {
   termExplainer: TERM_EXPLAINER_HEADER.promptVersion,
   segmentQa: SEGMENT_QA_HEADER.promptVersion,
   knowledgeCapture: KNOWLEDGE_CAPTURE_HEADER.promptVersion,
+  persona: PERSONA_HEADER.promptVersion,
 } as const;
 
 /** 大纲生成 system prompt 正文（单一事实源：src/prompts/outline.md） */
@@ -86,4 +89,12 @@ export function getSegmentQaSystemPrompt(): string {
  */
 export function getKnowledgeCaptureSystemPrompt(): string {
   return stripPromptHeaderComments(knowledgeCaptureMd);
+}
+
+/**
+ * 问答动态角色判定 system prompt 正文（单一事实源：src/prompts/persona.md）。
+ * 每视频一次判定（judgePersona）后缓存，注入问答时只追加角色设定，不覆盖既有规则。
+ */
+export function getPersonaSystemPrompt(): string {
+  return stripPromptHeaderComments(personaMd);
 }

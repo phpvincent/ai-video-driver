@@ -15,6 +15,7 @@ import {
   ChatTab,
   buildSearchUrl,
   chunkTypewriter,
+  formatPersonaLine,
   formatRangeSource,
   formatSources,
   parseMmSs,
@@ -277,6 +278,70 @@ describe('来源区文案（formatSources / formatRangeSource）', () => {
     expect(formatRangeSource([60_000, 90_000], false)).toBe('命中课程区间 01:00-01:30');
     expect(formatRangeSource([60_000, 90_000], true)).toBeNull();
     expect(formatRangeSource(null, false)).toBeNull();
+  });
+});
+
+describe('formatPersonaLine / ChatTab 角色条（动态回答角色）', () => {
+  const base: QaRecord = {
+    id: 'r',
+    videoId: 'BV1X_p1',
+    interactionType: 'free',
+    sectionId: null,
+    timestampMs: 0,
+    rangeMs: null,
+    question: 'q',
+    answer: 'a',
+    payload: {},
+    createdAt: '',
+  };
+  const render = (props: Record<string, unknown>): string =>
+    renderToString(
+      createElement(ChatTab, {
+        videoId: 'BV1X_p1',
+        sections,
+        cues: [cue(0, 0, 1000, '首句')],
+        positionMs: 130_000,
+        modelReady: true,
+        explain: async () => ({ record: base }),
+        ...props,
+      }) as never,
+    );
+
+  it('注入 persona：渲染角色条（含 fallback 的「默认角色」标注）与重判按钮', () => {
+    const html = render({
+      persona: {
+        videoId: 'BV1X_p1',
+        promptVersion: '0.1.0',
+        model: 'm',
+        role: 'AI 应用工程讲师',
+        expertise: ['大模型应用', '提示工程'],
+        style: '先给结论再讲原理',
+        fallback: true,
+        createdAt: '',
+      },
+      onRefreshPersona: async () => {},
+    });
+    expect(html).toContain('以「AI 应用工程讲师」身份回答');
+    expect(html).toContain('领域：大模型应用、提示工程');
+    expect(html).toContain('（默认角色）');
+    expect(html).toContain('重判角色');
+  });
+
+  it('未注入 persona：不显示角色条（旧行为兼容）', () => {
+    const html = render({});
+    expect(html).not.toContain('身份回答');
+    expect(html).not.toContain('重判角色');
+  });
+
+  it('formatPersonaLine：无 fallback 不标注默认；role 为空返回 null', () => {
+    expect(
+      formatPersonaLine({ role: '产品经理', expertise: ['需求拆解'], style: 's', videoId: 'v', promptVersion: '0.1.0', model: 'm', createdAt: '' }),
+    ).toBe('以「产品经理」身份回答 · 领域：需求拆解');
+    expect(formatPersonaLine(null)).toBeNull();
+    expect(formatPersonaLine(undefined)).toBeNull();
+    expect(
+      formatPersonaLine({ role: '  ', expertise: ['x'], style: 's', videoId: 'v', promptVersion: '0.1.0', model: 'm', createdAt: '' }),
+    ).toBeNull();
   });
 });
 

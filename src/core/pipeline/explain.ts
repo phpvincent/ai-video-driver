@@ -138,6 +138,16 @@ function appendImageNote(userPrompt: string, images?: ExplainImage[] | null, cue
   return note ? `${userPrompt}\n${note}` : userPrompt;
 }
 
+/**
+ * system prompt 追加动态角色设定（问答动态角色判定，注入点）。
+ * 角色设定拼在既有 system prompt **之后**：只补充"以谁的身份讲"，
+ * 不改变、不覆盖任何防编造 / 引用 / coveredByVideo 规则；为空时原样返回（旧行为）。
+ */
+export function composeSystemPrompt(base: string, personaInstruction?: string): string {
+  const instruction = personaInstruction?.trim();
+  return instruction ? `${base}\n\n${instruction}` : base;
+}
+
 /** JSON.parse + Schema 校验（红线 4）；失败 throw，由重试逻辑捕获 */
 function parseJsonWithSchema<T>(content: string, schema: z.ZodType<T>, label: string): T {
   let raw: unknown;
@@ -197,6 +207,8 @@ export interface ExplainTermArgs {
   modelFn: ExplainModelFn;
   /** system prompt 单一事实源注入（缺省为占位，接线层传 prompts/index getter） */
   getSystemPrompt?: () => string;
+  /** 动态角色设定（追加在 system prompt 之后；不传则行为不变） */
+  personaInstruction?: string;
   rangePadMs?: number;
   maxChars?: number;
 }
@@ -210,6 +222,7 @@ export async function explainTerm(args: ExplainTermArgs): Promise<TermPayload> {
   const base = buildTermPrompts(args.term, compiled, args.getSystemPrompt);
   const prompts = {
     ...base,
+    systemPrompt: composeSystemPrompt(base.systemPrompt, args.personaInstruction),
     userPrompt: appendImageNote(base.userPrompt, args.input.images, args.input.cues),
     images: args.input.images,
   };
@@ -222,6 +235,8 @@ export interface AnswerSegmentArgs {
   modelFn: ExplainModelFn;
   /** system prompt 单一事实源注入（缺省为占位，接线层传 prompts/index getter） */
   getSystemPrompt?: () => string;
+  /** 动态角色设定（追加在 system prompt 之后；不传则行为不变） */
+  personaInstruction?: string;
   rangePadMs?: number;
   maxChars?: number;
 }
@@ -235,6 +250,7 @@ export async function answerSegment(args: AnswerSegmentArgs): Promise<SegmentAns
   const base = buildSegmentPrompts(args.question, compiled, args.getSystemPrompt);
   const prompts = {
     ...base,
+    systemPrompt: composeSystemPrompt(base.systemPrompt, args.personaInstruction),
     userPrompt: appendImageNote(base.userPrompt, args.input.images, args.input.cues),
     images: args.input.images,
   };

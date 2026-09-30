@@ -18,6 +18,8 @@ import { applyUsageEvent, createEmptyUsage, type UsageRecord } from '../core/met
 import { createSubtitleDb, getUsage, saveUsage, listAllUsage } from '../storage/db';
 import { DB } from '../config';
 import { ValidationReportView } from './ValidationReportView';
+import { generatePersona, getPersonaCached } from './personaLoader';
+import type { Persona } from '../types';
 import { generateConceptMap as genConceptMap, getConceptMapCached, termIndexFallback } from './mindmapLoader';
 import type { ConceptMapData, QaRecord } from '../types';
 import type { Section } from '../types';
@@ -108,6 +110,8 @@ export function App() {
   const [showReport, setShowReport] = useState(false);
   /** 是否配置了公开资料检索（问答增强） */
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  /** 当前视频的问答角色（每视频一次判定并缓存） */
+  const [persona, setPersona] = useState<Persona | null>(null);
   /** 设置中的模型配置（modelReady 判断用；生成时 loadOutlineForVideo 会实时重读） */
   const [modelConfig, setModelConfig] = useState<ModelConfig | null>(null);
 
@@ -138,6 +142,29 @@ export function App() {
     setPendingTerm(null);
     setConceptMap(null);
   }, [video?.videoId]);
+
+  /** 问答角色：缓存命中直接用；未命中则按视频内容判定一次（失败降级默认角色） */
+  useEffect(() => {
+    const vid = video?.videoId;
+    if (!vid || !modelConfig?.apiKey) return;
+    let cancelled = false;
+    (async () => {
+      const cached = await getPersonaCached(vid, modelConfig).catch(() => null);
+      if (cached) {
+        if (!cancelled) setPersona(cached);
+        return;
+      }
+      const fresh = await generatePersona({
+        videoId: vid,
+        title: video?.title ?? '',
+        sections,
+      }).catch(() => null);
+      if (!cancelled && fresh) setPersona(fresh);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [video?.videoId, video?.title, modelConfig?.apiKey]);
 
   /** 概念图缓存回填（模型就绪且 videoId 存在时） */
   useEffect(() => {
@@ -252,6 +279,17 @@ export function App() {
     } finally {
       setConceptGenerating(false);
     }
+  };
+
+  /** 重判问答角色（用户点"重判角色"） */
+  const handleRefreshPersona = async () => {
+    if (!video || !modelConfig?.apiKey) return;
+    const fresh = await generatePersona({
+      videoId: video.videoId,
+      title: video.title,
+      sections,
+    }).catch(() => null);
+    if (fresh) setPersona(fresh);
   };
 
   /** 存入 Obsidian：视频笔记（大纲 Tab） */
@@ -458,6 +496,8 @@ export function App() {
                 explain={explainFn}
                 loadHistory={loadChatHistory}
                 webSearchEnabled={webSearchEnabled}
+                persona={persona}
+                onRefreshPersona={handleRefreshPersona}
                 onSaveNote={handleSaveNote}
                 pendingTerm={pendingTerm ?? undefined}
               />

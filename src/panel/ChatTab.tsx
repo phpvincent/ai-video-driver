@@ -18,7 +18,7 @@ import { findSectionAt, formatMmSs } from '../core/context/compiler';
 import type { WebSnippet } from '../core/knowledge/webSearch';
 import type { SegmentAnswerPayload, TermPayload } from '../core/pipeline/explain';
 import { nearestCueStartMs } from '../core/pipeline/snap';
-import type { Cue, KnowledgeHit, QaRecord, Section } from '../types';
+import type { Cue, KnowledgeHit, Persona, QaRecord, Section } from '../types';
 import './chat.css';
 
 /** 划词/提问请求（父 agent 接线 loader 时组装 compiler + pipeline） */
@@ -60,6 +60,10 @@ export interface ChatTabProps {
   loadHistory?: (videoId: string) => Promise<QaRecord[]>;
   /** 是否已配置公开资料检索（未配置时 needsWeb 走兜底搜索链接） */
   webSearchEnabled?: boolean;
+  /** 动态回答角色（每视频一次判定，父 agent 注入；未注入则不显示角色条） */
+  persona?: Persona | null;
+  /** 重判角色（父 agent 注入 personaLoader.generatePersona；未注入则按钮隐藏） */
+  onRefreshPersona?: () => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -251,6 +255,19 @@ export function formatSources(snippets?: WebSnippet[]): string | null {
   return `公开资料：${names.join('、')}`;
 }
 
+/**
+ * 角色条文案（动态回答角色）：`以「{role}」身份回答 · 领域：{…}`；
+ * fallback 角色（模型判定失败后的默认角色）额外标注「（默认角色）」。
+ * 未注入 / role 为空返回 null（不显示，旧行为兼容）。
+ */
+export function formatPersonaLine(persona?: Persona | null): string | null {
+  const role = persona?.role?.trim();
+  if (!role) return null;
+  const expertise = (persona?.expertise ?? []).filter((e) => e.trim().length > 0).join('、');
+  const line = `以「${role}」身份回答 · 领域：${expertise}`;
+  return persona?.fallback ? `${line}（默认角色）` : line;
+}
+
 /** 命中课程区间文案（历史恢复消息无 referencedTimestamps 时给出区间；否则省略） */
 export function formatRangeSource(
   rangeMs?: [number, number] | null,
@@ -282,6 +299,8 @@ export function ChatTab(props: ChatTabProps) {
   const [rangeMode, setRangeMode] = useState<RangeMode>('around');
   const [customStartText, setCustomStartText] = useState('00:00');
   const [customEndText, setCustomEndText] = useState('01:00');
+  /** 重判角色进行中（按钮禁用，避免重复触发模型调用） */
+  const [refreshingPersona, setRefreshingPersona] = useState(false);
 
   const nextIdRef = useRef(1);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -508,12 +527,24 @@ export function ChatTab(props: ChatTabProps) {
   }
 
   const displayRange = resolveRange(rangeMode, positionMs, sections, customRange());
+  /** 角色条文案（未注入 persona 时为 null，不渲染，旧行为兼容） */
+  const personaLine = formatPersonaLine(props.persona);
 
   const handleSend = (): void => {
     const q = input.trim();
     if (!q || busy || !props.explain) return;
     setInput('');
     void ask({ question: q, rangeMs: requestRange(), positionMs });
+  };
+
+  /** 重判角色：失败不弹错（角色条保持原状，红线 8） */
+  const handleRefreshPersona = (): void => {
+    const refresh = props.onRefreshPersona;
+    if (!refresh || refreshingPersona) return;
+    setRefreshingPersona(true);
+    void refresh()
+      .catch(() => undefined)
+      .then(() => setRefreshingPersona(false));
   };
 
   return (
@@ -690,6 +721,25 @@ export function ChatTab(props: ChatTabProps) {
           当前区间 {formatMmSs(displayRange[0])}-{formatMmSs(displayRange[1])}
         </span>
       </div>
+
+      {personaLine && (
+        <div
+          className="chat-persona-bar"
+          style={{ ...KNOWLEDGE_HINT_STYLE, display: 'flex', alignItems: 'center', gap: 8 }}
+        >
+          <span>{personaLine}</span>
+          {props.onRefreshPersona && (
+            <button
+              type="button"
+              className="btn chat-persona-refresh"
+              disabled={refreshingPersona}
+              onClick={handleRefreshPersona}
+            >
+              {refreshingPersona ? '重判中…' : '重判角色'}
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="chat-input-bar">
         <textarea

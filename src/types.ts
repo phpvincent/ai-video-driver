@@ -267,3 +267,23 @@ export interface PipelineTrace {
   budgetHit?: boolean;
   error?: string;
 }
+
+/**
+ * 问答动态角色（每视频一次判定并缓存，缓存键 persona::{videoId}::{pv}::{model}）。
+ * 由 src/core/pipeline/persona.ts 判定、src/panel/personaLoader.ts 落库，
+ * 注入问答 system prompt 时只追加"以谁的身份讲"，不覆盖任何防编造/引用规则。
+ */
+export interface Persona {
+  videoId: VideoId;
+  promptVersion: string;
+  model: string;
+  /** 角色名，如「AI 应用工程讲师」≤20 字 */
+  role: string;
+  /** 专业领域 2~5 项 */
+  expertise: string[];
+  /** 讲解风格描述 ≤40 字 */
+  style: string;
+  /** true=模型判定失败后的默认角色（UI 可标注"默认"） */
+  fallback?: boolean;
+  createdAt: string;
+}

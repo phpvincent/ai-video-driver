@@ -27,6 +27,8 @@ import { createSubtitleDb, getOutline, getSubtitle, saveQaRecord } from '../stor
 import type { Cue, KnowledgeHit, ModelConfig, QaRecord, Section } from '../types';
 import type { ExplainRequest, ExplainResponse } from './ChatTab';
 import { getObsidianConfig, readIndex } from './obsidianLoader';
+import { personaInstruction } from '../core/pipeline/persona';
+import { getPersonaCached } from './personaLoader';
 import { buildWebContext, searchWeb, trimSnippets } from '../core/knowledge/webSearch';
 import { CONTEXT, WEB_SEARCH } from '../config';
 import type { WebSnippet } from '../core/knowledge/webSearch';
@@ -174,6 +176,10 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
     positionMs: args.positionMs,
   });
 
+  // 动态角色（每视频一次判定并缓存；失败自动降级默认角色，不阻断问答）
+  const persona = await getPersonaCached(videoId, model).catch(() => null);
+  const personaHint = persona ? personaInstruction(persona) : '';
+
   const input: ExplainInput = {
     sections,
     cues,
@@ -210,6 +216,7 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
       input,
       modelFn,
       getSystemPrompt: getTermExplainerSystemPrompt,
+      personaInstruction: personaHint,
     });
     const record: QaRecord = buildQaRecord({
       videoId,
@@ -228,6 +235,7 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
     input,
     modelFn,
     getSystemPrompt: getSegmentQaSystemPrompt,
+    personaInstruction: personaHint,
   });
   const record: QaRecord = buildQaRecord({
     videoId,
