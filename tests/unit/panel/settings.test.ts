@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_MODEL, MODEL_PRESETS, OBSIDIAN } from '../../../src/config';
 import {
   applyPreset,
+  describeModelStrategy,
+  hostOf,
   isModelConfigured,
   mergeSettings,
   validateModelForm,
@@ -175,6 +177,84 @@ describe('visionActiveFor', () => {
     expect(visionActiveFor({ settings, module: 'qa' })).toBe(false);
     expect(visionActiveFor({ settings, module: 'outline' })).toBe(true);
     expect(visionActiveFor({ settings, module: 'mindmap' })).toBe(true);
+  });
+});
+
+describe('hostOf', () => {
+  it('正常 URL 取主机名（不输出完整地址，红线 9）', () => {
+    expect(hostOf(MODEL_PRESETS.qwen.baseUrl)).toBe(new URL(MODEL_PRESETS.qwen.baseUrl).hostname);
+    expect(hostOf(MODEL_PRESETS.deepseek.baseUrl)).toBe(
+      new URL(MODEL_PRESETS.deepseek.baseUrl).hostname,
+    );
+  });
+
+  it('非法字符串 → 无效地址', () => {
+    expect(hostOf('not-a-url')).toBe('无效地址');
+    expect(hostOf('   ')).toBe('无效地址');
+  });
+
+  it('空值 → 无效地址', () => {
+    expect(hostOf('')).toBe('无效地址');
+    expect(hostOf(undefined)).toBe('无效地址');
+  });
+});
+
+describe('describeModelStrategy', () => {
+  const joined = (settings: Settings): string => describeModelStrategy(settings).join('\n');
+
+  it('四行：文本模型 / 视觉模型 / 抽帧 / 路由规则', () => {
+    const lines = describeModelStrategy(baseSettings());
+    expect(lines).toHaveLength(4);
+    expect(lines[0].startsWith('文本模型：')).toBe(true);
+    expect(lines[1].startsWith('视觉模型：')).toBe(true);
+    expect(lines[2].startsWith('抽帧：')).toBe(true);
+    expect(lines[3].startsWith('路由规则：')).toBe(true);
+  });
+
+  it('文本与视觉模型均已配置：显示主机名 / 模型', () => {
+    const text = joined(baseSettings());
+    expect(text).toContain(MODEL_PRESETS.deepseek.model);
+    expect(text).toContain(MODEL_PRESETS.qwen.model);
+    expect(text).toContain(new URL(MODEL_PRESETS.qwen.baseUrl).hostname);
+  });
+
+  it('未配置文本模型 → 未配置（功能不可用）', () => {
+    expect(joined(baseSettings({ model: undefined }))).toContain('未配置（功能不可用）');
+  });
+
+  it('未配置视觉模型 → 未配置（抽帧将自动跳过）', () => {
+    expect(joined(baseSettings({ visionModel: undefined }))).toContain('未配置（抽帧将自动跳过）');
+  });
+
+  it('抽帧开启且三模块全开 → 大纲✓ 导图✓ 问答✓', () => {
+    expect(joined(baseSettings())).toContain('抽帧：已开启（大纲✓ 导图✓ 问答✓）');
+  });
+
+  it('抽帧关闭 → 已关闭，所有模块走文本模型', () => {
+    const line = joined(baseSettings({ visionEnabled: false }));
+    expect(line).toContain('抽帧：已关闭');
+    expect(line).toContain('文本模型');
+  });
+
+  it('模块部分关闭 → 列出关闭的模块', () => {
+    const line = joined(
+      baseSettings({ visionModules: { outline: true, mindmap: false, qa: false } }),
+    );
+    expect(line).toContain('已开启');
+    expect(line).toContain('关闭：导图、问答');
+  });
+
+  it('路由规则：带画面走视觉，术语解释/自由提问/无画面走文本', () => {
+    const line = describeModelStrategy(baseSettings())[3];
+    expect(line).toContain('区间提问）使用视觉模型');
+    expect(line).toContain('术语解释');
+    expect(line).toContain('自由提问');
+  });
+
+  it('不输出完整接口地址（只暴露主机名，红线 9）', () => {
+    const text = joined(baseSettings());
+    expect(text).not.toContain(MODEL_PRESETS.qwen.baseUrl);
+    expect(text).not.toContain('https://');
   });
 });
 

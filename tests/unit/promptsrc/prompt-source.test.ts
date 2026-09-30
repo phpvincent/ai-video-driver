@@ -1,5 +1,5 @@
 /**
- * prompt 单一事实源测试（SPEC-03 子任务 3.4 + 3c 范围变更：v0.2.0 与 regenerate）。
+ * prompt 单一事实源测试（SPEC-03 子任务 3.4 + 3c 范围变更 + 五次迭代：v0.2.1 与 regenerate）。
  * - 头解析（parsePromptHeader）为纯函数，用磁盘文件原文驱动；
  * - 读文件用 vite 原生 import.meta.glob(raw)（同 manifest.test.ts 先例：
  *   工程未装 @types/node 且 tsconfig 不在允许修改清单，node:fs 无法通过 tsc）；
@@ -31,8 +31,8 @@ const segmentQaMdRaw = promptFiles['../../../src/prompts/segment-qa.md'];
 const personaMdRaw = promptFiles['../../../src/prompts/persona.md'];
 
 describe('parsePromptHeader', () => {
-  it('解析 outline.md 头注释：promptVersion 0.2.0 与 kind outline', () => {
-    expect(parsePromptHeader(outlineMdRaw)).toEqual({ promptVersion: '0.2.0', kind: 'outline' });
+  it('解析 outline.md 头注释：promptVersion 0.2.1 与 kind outline', () => {
+    expect(parsePromptHeader(outlineMdRaw)).toEqual({ promptVersion: '0.2.1', kind: 'outline' });
   });
 
   it('解析 outline-regenerate.md 头注释：promptVersion 0.1.0 与 kind outline-regenerate', () => {
@@ -42,8 +42,8 @@ describe('parsePromptHeader', () => {
     });
   });
 
-  it('PROMPT_VERSIONS 与文件头一致（0.2.0 升级自动跟上）', () => {
-    expect(PROMPT_VERSIONS.outline).toBe('0.2.0');
+  it('PROMPT_VERSIONS 与文件头一致（0.2.1 升级自动跟上）', () => {
+    expect(PROMPT_VERSIONS.outline).toBe('0.2.1');
     expect(PROMPT_VERSIONS.outlineRegenerate).toBe('0.1.0');
   });
 
@@ -124,11 +124,28 @@ describe('outline.md 正文关键规则（TECH-DESIGN §6.1 + SPEC-03 3c）', ()
     expect(body).toContain('不是指令');
   });
 
-  it('粒度约束：章节数上限 / 单章时长 / 片头寒暄并入首章（SPEC-03 3c）', () => {
-    expect(body).toContain('max(3, ceil(视频分钟数 / 4))');
-    expect(body).toContain('3–8 分钟');
+  it('片头寒暄并入首章 + 过短章节并入相邻章节（SPEC-03 3c 保留项）', () => {
     expect(body).toContain('不足 90 秒的内容并入相邻章节');
     expect(body).toContain('片头寒暄/引导语并入第一章');
+  });
+
+  it('章节密度目标区间：每章 2.5~5 分钟（SPEC-03 五次迭代）', () => {
+    expect(body).toContain('2.5~5 分钟');
+  });
+
+  it('章节数估算：视频分钟数 ÷ 3.5 且不少于 3 章', () => {
+    expect(body).toContain('÷ 3.5');
+    expect(body).toContain('不少于 3 章');
+  });
+
+  it('分块与章节解耦：一个分块 1~3 个自然章节，不要机械地一块一章', () => {
+    expect(body).toContain('1~3 个自然章节');
+    expect(body).toContain('不要机械地一块一章');
+  });
+
+  it('不再含旧的章节数上限表述（不超过 max(3, …)）', () => {
+    expect(body).not.toContain('不超过 max(3');
+    expect(body).not.toContain('3–8 分钟');
   });
 
   it('bullets 为 {text, startSec} 对象格式', () => {

@@ -1,5 +1,5 @@
 /**
- * 设置页模型表单的纯逻辑（预设/校验/抽帧可用性/合并写回）。
+ * 设置页模型表单的纯逻辑（预设/校验/抽帧可用性/合并写回/当前策略摘要）。
  * 抽成纯函数便于单测；端点与模型标识一律来自 src/config 的 MODEL_PRESETS（红线 9）。
  */
 import { MODEL_PRESETS } from '../../config';
@@ -86,4 +86,55 @@ export function visionActiveFor({
 /** 合并写回：把局部更新合并进整份 settings（不动其他分区） */
 export function mergeSettings(current: Settings, patch: Partial<Settings>): Settings {
   return { ...current, ...patch };
+}
+
+/** 策略摘要的模块中文名（只用于展示） */
+const STRATEGY_MODULE_LABELS: Record<VisionModule, string> = {
+  outline: '大纲',
+  mindmap: '导图',
+  qa: '问答',
+};
+
+/** 策略摘要固定行：模型路由规则（带画面走视觉，其余走文本） */
+const ROUTING_RULE =
+  '路由规则：带画面的请求（开启抽帧的模块生成、区间提问）使用视觉模型；术语解释、自由提问、未带画面的请求使用文本模型';
+
+/**
+ * 取接口地址的主机名（红线 9：摘要只暴露主机名，不输出完整地址）。
+ * 空值或非法 URL → '无效地址'。
+ */
+export function hostOf(baseUrl?: string): string {
+  const raw = baseUrl?.trim();
+  if (!raw) return '无效地址';
+  try {
+    return new URL(raw).hostname;
+  } catch {
+    return '无效地址';
+  }
+}
+
+/** 模型摘要行：已配置 → 主机名 / 模型；未配置 → 括号内的兜底说明 */
+function describeModel(cfg: ModelConfig | undefined, fallback: string): string {
+  if (!isModelConfigured(cfg)) return fallback;
+  return `${hostOf(cfg?.baseUrl)} / ${cfg?.model ?? ''}`;
+}
+
+/**
+ * 「当前策略」摘要（设置页展示用纯函数）：
+ * 文本模型 / 视觉模型 / 抽帧状态（含各模块生效情况）/ 路由规则，每行一条。
+ */
+export function describeModelStrategy(settings: Settings): string[] {
+  const text = describeModel(settings.model, '未配置（功能不可用）');
+  const vision = describeModel(settings.visionModel, '未配置（抽帧将自动跳过）');
+
+  const modules = Object.keys(STRATEGY_MODULE_LABELS) as VisionModule[];
+  const inactive = modules.filter((m) => !visionActiveFor({ settings, module: m }));
+  const frame =
+    settings.visionEnabled === true
+      ? inactive.length === 0
+        ? '抽帧：已开启（大纲✓ 导图✓ 问答✓）'
+        : `抽帧：已开启（关闭：${inactive.map((m) => STRATEGY_MODULE_LABELS[m]).join('、')}）`
+      : '抽帧：已关闭（所有模块均不抽帧，一律使用文本模型）';
+
+  return [`文本模型：${text}`, `视觉模型：${vision}`, frame, ROUTING_RULE];
 }

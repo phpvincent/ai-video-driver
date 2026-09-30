@@ -20,6 +20,7 @@ import { MSG } from '../../messages';
 import { testObsidianConnection } from '../obsidianLoader';
 import {
   applyPreset,
+  describeModelStrategy,
   isModelConfigured,
   mergeSettings,
   validateModelForm,
@@ -507,6 +508,13 @@ export function SettingsPage({
 
   const visionConfigured = isModelConfigured(visionForm);
   const presetKeys = Object.keys(MODEL_PRESETS) as PresetKey[];
+  /** 当前策略摘要：由表单当前值合成 settings 后交给纯函数，随输入实时更新 */
+  const strategyLines = describeModelStrategy({
+    model: formToModelConfig(form, outlineTokenBudget),
+    visionModel: visionFormToModelConfig(visionForm),
+    visionEnabled,
+    visionModules,
+  });
 
   return (
     <div className="settings">
@@ -676,6 +684,16 @@ export function SettingsPage({
             {visionFeedback.text}
           </p>
         )}
+      </section>
+
+      {/* ②’ 当前策略：读以上各区表单当前值，随输入实时更新（只读展示，不参与保存） */}
+      <section className="settings-section">
+        <h4>当前策略</h4>
+        <ul className="settings-hint" style={{ paddingLeft: 18, listStyle: 'disc' }}>
+          {strategyLines.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
       </section>
 
       {/* ③ 抽帧开关：全局默认关闭，模块开关随全局失效 */}
