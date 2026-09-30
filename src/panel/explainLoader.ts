@@ -6,7 +6,7 @@
 import { findSectionAt } from '../core/context/compiler';
 import { resolveModuleModel, visionActiveFor } from './settings/modelForm';
 import { VISION } from '../config';
-import { cueWindows, planFrameTargets } from '../core/vision/framePlanner';
+import { planFrames } from './framesClient';
 import { chatCompletion } from '../core/harness/modelClient';
 import {
   buildKnowledgeContext,
@@ -131,20 +131,21 @@ async function loadFrames(args: {
 }): Promise<CapturedFrame[]> {
   if (!args.enabled) return [];
   const [start, end] = args.rangeMs ?? [args.positionMs - 30_000, args.positionMs + 30_000];
-  // 结构感知抽帧：把区间切成若干窗口（每窗 ≥20s，最多 8 窗），按画面价值分取前 N 个
-  const span = Math.max(1, end - start);
-  const windowMs = Math.max(20_000, Math.ceil(span / 8));
-  const windows = cueWindows(args.cues.filter((c) => c.startMs >= start && c.startMs < end), windowMs);
-  const fallbackWindows = windows.length > 0 ? windows : [{ startMs: Math.max(0, start), endMs: Math.max(start + 1, end) }];
-  const plan = planFrameTargets(fallbackWindows, args.cues, {
-    budget: VISION.qaFrames,
-    minGapMs: VISION.minGapMs,
-    minScore: 0, // 问答是定向提问，区间内即便分低也要给画面，交由去重闸门兜底
-  });
-  const targets = plan
-    .map((w) => w.targetMs)
+  // 模型优先（区间内如何抽最能回答问题），失败/未配置则回退确定性公式
+  const rangeCues = args.cues.filter((c) => c.startMs >= start && c.startMs < end);
+  const targets = (
+    await planFrames({
+      videoId: args.videoId,
+      module: 'qa',
+      cues: rangeCues.length > 0 ? rangeCues : args.cues,
+      sections: [],
+      durationMs: Math.max(end, args.cues[args.cues.length - 1]?.endMs ?? end),
+      budget: VISION.qaFrames,
+    })
+  )
     .filter((t) => Number.isFinite(t) && t >= 0)
     .slice(0, VISION.qaFrames);
+  // 模型规划可能给出区间外的时间点：问答只关心本区间，越界点丢弃后由去重闸门兜底
   if (targets.length === 0) return [];
   try {
     const response = (await sendRuntimeMessage({

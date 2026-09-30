@@ -12,6 +12,7 @@ import segmentQaMd from './segment-qa.md?raw';
 import termExplainerMd from './term-explainer.md?raw';
 import knowledgeCaptureMd from './knowledge-capture.md?raw';
 import personaMd from './persona.md?raw';
+import framePlanMd from './frame-plan.md?raw';
 
 export interface PromptHeader {
   promptVersion: string;
@@ -46,6 +47,7 @@ const TERM_EXPLAINER_HEADER = parsePromptHeader(termExplainerMd);
 const SEGMENT_QA_HEADER = parsePromptHeader(segmentQaMd);
 const KNOWLEDGE_CAPTURE_HEADER = parsePromptHeader(knowledgeCaptureMd);
 const PERSONA_HEADER = parsePromptHeader(personaMd);
+const FRAME_PLAN_HEADER = parsePromptHeader(framePlanMd);
 
 /** 各 prompt 当前版本（来自文件头注释，单一事实源） */
 export const PROMPT_VERSIONS = {
@@ -56,6 +58,7 @@ export const PROMPT_VERSIONS = {
   segmentQa: SEGMENT_QA_HEADER.promptVersion,
   knowledgeCapture: KNOWLEDGE_CAPTURE_HEADER.promptVersion,
   persona: PERSONA_HEADER.promptVersion,
+  framePlan: FRAME_PLAN_HEADER.promptVersion,
 } as const;
 
 /** 大纲生成 system prompt 正文（单一事实源：src/prompts/outline.md） */
@@ -97,4 +100,12 @@ export function getKnowledgeCaptureSystemPrompt(): string {
  */
 export function getPersonaSystemPrompt(): string {
   return stripPromptHeaderComments(personaMd);
+}
+
+/**
+ * 抽帧规划 system prompt 正文（单一事实源：src/prompts/frame-plan.md）。
+ * 模型规划失败时回退确定性公式（core/vision/framePlanner）。
+ */
+export function getFramePlanSystemPrompt(): string {
+  return stripPromptHeaderComments(framePlanMd);
 }

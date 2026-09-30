@@ -5,9 +5,14 @@
  * - 选中方案缺少 Key（不完整）时提示将回退默认（与 resolveModuleModel 的回退语义一致）
  * 自包含组件：自管理状态，不需要父组件传数据；三个 Tab 各挂一个（outline/mindmap/qa）。
  */
-import { useEffect, useState } from 'react';
-import { MSG } from '../messages';
-import { isModelConfigured } from './settings/modelForm';
+import {
+  useEffect, useState } from 'react';
+import {
+  MSG } from '../messages';
+import {
+  isModelConfigured,
+  seedProfilesIfEmpty,
+} from './settings/modelForm';
 import type { ModelConfig, Settings } from '../types';
 
 export type PickerModule = 'outline' | 'mindmap' | 'qa';
@@ -93,7 +98,8 @@ export function ModelPicker({ module }: ModelPickerProps) {
     fetchSettings()
       .then((stored) => {
         if (cancelled) return;
-        setOptions(buildPickerOptions(stored));
+        // 读取时补种子：内置方案此前只在设置页载入时生成且未持久化，导致下拉只有默认项
+        setOptions(buildPickerOptions(seedProfilesIfEmpty(stored)));
         setSelected(stored.moduleModel?.[module] ?? '');
       })
       .catch(() => {
@@ -116,7 +122,7 @@ export function ModelPicker({ module }: ModelPickerProps) {
         return sendRuntimeMessage({ type: MSG.SET_SETTINGS, payload: next }).then(
           (response: unknown) => {
             if ((response as { ok?: boolean } | null)?.ok === true) {
-              setOptions(buildPickerOptions(next));
+              setOptions(buildPickerOptions(seedProfilesIfEmpty(next)));
             }
           },
         );

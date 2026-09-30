@@ -24,8 +24,7 @@ import {
 } from '../prompts';
 import { chunkCues } from '../core/pipeline/chunk';
 import { VISION } from '../config';
-import { planFrameTargets } from '../core/vision/framePlanner';
-import { requestFrames, toPipelineImage } from './framesClient';
+import { planFrames, requestFrames, toPipelineImage } from './framesClient';
 import { resolveModuleModel, visionActiveFor } from './settings/modelForm';
 import type { Settings } from '../types';
 import { createSubtitleDb, getOutline, getSubtitle, saveOutline } from '../storage/db';
@@ -90,16 +89,16 @@ export async function loadOutlineForVideo(
   if (useVision) {
     // 结构感知抽帧：大纲生成时还没有章节，按固定窗口切分后用字幕画面提示词打分，
     // 按分数分配帧预算（预算内取分最高的窗口，命中提示词的字幕时刻优先）
-    const chunks = chunkCues(cues);
-    const windows = chunks
-      .map((c) => ({ startMs: c[0]?.startMs ?? 0, endMs: (c[c.length - 1]?.endMs ?? 0) + 1 }))
-      .filter((w) => w.endMs > w.startMs);
-    const plan = planFrameTargets(windows, cues, {
+    // 模型优先（判断如何抽最能还原完整性），失败/未配置则回退确定性公式
+    const targets = await planFrames({
+      videoId,
+      module: 'outline',
+      cues,
+      sections: [],
+      durationMs: cues[cues.length - 1]?.endMs ?? 0,
       budget: VISION.maxFramesPerRequest,
-      minGapMs: VISION.minGapMs,
-      minScore: VISION.minScore,
     });
-    const frames = await requestFrames({ videoId, targetsMs: plan.map((w) => w.targetMs) });
+    const frames = await requestFrames({ videoId, targetsMs: targets });
     for (const f of frames) chunkFrameMap.set(f.targetMs, toPipelineImage(f));
   }
 
