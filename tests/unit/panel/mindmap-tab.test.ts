@@ -11,6 +11,8 @@ import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { shortenLabel } from '../../../src/core/pipeline/conceptMap';
 import type { ConceptItem, ConceptMapData, ConceptStage, Section } from '../../../src/types';
+import { CONCEPT_FAILURE_NO_DETAIL, describeConceptMapFailure } from '../../../src/panel/mindmapLoader';
+import { LlmLogView, LLM_LOG_EMPTY_TEXT, formatLogTime, summarizeEntry } from '../../../src/panel/LlmLogView';
 import {
   CHRONO_VIEW_LABEL,
   CONCEPT_DEGRADED_TEXT,
@@ -592,5 +594,74 @@ describe('MindmapTab 渲染冒烟（renderToString，仅无 effect 分支）', (
   it('shortenLabel 复用（panel 与 pipeline 共用同一实现）', () => {
     expect(shortenLabel('一二三四五六七八九十一二三')).toBe('一二三四五六七八九十一…');
     expect(shortenLabel('上下文窗口')).toBe('上下文窗口');
+  });
+});
+
+describe('describeConceptMapFailure（降级原因可读化）', () => {
+  it('模型输出类失败：保留原始原因并追加排查建议', () => {
+    const err = new Error('概念图生成失败（重试 1 次后仍失败）：模型输出未通过 Schema 校验：stages');
+    const text = describeConceptMapFailure(err);
+    expect(text).toContain('未通过 Schema 校验');
+    expect(text).toContain('可尝试');
+    expect(text).toContain('maxTokens');
+  });
+
+  it('配置类失败：原样返回已有指引，不追加无关建议', () => {
+    expect(describeConceptMapFailure(new Error('模型未配置：请先在设置页配置模型'))).toBe(
+      '模型未配置：请先在设置页配置模型',
+    );
+    expect(describeConceptMapFailure(new Error('无章节可用：请先生成大纲'))).toBe(
+      '无章节可用：请先生成大纲',
+    );
+  });
+
+  it('无 message 的错误 / 非 Error / 空串 → 兜底文案（指向控制台）', () => {
+    expect(describeConceptMapFailure(new Error(''))).toBe(CONCEPT_FAILURE_NO_DETAIL);
+    expect(describeConceptMapFailure(undefined)).toBe(CONCEPT_FAILURE_NO_DETAIL);
+    expect(describeConceptMapFailure('   ')).toBe(CONCEPT_FAILURE_NO_DETAIL);
+    expect(CONCEPT_FAILURE_NO_DETAIL).toContain('[vsc]');
+  });
+
+  it('字符串错误也走可读化', () => {
+    expect(describeConceptMapFailure('概念图生成失败：x')).toContain('概念图生成失败：x');
+  });
+});
+
+describe('LlmLogView 渲染冒烟（无 chrome 环境不抛错）', () => {
+  it('渲染出工具栏与空态提示', () => {
+    const html = renderToString(createElement(LlmLogView));
+    expect(html).toContain('llm-log');
+    expect(html).toContain('记录交互日志');
+    expect(html).toContain('llm-log-list');
+    // renderToString 不触发 effect：首屏为 loading，空态文案在加载完成后才出现
+    expect(html).toContain('刷新中…');
+    expect(html).not.toContain(LLM_LOG_EMPTY_TEXT);
+  });
+
+  it('summarizeEntry：模型 / 主机 / 耗时 / 字符数 / 状态码', () => {
+    const text = summarizeEntry({
+      id: 'x',
+      at: '2026-09-30T10:00:00.000Z',
+      label: 'qa',
+      ok: false,
+      model: 'm1',
+      endpointHost: 'api.example.test',
+      durationMs: 1234,
+      status: 401,
+      inputChars: 100,
+      outputChars: 20,
+      images: 2,
+      requestPreview: 'r',
+      responsePreview: 's',
+    });
+    expect(text).toContain('m1@api.example.test');
+    expect(text).toContain('1234ms');
+    expect(text).toContain('HTTP 401');
+    expect(text).toContain('2 帧');
+  });
+
+  it('formatLogTime：非法时间回落 --:--:--', () => {
+    expect(formatLogTime('not-a-date')).toBe('--:--:--');
+    expect(LLM_LOG_EMPTY_TEXT.length).toBeGreaterThan(0);
   });
 });

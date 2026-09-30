@@ -4,7 +4,7 @@
  * ChatTab 的 explain props 由本模块实现。
  */
 import { findSectionAt } from '../core/context/compiler';
-import { resolveModuleModel, visionActiveFor } from './settings/modelForm';
+import { resolveModel, visionActiveFor } from './settings/modelForm';
 import { setGenerationSource } from './generationTrace';
 import { VISION } from '../config';
 import { planFrames } from './framesClient';
@@ -34,7 +34,9 @@ import { getObsidianConfig, readIndex } from './obsidianLoader';
 import { personaInstruction } from '../core/pipeline/persona';
 import { getPersonaCached } from './personaLoader';
 import { buildWebContext, searchWeb, trimSnippets } from '../core/knowledge/webSearch';
-import { CONTEXT, WEB_SEARCH } from '../config';
+import { CONTEXT } from '../config';
+import { frameBudgetFor } from '../core/vision/framePlanner';
+import { captionFrame } from '../core/vision/structuralCandidates';
 import type { WebSnippet } from '../core/knowledge/webSearch';
 import type { CapturedFrame } from '../messages';
 
@@ -94,23 +96,15 @@ async function loadKnowledge(args: {
 
 /** ChatTab explain props 的实现（App 接线传入） */
 /**
- * 公开资料检索（可选）：仅当用户在设置里配置了检索服务并开启时才调用；
- * 未配置 / 失败一律返回空，不阻断问答。结果走与字幕、知识库同一预算。
+ * 公开资料检索（内置 DuckDuckGo，免配置、用户无感知）：
+ * 每次问答自动检索一次；失败 / 超时 / 无结果一律返回空，回答照常（红线 8）。
+ * 结果走与字幕、知识库同一预算（红线 3）。
  */
-async function loadWeb(args: {
-  enabled: boolean;
-  query: string;
-}): Promise<{ snippets: WebSnippet[]; context: string }> {
-  if (!args.enabled) return { snippets: [], context: '' };
-  const settings = await fetchSettings();
-  const cfg = settings.webSearch as { endpoint?: string; apiKey?: string; engine?: string } | undefined;
-  if (!cfg?.endpoint || !cfg?.apiKey) return { snippets: [], context: '' };
+async function loadWeb(query: string): Promise<{ snippets: WebSnippet[]; context: string }> {
   try {
     const raw = await searchWeb(
-      { endpoint: cfg.endpoint, apiKey: cfg.apiKey, engine: cfg.engine },
+      query,
       ((url: string, init?: RequestInit) => fetch(url, init)) as never,
-      args.query,
-      { maxResults: WEB_SEARCH.defaultMaxResults },
     );
     const snippets = trimSnippets(raw, CONTEXT.webContextMaxChars);
     return { snippets, context: buildWebContext(snippets, CONTEXT.webContextMaxChars) };
@@ -129,6 +123,8 @@ async function loadFrames(args: {
   rangeMs: [number, number] | null;
   positionMs: number;
   cues: Cue[];
+  /** 已有大纲的章节：用于生成"章节开头/知识点/结尾"候选（区间内的部分） */
+  sections?: Section[];
 }): Promise<CapturedFrame[]> {
   if (!args.enabled) return [];
   const [start, end] = args.rangeMs ?? [args.positionMs - 30_000, args.positionMs + 30_000];
@@ -139,16 +135,19 @@ async function loadFrames(args: {
       videoId: args.videoId,
       module: 'qa',
       cues: rangeCues.length > 0 ? rangeCues : args.cues,
-      sections: [],
+      // 只取与区间相交的章节，并把边界裁到区间内（候选才不会落到区间外）
+      sections: (args.sections ?? [])
+        .filter((s) => s.startMs < end && s.endMs > start)
+        .map((s) => ({ ...s, startMs: Math.max(s.startMs, start), endMs: Math.min(s.endMs, end) })),
       durationMs: Math.max(end, args.cues[args.cues.length - 1]?.endMs ?? end),
-      budget: VISION.qaFrames,
+      budget: frameBudgetFor('qa', Math.max(0, end - start)),
       meta: currentVideoMetaRef.value
         ? { title: currentVideoMetaRef.value.title, page: undefined }
         : undefined,
     })
   )
     .filter((t) => Number.isFinite(t) && t >= 0)
-    .slice(0, VISION.qaFrames);
+    .slice(0, frameBudgetFor('qa', Math.max(0, end - start)));
   // 模型规划可能给出区间外的时间点：问答只关心本区间，越界点丢弃后由去重闸门兜底
   if (targets.length === 0) return [];
   try {
@@ -164,8 +163,8 @@ async function loadFrames(args: {
 
 export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
   const settings = (await fetchSettings()) as unknown as Settings;
-  // 问答模块模型：moduleModel 命中方案 → 否则默认；方案缺 Key 回退默认
-  const model = resolveModuleModel(settings, 'qa');
+  // 当前生效模型（大纲 / 导图 / 问答共用一套，不再按模块分别选）
+  const model = resolveModel(settings);
   if (!model?.apiKey) {
     setGenerationSource('qa', { kind: 'fallback', reason: '模型未配置' });
     throw new Error('模型未配置：请先在设置页配置模型');
@@ -192,15 +191,13 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
     enabled: knowledgeSearch,
   });
 
-  // 公开资料检索（可选，与字幕/知识库共享预算）
-  const web = await loadWeb({
-    enabled: settings.webSearchEnabled !== false && settings.webSearch !== undefined,
-    query: args.term ?? args.question,
-  });
+  // 公开资料检索（内置 DuckDuckGo，免配置；与字幕/知识库共享预算）
+  const web = await loadWeb(args.term ?? args.question);
   // 关键帧（可选：需多模态模型，deepseek-chat 不支持视觉）
   const frames = await loadFrames({
     enabled: visionActiveFor({ settings, module: 'qa' }),
     cues,
+    sections,
     videoId,
     rangeMs: args.rangeMs,
     positionMs: args.positionMs,
@@ -218,10 +215,12 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
     videoMeta: currentVideoMetaRef.value ?? undefined,
     // 知识库与公开资料各自带独立分隔标记，合并进同一素材分区
     knowledgeContext: [knowledge.context, web.context].filter(Boolean).join('\n\n'),
-    images: frames.map((f) => ({
+    images: frames.map((f, i) => ({
       dataBase64: f.dataBase64,
       mime: 'image/jpeg',
       timeMs: f.actualMs,
+      caption: captionFrame(f.actualMs, i, frames.length, sections, cues),
+      ...(f.thumbBase64 ? { thumbBase64: f.thumbBase64 } : {}),
     })),
   };
 
@@ -243,7 +242,8 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
       // 结构化任务禁用思考：推理会消耗输出 token 预算（用户可在设置中开启）
       thinking: settings.disableThinking === false ? { type: 'enabled' } : { type: 'disabled' },
       // 多模态：图像由 explain 层透传（需模型支持，如未支持会返回错误由重试逻辑处理）
-      images: images?.map((i) => ({ dataBase64: i.dataBase64, mime: i.mime })),
+      images: images?.map((i) => ({ dataBase64: i.dataBase64, mime: i.mime, timeMs: i.timeMs, caption: i.caption, thumbBase64: i.thumbBase64 })),
+      label: 'qa',
     }).then((res) => ({ content: res.content }));
   };
 

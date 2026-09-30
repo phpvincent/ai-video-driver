@@ -49,6 +49,8 @@ export interface MindmapTabProps {
   generating?: boolean;
   /** conceptMap 为降级术语关联图（App 生成 catch 路径设置；与 model 约定双手段并存） */
   degraded?: boolean;
+  /** 生成失败的具体原因（App catch 后经 describeConceptMapFailure 传入）；不传则展示通用文案 */
+  degradedText?: string;
   /** 无大纲时引导去大纲 Tab 生成（可选） */
   onGoOutline?: () => void;
 }
@@ -59,6 +61,8 @@ export interface MindmapTabProps {
 
 /** 根节点文案（父 agent 接线时可扩展为视频标题，本期固定） */
 export const MINDMAP_ROOT_TEXT = '大纲';
+/** 阶段色带的配色档数（按顺序轮换，纯展示用） */
+export const STAGE_HUE_COUNT = 5;
 
 /** 空大纲引导文案 */
 export const MINDMAP_EMPTY_TEXT = '请先生成大纲';
@@ -457,6 +461,19 @@ function ConceptView({
   // 阶段顺序 = 模型输出的讲解推进顺序（确定性：不重排）
   return (
     <div className="cm-container" ref={containerRef}>
+      <div className="cm-summary-bar" role="status">
+        <span className="cm-summary-item">
+          <b>{stages.length}</b> 阶段
+        </span>
+        <span className="cm-summary-sep" aria-hidden="true" />
+        <span className="cm-summary-item">
+          <b>{stages.reduce((n, s) => n + s.concepts.length, 0)}</b> 概念
+        </span>
+        <span className="cm-summary-sep" aria-hidden="true" />
+        <span className="cm-summary-item">
+          <b>{stages.reduce((n, s) => n + s.concepts.reduce((m, c) => m + c.anchors.length, 0), 0)}</b> 处可跳播
+        </span>
+      </div>
       {degraded && (
         <div className="cm-degraded-banner" role="status">
           <span className="cm-degraded-text">{degradedText ?? CONCEPT_DEGRADED_TEXT}</span>
@@ -475,7 +492,7 @@ function ConceptView({
             className={`cm-stage${activeStageIds.has(stage.id) ? ' stage-current' : ''}`}
           >
             <header className="cm-stage-header">
-              <span className="cm-stage-step">{si + 1}</span>
+              <span className={`cm-stage-step stage-hue-${si % STAGE_HUE_COUNT}`}>{si + 1}</span>
               <span className="cm-stage-title">{stage.label}</span>
               <span className="cm-stage-count">{`${stage.concepts.length} 概念`}</span>
             </header>
@@ -486,7 +503,10 @@ function ConceptView({
                 const earliest = earliestAnchorMs(concept);
                 const [primary, ...rest] = concept.anchors;
                 return (
-                  <div key={concept.id} className={`cm-concept${active ? ' concept-active' : ''}`}>
+                  <div
+                    key={concept.id}
+                    className={`cm-concept imp-${concept.importance}${active ? ' concept-active' : ''}`}
+                  >
                     {/* rail 节点圆点：有语义——该概念最早锚点时间，hover 显示；无锚不渲染 */}
                     {earliest !== null && (
                       <span
@@ -615,6 +635,8 @@ export function MindmapTab(props: MindmapTabProps) {
     conceptMap = null,
     generating = false,
     degraded = false,
+    /** 生成失败的具体原因（App 捕获后传入）；缺省时展示通用降级文案 */
+    degradedText,
     onGoOutline,
   } = props;
 
@@ -663,8 +685,8 @@ export function MindmapTab(props: MindmapTabProps) {
             {generating ? '生成中…' : conceptMap ? '重新生成' : CONCEPT_GENERATE_TEXT}
           </button>
         )}
-        {/* 模块模型选择（margin-left:auto 靠右；select 不参与 tablist 语义） */}
-        <ModelPicker module="mindmap" />
+        {/* 模型选择（margin-left:auto 靠右；select 不参与 tablist 语义） */}
+        <ModelPicker onOpenSettings={onOpenSettings} />
         <GenerationBanner module="mindmap" />
       </div>
 
@@ -679,7 +701,7 @@ export function MindmapTab(props: MindmapTabProps) {
               positionMs={positionMs}
               onRequestSeek={onRequestSeek}
               degraded={mapDegraded}
-              degradedText={CONCEPT_DEGRADED_TEXT}
+              degradedText={degradedText ?? CONCEPT_DEGRADED_TEXT}
               onRetry={generateConceptMap ? handleGenerate : undefined}
             />
           ) : generating ? (

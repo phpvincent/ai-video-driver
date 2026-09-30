@@ -16,6 +16,7 @@
 import { CONCEPT_MAP } from '../../config';
 import type { ConceptAnchor, ConceptItem, ConceptStage, Section } from '../../types';
 import { formatTimecode } from './prompts';
+import { parseJsonLoose, withRepairHint } from './jsonRepair';
 import type {
   ConceptModelFn,
   ConceptRaw,
@@ -56,22 +57,29 @@ export const ConceptStagesSchema = z.object({
 });
 
 /**
- * 解析并校验模型输出：JSON.parse + ConceptStagesSchema。
+ * 解析并校验模型输出：JSON.parse（失败时尝试修复**被截断**的输出）+ ConceptStagesSchema。
  * 解析/校验失败 throw，由 buildConceptMap 的重试逻辑捕获。
+ *
+ * 截断是最常见的失败形态（最外层 `}` 缺失，或最后一个阶段只输出一半），此时重试
+ * 往往得到同样的截断结果；故先由代码补齐闭合括号，实在不行才判失败。
  */
 export function parseConceptStages(content: string): ConceptStagesRaw {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(content);
-  } catch (err) {
-    throw new Error(`模型输出不是合法 JSON：${err instanceof Error ? err.message : String(err)}`);
+  const loose = parseJsonLoose(content);
+  if (loose === null) {
+    let message = '未知原因';
+    try {
+      JSON.parse(content);
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    throw new Error(`模型输出不是合法 JSON：${message}`);
   }
-  const parsed = ConceptStagesSchema.safeParse(raw);
+  const parsed = ConceptStagesSchema.safeParse(loose.value);
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((i) => `${i.path.join('.')}: ${i.message}`)
       .join('; ');
-    throw new Error(`模型输出未通过 Schema 校验：${issues}`);
+    throw new Error(withRepairHint(`模型输出未通过 Schema 校验：${issues}`, loose.repaired));
   }
   return parsed.data;
 }
@@ -133,7 +141,17 @@ export function describeMapImages(images?: PipelineImage[] | null): string {
       ? formatTimecode(image.timeMs)
       : `第 ${i + 1} 张`,
   );
-  return `以下附带 ${images.length} 张课程画面（时间点：${times.join('、')}），请结合画面中的标题、代码、图示理解内容结构。`;
+  const paired = images.some((image) => typeof image.caption === 'string' && image.caption.length > 0);
+  if (!paired) {
+    return `以下附带 ${images.length} 张课程画面（时间点：${times.join('、')}），请结合画面中的标题、代码、图示理解内容结构。`;
+  }
+  // 配对模式：每张图前紧贴【画面 i/N · 时间 · 第几章 · 章节开头/知识点/结尾】+ 此刻字幕
+  return (
+    `以下附带 ${images.length} 张课程画面，每张图前都有一行【说明】标出它属于第几章、处于章节开头/知识点/结尾，以及此刻字幕。\n` +
+    '使用方式：①把同一章的"开头"与"结尾"画面对照，看出本章从什么问题出发、推进到什么结论，据此划分阶段；' +
+    '②画面中的标题、代码、图示、界面文字是字幕说不清的信息，概念与细节优先从画面中提炼（仍须与章节内容一致，禁止编造）；' +
+    '③画面与字幕冲突时以字幕为准，画面看不清时不要臆测其中的文字。'
+  );
 }
 
 /**
@@ -282,10 +300,16 @@ export async function buildConceptMap(
 
   let lastError = '';
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    // 截断（输出在 JSON 结束前就没了）是最常见的失败形态：同样的上下文重试大概率
+    // 得到同样的截断，故重试提示必须明确要求"输出更短、务必闭合"，而不是泛泛重来
+    const truncated = lastError.includes('不是合法 JSON');
+    const retryHint = truncated
+      ? '上次输出在 JSON 结束前就被截断了。请压缩内容：阶段取 3 个、每阶段概念不超过 4 个、每条 details 尽量短，务必输出完整闭合的 JSON。'
+      : '请重新输出严格符合要求的 JSON，不要包含任何其他文字。';
     const userPrompt =
       attempt === 0
         ? baseUserPrompt
-        : `${baseUserPrompt}\n\n[重试] 上一次输出未通过校验：${lastError}\n请重新输出严格符合要求的 JSON，不要包含任何其他文字。`;
+        : `${baseUserPrompt}\n\n[重试] 上一次输出未通过校验：${lastError}\n${retryHint}`;
     try {
       const res = await args.modelFn({
         systemPrompt: args.getSystemPrompt(),

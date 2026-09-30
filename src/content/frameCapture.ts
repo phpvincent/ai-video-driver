@@ -9,22 +9,33 @@
  */
 import { MSG, type CapturedFrame, type RuntimeMessage } from '../messages';
 import type { VideoId } from '../types';
+import { DHASH_H, DHASH_W, dhashFromGray, grayFromRgba } from '../core/vision/dhash';
 
-/** 默认最长边像素 */
-const DEFAULT_MAX_SIZE = 512;
+/**
+ * 默认最长边像素（panel 会通过 payload.maxSize 传 VISION.maxSize 覆盖）。
+ * content 禁止 import config（红线 10），故这里保留同值兜底。
+ */
+const DEFAULT_MAX_SIZE = 896;
 /** 默认 JPEG 质量 */
-const DEFAULT_QUALITY = 0.7;
+const DEFAULT_QUALITY = 0.75;
+/** 日志缩略图最长边（只给人看，不发给模型） */
+const THUMB_SIZE = 160;
 /** 默认单帧 seek 超时 */
 const DEFAULT_TIMEOUT_MS = 3_000;
-/** 默认最多抽帧数（红线 3：图像不额外膨胀文本预算，帧数硬上限） */
-const DEFAULT_MAX_FRAMES = 6;
+/**
+ * 默认最多抽帧数（红线 3 的成本护栏）。
+ * 早期写死 6 帧，导致「规划 16 帧」在 content 侧被截断成 6 帧——规划与执行脱节。
+ * 现在跟随调用方规划的帧数（见 registerFrameCaptureHandler），此处只做兜底上限。
+ */
+// 必须 ≥ FRAME_PLAN.mindmap.hardMax（content 禁 import config，由单测守住两者一致）
+export const DEFAULT_MAX_FRAMES = 48;
 /** 画布尺寸下限：防退化（0 宽 / 极端宽高比抽帧得到空白图） */
 const MIN_CANVAS_SIZE = 16;
 
 export interface FrameCaptureOptions {
-  /** 最长边像素，默认 512 */
+  /** 最长边像素，默认 896 */
   maxSize?: number;
-  /** JPEG 质量，默认 0.7 */
+  /** JPEG 质量，默认 0.75 */
   quality?: number;
   /** 单帧超时（毫秒），默认 3000 */
   timeoutMs?: number;
@@ -54,9 +65,19 @@ export type DrawToDataUrl = (
   quality: number,
 ) => string;
 
+/**
+ * 抽取画面附加信息（dHash + 缩略图）。浏览器默认实现走 canvas；单测注入或省略。
+ * 返回 null 表示取不到（不影响主帧）。
+ */
+export type DescribeFrame = (
+  video: HTMLVideoElementLike,
+) => { dhash: string; thumbBase64: string } | null;
+
 /** 内部扩展选项：drawToDataUrl 仅用于注入，不属对外契约 */
 interface CaptureRuntimeOptions extends FrameCaptureOptions {
   drawToDataUrl?: DrawToDataUrl;
+  /** 注入 dHash/缩略图提取（缺省：浏览器环境用 canvas，非浏览器环境跳过） */
+  describeFrame?: DescribeFrame;
 }
 
 /**
@@ -121,6 +142,31 @@ function defaultDrawToDataUrl(
   return canvas.toDataURL('image/jpeg', quality);
 }
 
+/** 浏览器默认：9×8 采样算 dHash + 160px 缩略图（失败返回 null） */
+function defaultDescribeFrame(video: HTMLVideoElementLike): { dhash: string; thumbBase64: string } | null {
+  if (typeof document === 'undefined') return null;
+  try {
+    const src = video as unknown as CanvasImageSource;
+    const tiny = document.createElement('canvas');
+    tiny.width = DHASH_W;
+    tiny.height = DHASH_H;
+    const tctx = tiny.getContext('2d', { willReadFrequently: true } as CanvasRenderingContext2DSettings);
+    if (!tctx) return null;
+    tctx.drawImage(src, 0, 0, DHASH_W, DHASH_H);
+    const dhash = dhashFromGray(grayFromRgba(tctx.getImageData(0, 0, DHASH_W, DHASH_H).data));
+    const size = computeCanvasSize(video.videoWidth, video.videoHeight, THUMB_SIZE);
+    const thumb = document.createElement('canvas');
+    thumb.width = size.width;
+    thumb.height = size.height;
+    const thctx = thumb.getContext('2d');
+    if (!thctx) return { dhash, thumbBase64: '' };
+    thctx.drawImage(src, 0, 0, size.width, size.height);
+    return { dhash, thumbBase64: toBase64(thumb.toDataURL('image/jpeg', 0.6)) };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * 定位到 seconds 并等待 seeked；超时 / 无监听能力时立即返回（超时仍尝试抽帧）。
  */
@@ -171,15 +217,20 @@ export async function captureFrameAt(
   await seekTo(video, seconds, timeoutMs);
   const { width, height } = computeCanvasSize(video.videoWidth, video.videoHeight, maxSize);
   const dataUrl = draw(video, width, height, quality);
+  // 注入了 drawToDataUrl（单测）但没注入 describeFrame 时不走浏览器 canvas
+  const describe = opts.describeFrame ?? (opts.drawToDataUrl ? undefined : defaultDescribeFrame);
+  const extra = describe ? describe(video) : null;
   return {
     targetMs,
     actualMs: Math.round((Number.isFinite(video.currentTime) ? video.currentTime : 0) * 1000),
     dataBase64: toBase64(dataUrl),
+    ...(extra?.dhash ? { dhash: extra.dhash } : {}),
+    ...(extra?.thumbBase64 ? { thumbBase64: extra.thumbBase64 } : {}),
   };
 }
 
 /**
- * 批量抽帧：取前 maxFrames（默认 6）个目标；单帧失败跳过继续（不整体失败）。
+ * 批量抽帧：取前 maxFrames（默认 48）个目标；单帧失败跳过继续（不整体失败）。
  */
 export async function captureFrames(
   video: HTMLVideoElementLike,
@@ -191,6 +242,9 @@ export async function captureFrames(
   // 抽帧要连续 seek，会让用户看到画面来回跳；记录起点，抽完恢复位置与播放状态
   const originMs = Number.isFinite(video.currentTime) ? video.currentTime : 0;
   const wasPlaying = !video.paused;
+  // 抽帧要连续 seek：若此时正在播放，画面会一路乱跳。先暂停，抽完再恢复原状态。
+  // 帧数越多越明显（10 分钟密集视频可取到十几帧），这一步不能省。
+  if (wasPlaying) video.pause?.();
   const frames: CapturedFrame[] = [];
   for (const targetMs of targets) {
     try {
@@ -238,8 +292,11 @@ export function registerFrameCaptureHandler(
         return;
       }
       try {
-        const frames = await captureFrames(video, payload?.targetsMs ?? [], {
+        const wanted = Array.isArray(payload?.targetsMs) ? payload.targetsMs : [];
+        const frames = await captureFrames(video, wanted, {
           maxSize: payload?.maxSize,
+          // 规划多少就抽多少（受 DEFAULT_MAX_FRAMES 兜底上限约束）
+          maxFrames: wanted.length,
         });
         sendResponse({ frames });
       } catch {

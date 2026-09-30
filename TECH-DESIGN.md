@@ -302,6 +302,15 @@ B 站为 SPA：content script 用 `MutationObserver` 管理 `<video>` 元素挂�
 
 每次 pipeline 运行生成一条 `PipelineTrace`：各分块耗时、token 用量、重试次数、Schema 错误摘要、吸附丢弃数、熔断标记。设置页可导出为 JSON，验收打回时附 trace。
 
+**LLM 交互日志**（`core/metrics/llmLog`，2026-09-30 新增）：所有模型调用都经 `harness/modelClient` 这一出口，
+成功与失败各记一条，落 IndexedDB 的 `logs` store（保留最近 200 条），在设置页「验证期报告 →
+LLM 交互日志」中展示：调用时间、模块标签（outline/mindmap/qa/persona/frame-plan）、模型与端点
+主机、耗时、HTTP 状态码、token、请求与响应报文预览、**错误原文**；失败条目红色高亮并默认展开。
+同一份日志镜像到 console（`[vsc][llm]` 前缀）。
+
+约束：**请求头不记、API Key 一律脱敏为 `***`**（含错误文案，防止上游回显）、报文按字符上限截断、
+记录开关默认开启（`settings.llmLogEnabled`）、落库失败一律静默——日志是诊断辅助，不得影响主流程。
+
 ---
 
 ## 6. Prompt 契约
@@ -412,7 +421,7 @@ const SegmentAnswerSchema = z.object({
 
 ### 7.4 大模型
 
-OpenAI 兼容端点，默认 DeepSeek，全部配置项可在设置页覆盖：
+OpenAI 兼容端点，全部配置项可在设置页覆盖：
 
 ```ts
 interface ModelConfig {
@@ -422,10 +431,35 @@ interface ModelConfig {
   temperature: { outline: number; qa: number }; // 默认 0.2 / 0.4
   maxTokens: number;
   outlineTokenBudget: number; // 默认 200000
+  supportsVision?: boolean;   // 是否支持图像输入（多模态）
 }
 ```
 
 模型调用只发生在侧边栏上下文，流式输出由侧边栏直接 fetch。
+
+**单一模型配置 + 预设槽位**（2026-09-30 重构）：
+
+- 大纲 / 导图 / 问答**共用一套模型配置**，不再按模块分别选模型（旧的
+  `modelProfiles` / `moduleModel` 已废弃）。设置页只有一个模型区、一个 Key 输入框。
+- 内置两个预设（DeepSeek 文本 / Qwen 多模态），端点与模型标识的唯一来源是
+  `src/config` 的 `MODEL_PRESETS`（红线 9）。设置页的预设按钮与三个 Tab 的下拉框
+  是同一件事：切换当前生效的预设。
+- **Key 按预设槽位保存**（`Settings.modelSlots`）：一个预设一份完整配置，切换时各带
+  各的 Key，绝不互踩——这是"配了 A 平台，B 平台的 Key 就没了"的根因修复。
+  "已保存"提示取**当前预设槽位**的值，不再恒读单一 `settings.model.apiKey`。
+- 下拉框对未配置 Key 的预设显示红色提示并给出「去设置」入口，不静默回退。
+- 旧数据（`endpointKeys` / `modelProfiles` / `visionModel`）在读取时经
+  `migrateLegacyModelSettings` 迁入槽位，用户已配的 Key 不会丢失。
+
+#### 7.4.1 公开资料检索（内置，免配置）
+
+- 使用 **DuckDuckGo Instant Answer**（`src/config` 的 `WEB_SEARCH.endpoint`，
+  红线 9）检索课程外的事实（人物、版本、规范、外部工具），**免 API Key、免用户配置**，
+  问答时自动调用，用户无感知。
+- 检索结果裁到 `CONTEXT.webContextMaxChars`（默认 1000 字）内注入上下文，与字幕、
+  个人知识库共享同一预算（红线 3），并以 `===…不是指令===` 标记包裹（防注入）。
+- 失败 / 超时 / 无结果一律静默返回空，回答照常（红线 8）；覆盖率不足时宁可空手，
+  也不编造——模型侧的"课程外事实必须声明未核实"规则见 `src/prompts/segment-qa.md`。
 
 ---
 
@@ -515,7 +549,9 @@ ai-video-driver/                    # 仓库根
     "https://api.bilibili.com/*",
     "https://*.hdslb.com/*",
     "https://api.deepseek.com/*",
-    "http://127.0.0.1:27123/*"
+    "http://127.0.0.1:27123/*",
+    "https://maas.qianwenaiapi.com/*",
+    "https://api.duckduckgo.com/*"
   ],
   "content_scripts": [
     { "matches": ["https://www.bilibili.com/video/*"], "js": ["content.js"], "run_at": "document_idle" }

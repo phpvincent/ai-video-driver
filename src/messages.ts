@@ -57,7 +57,7 @@ export interface CaptureFramesPayload {
   videoId: VideoId;
   /** 目标时间点（毫秒），最多取前 N 个 */
   targetsMs: number[];
-  /** 最长边像素（默认 512） */
+  /** 最长边像素（panel 传 VISION.maxSize） */
   maxSize?: number;
 }
 
@@ -67,6 +67,10 @@ export interface CapturedFrame {
   actualMs: number;
   /** JPEG base64（不含 data: 前缀） */
   dataBase64: string;
+  /** 感知哈希（dHash，16 位十六进制 = 64 bit）：用于"同一页 PPT"去重 */
+  dhash?: string;
+  /** 160px 缩略图 base64（仅日志展示用，不发给模型） */
+  thumbBase64?: string;
 }
 
 export interface VideoIdPayload {

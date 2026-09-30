@@ -5,10 +5,12 @@
  *
  * 设计约束（宪法红线）：
  * - 红线 1：全程确定性计算，不调用模型、无随机；同输入必得同输出
- * - 红线 3：帧数受预算约束（VISION.maxFramesPerRequest），不因打分而膨胀
+ * - 红线 3：帧数受预算约束（FRAME_PLAN，按时长与密度自适应），不因打分而膨胀
  * - 红线 9：无 URL / 密钥
  */
+import { DENSITY, FRAME_DENSE_BOOST, FRAME_PLAN } from '../../config';
 import type { Cue, Section } from '../../types';
+import { hammingDistance } from './dhash';
 
 /** 画面提示词：字幕里出现这些词，说明这段大概率有值得看的画面（代码/演示/界面/图示） */
 export const VISUAL_HINTS: readonly string[] = [
@@ -72,6 +74,55 @@ export interface PlanOptions {
   minGapMs?: number;
   /** 低于此分数的窗口直接不取（避免为抽而抽） */
   minScore?: number;
+}
+
+/**
+ * 帧预算（纯函数，确定性）：随时长分段递减增长 + 章节数兜底 + 密集加成，夹在 [min, hardMax]。
+ *
+ * @param module       模块（outline / mindmap / qa）
+ * @param durationMs   待覆盖时长（大纲/导图 = 全片；问答 = 区间）
+ * @param dense        知识密集（各段 secPerFrame ÷ FRAME_DENSE_BOOST）
+ * @param sectionCount 章节数（导图每章至少 perSection 帧，保证首尾对照）
+ *
+ * 导图示例（非密集 / 密集）：10 分钟 14 / 20；30 分钟 27 / 40；60 分钟及以上 40。
+ */
+export function frameBudgetFor(
+  module: FrameBudgetModule,
+  durationMs: number,
+  dense = false,
+  sectionCount = 0,
+): number {
+  const rule = FRAME_PLAN[module];
+  const seconds = Number.isFinite(durationMs) && durationMs > 0 ? durationMs / 1000 : 0;
+  const boost = dense ? FRAME_DENSE_BOOST : 1;
+  let byTime = 0;
+  let prev = 0;
+  for (const tier of rule.tiers) {
+    if (seconds <= prev) break;
+    const span = Math.min(seconds, tier.uptoSec) - prev;
+    byTime += (span * boost) / tier.secPerFrame;
+    prev = tier.uptoSec;
+  }
+  const bySections = Math.max(0, Math.floor(sectionCount)) * rule.perSection;
+  const raw = seconds > 0 ? Math.max(Math.ceil(byTime), bySections) : rule.min;
+  return Math.max(rule.min, Math.min(rule.hardMax, raw));
+}
+
+/** frameBudgetFor 的模块参数 */
+export type FrameBudgetModule = keyof typeof FRAME_PLAN;
+
+/**
+ * 知识密度判定（纯函数）：每章平均术语数换算成"每分钟术语数"，
+ * 阈值复用 DENSITY.highNewTermsPerMin（与章节密度档位同口径）。
+ * 无章节数据（大纲阶段）时按章节时间密度兜底：平均每分钟 ≥0.5 章视为密集。
+ */
+export function isDenseSections(sections: Section[], durationMs: number): boolean {
+  if (!Array.isArray(sections) || sections.length === 0) return false;
+  const minutes = Math.max(1, (Number.isFinite(durationMs) ? durationMs : 0) / 60_000);
+  const terms = sections.reduce((n, s) => n + (s.terms?.length ?? 0), 0);
+  const termsPerMinute = terms / minutes;
+  if (terms > 0) return termsPerMinute >= DENSITY.highNewTermsPerMin;
+  return sections.length / minutes >= 0.5;
 }
 
 /**
@@ -224,21 +275,26 @@ export function evaluatePlan(
  * 抽到的帧去重：时间过近或画面几乎未变（JPEG 体积差 < 阈值）的帧丢弃。
  * 纯函数、确定性——防止同一页 PPT 连抽多帧浪费 token。
  */
-export function dedupeFrames(
-  frames: Array<{ targetMs: number; actualMs: number; dataBase64: string }>,
-  opts: { minGapMs?: number; maxLengthDeltaRatio?: number } = {},
-): Array<{ targetMs: number; actualMs: number; dataBase64: string }> {
+export function dedupeFrames<F extends { targetMs: number; actualMs: number; dataBase64: string; dhash?: string }>(
+  frames: F[],
+  opts: { minGapMs?: number; maxLengthDeltaRatio?: number; dhashMaxDistance?: number } = {},
+): F[] {
   const minGap = opts.minGapMs ?? 0;
   const ratio = opts.maxLengthDeltaRatio ?? 0.02;
-  const kept: Array<{ targetMs: number; actualMs: number; dataBase64: string }> = [];
+  const maxDist = opts.dhashMaxDistance ?? 5;
+  const kept: F[] = [];
   for (const f of frames) {
     if (f.dataBase64.length === 0) continue;
-    const near = kept.some(
-      (k) =>
+    const dup = kept.some((k) => {
+      // ① 双方都有 dHash：只看画面是否相同（与时间无关——隔了 3 分钟回到同一页 PPT 也算重复）
+      if (k.dhash && f.dhash) return hammingDistance(k.dhash, f.dhash) <= maxDist;
+      // ② 回退：时间过近且 base64 长度几乎相同（旧口径）
+      return (
         Math.abs(k.actualMs - f.actualMs) < minGap &&
-        Math.abs(k.dataBase64.length - f.dataBase64.length) / Math.max(1, k.dataBase64.length) < ratio,
-    );
-    if (near) continue;
+        Math.abs(k.dataBase64.length - f.dataBase64.length) / Math.max(1, k.dataBase64.length) < ratio
+      );
+    });
+    if (dup) continue;
     kept.push(f);
   }
   return kept;

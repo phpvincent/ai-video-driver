@@ -246,21 +246,26 @@ export interface KnowledgeHit {
 
 /** 面板设置（GET_SETTINGS / SET_SETTINGS 的形状） */
 export interface Settings {
-  /** 默认模型（大纲、概念图、术语与区间问答的兜底；各模块可通过 moduleModel 另选方案） */
+  /**
+   * 当前生效的模型（大纲 / 导图 / 问答三模块共用一套，不再按模块分别选）。
+   * 其 baseUrl 决定"当前选中哪个预设"，由 modelForm.activePreset() 反推。
+   */
   model?: ModelConfig;
+  /**
+   * 预设槽位：每个内置预设（deepseek / qwen）各自保存一份完整配置（含 API Key）。
+   * **这是 Key 的唯一权威存储**：切换预设时各带各的 Key，永不互踩（修复"配了 A 平台
+   * B 平台的 Key 就没了"的根因）。设置页 UI 只暴露一个 Key 输入框，槽位对用户不可见。
+   */
+  modelSlots?: Record<string, ModelConfig>;
   /** @deprecated 不再区分视觉模型：统一使用 model；保留仅为兼容旧设置数据 */
   visionModel?: ModelConfig;
-  /** @deprecated 多模态能力随 ModelConfig.supportsVision 走；保留仅为兼容旧设置数据（migrateVisionToModel 迁移） */
+  /** @deprecated 多模态能力随 ModelConfig.supportsVision 走；保留仅为兼容旧设置数据 */
   modelSupportsVision?: boolean;
-  /** 命名模型方案（每项必有 name 与 apiKey）：设置页把当前表单另存为方案，供各模块选择 */
+  /** @deprecated 命名模型方案已废弃（统一为预设槽位）；保留仅为兼容旧设置数据的迁移 */
   modelProfiles?: ModelConfig[];
-  /** 各模块选择的方案名（缺省 = 默认模型）：outline / mindmap / qa */
+  /** @deprecated 按模块选模型已废弃（三模块共用一套）；保留仅为兼容旧设置数据 */
   moduleModel?: { outline?: string; mindmap?: string; qa?: string };
-  /**
-   * 端点级 API Key（baseUrl → Key）：**Key 按平台存储，各平台互不干扰**
-   * —— 解决了"配了 A 平台，B 平台的 Key 就没了"的根因（默认模型只有一个槽位）。
-   * 内置方案通过 savedKeyForEndpoint 继承同端点 Key。
-   */
+  /** @deprecated 端点级 Key 已并入 modelSlots；保留仅为兼容旧设置数据的迁移 */
   endpointKeys?: Record<string, string>;
   /** 禁用模型思考过程（默认开启禁用）：结构化任务更快更省，避免思考耗尽输出 token。设为 false 才启用思考 */
   disableThinking?: boolean;
@@ -268,8 +273,9 @@ export interface Settings {
   visionEnabled?: boolean;
   /** 各模块是否结合画面（默认随全局开关；未配置视为开启） */
   visionModules?: { outline?: boolean; mindmap?: boolean; qa?: boolean };
-  /** 联网检索（可选） */
+  /** @deprecated 公开资料检索已内置 DuckDuckGo，无需配置；保留仅为兼容旧设置数据 */
   webSearch?: { endpoint?: string; apiKey?: string; engine?: string };
+  /** @deprecated 检索已内置且默认开启 */
   webSearchEnabled?: boolean;
   /** 问答时检索个人知识库（默认开启） */
   knowledgeSearch?: boolean;

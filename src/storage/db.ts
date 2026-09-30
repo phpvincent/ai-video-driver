@@ -13,6 +13,7 @@
  */
 import type { OutlineRecord, QaRecord, SubtitleRecord } from '../types';
 import type { UsageRecord } from '../core/metrics/usage';
+import type { LlmLogEntry } from '../core/metrics/llmLog';
 import { DB } from '../config';
 
 /** 最小数据库契约：注入点，单测用内存实现替换 */
@@ -22,6 +23,8 @@ export interface DbLike {
   put(store: string, key: IDBValidKey, value: unknown): Promise<void>;
   /** 全量读取某 store（SPEC-05 追加：qaHistory 无索引前缀扫描，靠 get 全量 + 过滤） */
   getAll<T>(store: string): Promise<T[]>;
+  /** 删除某 store 的单个键（LLM 交互日志清空用） */
+  delete(store: string, key: IDBValidKey): Promise<void>;
 }
 
 /** IDBRequest → Promise */
@@ -49,8 +52,9 @@ export function createSubtitleDb(idbFactory?: IDBFactory): DbLike {
           reject(new Error('indexedDB unavailable'));
           return;
         }
-        // 版本号：v2 起新增 usage（验证期埋点）store；升级时为已存在的库补建缺失 store
-        const req = factory.open(DB.name, 2);
+        // 版本号：v2 起新增 usage（验证期埋点）store；v3 起新增 logs（LLM 交互日志）。
+        // 升级时为已存在的库补建缺失 store（onupgradeneeded 只在版本变化时触发）
+        const req = factory.open(DB.name, 3);
         req.onupgradeneeded = () => {
           const db = req.result;
           for (const storeName of Object.values(DB.stores)) {
@@ -86,6 +90,11 @@ export function createSubtitleDb(idbFactory?: IDBFactory): DbLike {
       const db = await ensureOpen();
       const req = db.transaction(store, 'readonly').objectStore(store).getAll();
       return await requestToPromise<T[]>(req);
+    },
+    async delete(store: string, key: IDBValidKey): Promise<void> {
+      const db = await ensureOpen();
+      const req = db.transaction(store, 'readwrite').objectStore(store).delete(key);
+      await requestToPromise(req);
     },
   };
 }
@@ -189,4 +198,43 @@ export async function listAllUsage(db: DbLike): Promise<UsageRecord[]> {
     (r): r is UsageRecord =>
       typeof r === 'object' && r !== null && typeof (r as UsageRecord).videoId === 'string',
   );
+}
+
+// ---------------------------------------------------------------------------
+// logs（LLM 交互日志）：键 entry.id；量级受 DB.logKeep 约束（写入侧裁剪）。
+// ---------------------------------------------------------------------------
+
+/** 写一条 LLM 交互日志 */
+export async function saveLlmLog(db: DbLike, entry: LlmLogEntry): Promise<void> {
+  await db.open();
+  await db.put(DB.stores.logs, entry.id, entry);
+}
+
+/**
+ * 列出 LLM 交互日志（按时间倒序，新在前）；超过 DB.logKeep 的部分顺带清掉
+ * （日志只用于近期排障，不长期堆积）。脏数据（无 id/at）过滤。
+ */
+export async function listLlmLogs(db: DbLike): Promise<LlmLogEntry[]> {
+  await db.open();
+  const all = await db.getAll<LlmLogEntry>(DB.stores.logs);
+  const clean = all.filter(
+    (e): e is LlmLogEntry =>
+      typeof e === 'object' &&
+      e !== null &&
+      typeof e.id === 'string' &&
+      typeof e.at === 'string',
+  );
+  const sorted = [...clean].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+  return sorted.slice(0, DB.logKeep);
+}
+
+/** 清空 LLM 交互日志（逐条删除键） */
+export async function clearLlmLogs(db: DbLike): Promise<void> {
+  await db.open();
+  const all = await db.getAll<LlmLogEntry>(DB.stores.logs);
+  for (const entry of all) {
+    if (entry && typeof entry.id === 'string') {
+      await db.delete(DB.stores.logs, entry.id);
+    }
+  }
 }

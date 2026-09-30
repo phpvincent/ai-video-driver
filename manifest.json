@@ -14,8 +14,8 @@
     "https://*.hdslb.com/*",
     "https://api.deepseek.com/*",
     "http://127.0.0.1:27123/*",
-    "https://dashscope.aliyuncs.com/*",
-    "https://maas.qianwenaiapi.com/*"
+    "https://maas.qianwenaiapi.com/*",
+    "https://api.duckduckgo.com/*"
   ],
   "background": {
     "service_worker": "background.js",

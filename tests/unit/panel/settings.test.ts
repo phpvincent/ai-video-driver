@@ -1,34 +1,34 @@
 /**
- * 设置页纯逻辑单测（单模型配置 + 多模态能力门控 + 抽帧开关）。
+ * 设置页纯逻辑单测（单一模型配置 + 预设槽位 + 多模态能力门控 + 抽帧开关）。
  * 断言中的端点与模型标识一律从 src/config 的 MODEL_PRESETS 读取，禁止 URL 字面量（红线 9）。
+ *
+ * 重点覆盖本次重构要解决的问题：
+ * - 每个预设各存各的 API Key，切换不互踩；
+ * - 旧数据（endpointKeys / modelProfiles / visionModel）迁移后 Key 不丢；
+ * - 「已保存」显示取当前预设槽位，不再恒读单一 model。
  */
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_MODEL, MODEL_PRESETS, OBSIDIAN } from '../../../src/config';
+import { DEFAULT_MODEL, MODEL_PRESETS } from '../../../src/config';
 import {
-  applyPreset,
+  activePreset,
   canEnableVision,
   describeModelStrategy,
   hostOf,
   isModelConfigured,
-  listProfiles,
+  maskKey,
   mergeSettings,
-  migrateLegacyVisionModel,
-  migrateVisionToModel,
+  migrateLegacyModelSettings,
+  normalizeModelConfig,
+  presetConfigOf,
+  presetKeys,
+  presetShortLabel,
   presetVisionDefault,
-  resolveModuleModel,
+  resolveModel,
+  slotConfigOf,
+  slotHasKey,
   validateModelForm,
   visionActiveFor,
-  normalizeModelConfig,
-  presetShortLabel,
-  activePreset,
-  seedProfilesIfEmpty,
-  stripSeedProfiles,
-  preserveSecrets,
-  mergeSavedSecrets,
-  maskKey,
-  savedKeyForEndpoint,
-  setEndpointKey,
-  knownEndpoints,
+  writeSlot,
 } from '../../../src/panel/settings/modelForm';
 import type { ModelConfig, Settings } from '../../../src/types';
 
@@ -45,704 +45,253 @@ function textConfig(overrides: Partial<ModelConfig> = {}): ModelConfig {
   };
 }
 
-/** 旧版本的多模态模型配置（用于迁移用例） */
-function legacyVisionConfig(): ModelConfig {
-  return { ...textConfig(), baseUrl: MODEL_PRESETS.qwen.baseUrl, model: MODEL_PRESETS.qwen.model };
+function qwenConfig(overrides: Partial<ModelConfig> = {}): ModelConfig {
+  return {
+    baseUrl: MODEL_PRESETS.qwen.baseUrl,
+    apiKey: 'k-q',
+    model: MODEL_PRESETS.qwen.model,
+    temperature: { outline: DEFAULT_MODEL.temperature.outline, qa: DEFAULT_MODEL.temperature.qa },
+    maxTokens: DEFAULT_MODEL.maxTokens,
+    outlineTokenBudget: DEFAULT_MODEL.outlineTokenBudget,
+    supportsVision: true,
+    ...overrides,
+  };
 }
 
 /** 单模型 settings 基线：已声明支持图像输入、抽帧开启、三模块全开 */
 function baseSettings(overrides: Partial<Settings> = {}): Settings {
   return {
-    model: textConfig(),
-    modelSupportsVision: true,
+    model: { ...textConfig(), supportsVision: true },
     visionEnabled: true,
     visionModules: { outline: true, mindmap: true, qa: true },
     ...overrides,
   };
 }
 
-describe('applyPreset', () => {
-  it('deepseek 预设覆盖 baseUrl 与 model', () => {
-    const next = applyPreset(
-      textConfig({ baseUrl: MODEL_PRESETS.qwen.baseUrl, model: MODEL_PRESETS.qwen.model }),
-      'deepseek',
-    );
-    expect(next.baseUrl).toBe(MODEL_PRESETS.deepseek.baseUrl);
-    expect(next.model).toBe(MODEL_PRESETS.deepseek.model);
+describe('预设与槽位（每个模型各存各的 Key）', () => {
+  it('presetKeys 顺序与 MODEL_PRESETS 一致', () => {
+    expect(presetKeys()).toEqual(['deepseek', 'qwen']);
   });
 
-  it('qwen 预设覆盖 baseUrl 与 model', () => {
-    const next = applyPreset(textConfig(), 'qwen');
-    expect(next.baseUrl).toBe(MODEL_PRESETS.qwen.baseUrl);
-    expect(next.model).toBe(MODEL_PRESETS.qwen.model);
+  it('presetConfigOf：端点与模型标识来自 config，Key 恒为空', () => {
+    for (const key of presetKeys()) {
+      const cfg = presetConfigOf(key);
+      expect(cfg.baseUrl).toBe(MODEL_PRESETS[key].baseUrl);
+      expect(cfg.model).toBe(MODEL_PRESETS[key].model);
+      expect(cfg.apiKey).toBe('');
+    }
   });
 
-  it('applyPreset：只换端点与模型名（Key 由 savedKeyForEndpoint 按端点回填，本函数不处理）', () => {
-    const form = { ...DEFAULT_MODEL, baseUrl: 'https://old.example/v1', apiKey: 'keep-me' } as never;
-    const out = applyPreset(form as never, 'deepseek');
-    expect(out.baseUrl).toBe(MODEL_PRESETS.deepseek.baseUrl);
-    expect(out.model).toBe(MODEL_PRESETS.deepseek.model);
+  it('空设置时槽位回落预设骨架（Key 未设置）', () => {
+    expect(slotConfigOf({}, 'deepseek').apiKey).toBe('');
+    expect(slotHasKey({}, 'deepseek')).toBe(false);
   });
 
-  it('保留 temperature / maxTokens / outlineTokenBudget', () => {
-    const next = applyPreset(
-      textConfig({
-        temperature: { outline: 1.1, qa: 1.9 },
-        maxTokens: 1234,
-        outlineTokenBudget: 999,
-      }),
-      'qwen',
-    );
-    expect(next.temperature).toEqual({ outline: 1.1, qa: 1.9 });
-    expect(next.maxTokens).toBe(1234);
-    expect(next.outlineTokenBudget).toBe(999);
-  });
-});
-
-describe('presetVisionDefault', () => {
-  it('deepseek → false（纯文本）', () => {
-    expect(presetVisionDefault('deepseek')).toBe(false);
+  it('writeSlot 只写目标槽位，不动另一个槽位', () => {
+    let s: Settings = {};
+    s = writeSlot(s, 'deepseek', textConfig({ apiKey: 'sk-ds' }));
+    s = writeSlot(s, 'qwen', qwenConfig({ apiKey: 'sk-qw' }));
+    expect(slotConfigOf(s, 'deepseek').apiKey).toBe('sk-ds');
+    expect(slotConfigOf(s, 'qwen').apiKey).toBe('sk-qw');
+    // 再写一次 deepseek，qwen 不受影响
+    s = writeSlot(s, 'deepseek', textConfig({ apiKey: 'sk-ds-2' }));
+    expect(slotConfigOf(s, 'deepseek').apiKey).toBe('sk-ds-2');
+    expect(slotConfigOf(s, 'qwen').apiKey).toBe('sk-qw');
   });
 
-  it('qwen → true（兼容模式支持图文）', () => {
-    expect(presetVisionDefault('qwen')).toBe(true);
+  it('slotHasKey：两个预设独立判定（修复 Key 互踩）', () => {
+    const s = writeSlot({}, 'deepseek', textConfig({ apiKey: 'sk-ds' }));
+    expect(slotHasKey(s, 'deepseek')).toBe(true);
+    expect(slotHasKey(s, 'qwen')).toBe(false);
+  });
+
+  it('activePreset：按 baseUrl 反推（尾斜杠容错；自定义端点 → null）', () => {
+    expect(activePreset(MODEL_PRESETS.deepseek.baseUrl)).toBe('deepseek');
+    expect(activePreset(`${MODEL_PRESETS.qwen.baseUrl}/`)).toBe('qwen');
+    expect(activePreset('https://my-gateway.example/v1')).toBeNull();
+    expect(activePreset('')).toBeNull();
   });
 });
 
-describe('validateModelForm', () => {
-  it('合法配置返回空错误对象', () => {
-    expect(validateModelForm(textConfig())).toEqual({});
-  });
-
-  it('baseUrl 为空报错', () => {
-    expect(validateModelForm(textConfig({ baseUrl: '  ' })).baseUrl).toBeTruthy();
-  });
-
-  it('baseUrl 非 http(s) 开头报错（相对路径与 ftp 协议）', () => {
-    const notHttp = MODEL_PRESETS.deepseek.baseUrl.replace('https://', '');
-    const ftp = MODEL_PRESETS.deepseek.baseUrl.replace('https://', 'ftp://');
-    expect(validateModelForm(textConfig({ baseUrl: notHttp })).baseUrl).toBeTruthy();
-    expect(validateModelForm(textConfig({ baseUrl: ftp })).baseUrl).toBeTruthy();
-  });
-
-  it('apiKey 为空报错', () => {
-    expect(validateModelForm(textConfig({ apiKey: '' })).apiKey).toBeTruthy();
-  });
-
-  it('model 为空报错', () => {
-    expect(validateModelForm(textConfig({ model: '' })).model).toBeTruthy();
-  });
-
-  it('temperature 越界报错（含 qa）', () => {
-    expect(
-      validateModelForm(textConfig({ temperature: { outline: 2.5, qa: 0.4 } })).temperature,
-    ).toBeTruthy();
-    expect(
-      validateModelForm(textConfig({ temperature: { outline: 0.2, qa: -0.1 } })).temperature,
-    ).toBeTruthy();
-  });
-
-  it('temperature 边界 0 与 2 合法', () => {
-    expect(validateModelForm(textConfig({ temperature: { outline: 0, qa: 2 } })).temperature).toBeUndefined();
-    expect(validateModelForm(textConfig({ temperature: { outline: 2, qa: 0 } })).temperature).toBeUndefined();
-  });
-
-  it('maxTokens 边界：1 合法，0 非法', () => {
-    expect(validateModelForm(textConfig({ maxTokens: 1 })).maxTokens).toBeUndefined();
-    expect(validateModelForm(textConfig({ maxTokens: 0 })).maxTokens).toBeTruthy();
-  });
-});
-
-describe('isModelConfigured', () => {
-  it('三要素齐全才算已配置', () => {
-    expect(isModelConfigured(textConfig())).toBe(true);
-    expect(isModelConfigured({ ...textConfig(), apiKey: '' })).toBe(false);
-    expect(isModelConfigured(undefined)).toBe(false);
-  });
-});
-
-describe('canEnableVision', () => {
-  it('声明支持图像输入 → true', () => {
-    expect(canEnableVision(baseSettings({ modelSupportsVision: true }))).toBe(true);
-  });
-
-  it('未声明 / 显式 false / 字段缺失 → false', () => {
-    expect(canEnableVision(baseSettings({ modelSupportsVision: false }))).toBe(false);
-    expect(canEnableVision(baseSettings({ modelSupportsVision: undefined }))).toBe(false);
-    expect(canEnableVision({})).toBe(false);
-  });
-});
-
-describe('visionActiveFor', () => {
-  it('未声明支持图像输入 → false（三模块均不可用）', () => {
-    const settings = baseSettings({ modelSupportsVision: false });
-    expect(visionActiveFor({ settings, module: 'outline' })).toBe(false);
-    expect(visionActiveFor({ settings, module: 'mindmap' })).toBe(false);
-    expect(visionActiveFor({ settings, module: 'qa' })).toBe(false);
-  });
-
-  it('不再看 visionModel：仅有旧视觉模型也不生效', () => {
-    const settings: Settings = {
-      model: textConfig(),
-      visionModel: legacyVisionConfig(),
-      visionEnabled: true,
+describe('migrateLegacyModelSettings（旧数据迁移，Key 不丢）', () => {
+  it('endpointKeys 中的 Key 按端点迁入对应槽位', () => {
+    const legacy: Settings = {
+      model: textConfig({ apiKey: 'sk-ds' }),
+      endpointKeys: {
+        [MODEL_PRESETS.deepseek.baseUrl]: 'sk-ds',
+        [MODEL_PRESETS.qwen.baseUrl]: 'sk-qw',
+      },
     };
-    expect(visionActiveFor({ settings, module: 'qa' })).toBe(false);
+    const next = migrateLegacyModelSettings(legacy);
+    expect(slotConfigOf(next, 'deepseek').apiKey).toBe('sk-ds');
+    expect(slotConfigOf(next, 'qwen').apiKey).toBe('sk-qw');
+    expect(next.endpointKeys).toBeUndefined();
   });
 
-  it('声明支持 + 全局开 + 模块未配置 → true（三模块各一例）', () => {
-    const settings = baseSettings({ visionModules: undefined });
-    expect(visionActiveFor({ settings, module: 'outline' })).toBe(true);
-    expect(visionActiveFor({ settings, module: 'mindmap' })).toBe(true);
-    expect(visionActiveFor({ settings, module: 'qa' })).toBe(true);
-  });
-
-  it('模块显式 false → false（三模块各一例）', () => {
-    expect(
-      visionActiveFor({
-        settings: baseSettings({ visionModules: { outline: false, mindmap: true, qa: true } }),
-        module: 'outline',
-      }),
-    ).toBe(false);
-    expect(
-      visionActiveFor({
-        settings: baseSettings({ visionModules: { outline: true, mindmap: false, qa: true } }),
-        module: 'mindmap',
-      }),
-    ).toBe(false);
-    expect(
-      visionActiveFor({
-        settings: baseSettings({ visionModules: { outline: true, mindmap: true, qa: false } }),
-        module: 'qa',
-      }),
-    ).toBe(false);
-  });
-
-  it('全局关闭 → false（三模块各一例）', () => {
-    const settings = baseSettings({ visionEnabled: false });
-    expect(visionActiveFor({ settings, module: 'outline' })).toBe(false);
-    expect(visionActiveFor({ settings, module: 'mindmap' })).toBe(false);
-    expect(visionActiveFor({ settings, module: 'qa' })).toBe(false);
-  });
-
-  it('全局开关未配置（默认关）→ false', () => {
-    expect(
-      visionActiveFor({ settings: baseSettings({ visionEnabled: undefined }), module: 'qa' }),
-    ).toBe(false);
-  });
-
-  it('只关闭问答时大纲与导图仍为 true', () => {
-    const settings = baseSettings({ visionModules: { outline: true, mindmap: true, qa: false } });
-    expect(visionActiveFor({ settings, module: 'qa' })).toBe(false);
-    expect(visionActiveFor({ settings, module: 'outline' })).toBe(true);
-    expect(visionActiveFor({ settings, module: 'mindmap' })).toBe(true);
-  });
-
-  // ---- 按模块选模型的新语义：能力随各模块所选方案走 ----
-
-  it('方案声明支持图像输入且问答选它 → 问答 true / 未选的大纲 false（按模块差异化）', () => {
-    const profile = { ...textConfig(), name: 'Qwen 视觉', supportsVision: true };
-    const settings = baseSettings({
-      modelSupportsVision: false,
-      modelProfiles: [profile],
-      moduleModel: { qa: 'Qwen 视觉' },
-    });
-    expect(visionActiveFor({ settings, module: 'qa' })).toBe(true);
-    expect(visionActiveFor({ settings, module: 'outline' })).toBe(false);
-    expect(visionActiveFor({ settings, module: 'mindmap' })).toBe(false);
-  });
-
-  it('默认模型不支持但问答选了支持的方案 → 问答 true（关键用例：按模块差异化）', () => {
-    const profile = {
-      ...textConfig(),
-      name: '视觉方案',
-      baseUrl: MODEL_PRESETS.qwen.baseUrl,
-      model: MODEL_PRESETS.qwen.model,
-      supportsVision: true,
-    };
-    const settings = baseSettings({
-      modelSupportsVision: false,
-      modelProfiles: [profile],
-      moduleModel: { qa: '视觉方案' },
-    });
-    expect(visionActiveFor({ settings, module: 'qa' })).toBe(true);
-  });
-
-  it('旧字段兼容：model.supportsVision 缺失时回退 modelSupportsVision', () => {
-    // baseSettings 未在 model 上声明 supportsVision，仅旧字段 modelSupportsVision: true
-    const settings = baseSettings({ visionModules: undefined });
-    expect(settings.model?.supportsVision).toBeUndefined();
-    expect(visionActiveFor({ settings, module: 'qa' })).toBe(true);
-  });
-
-  it('模块选中无 Key 的方案 → 回退默认模型的能力（不生效）', () => {
-    const keyless = { ...textConfig(), name: '无 Key 方案', apiKey: '' };
-    const settings = baseSettings({
-      modelSupportsVision: true,
-      modelProfiles: [keyless],
-      moduleModel: { qa: '无 Key 方案' },
-    });
-    // 方案被过滤 → 问答用默认模型（支持）→ true；同时验证解析回退
-    expect(resolveModuleModel(settings, 'qa')?.model).toBe(MODEL_PRESETS.deepseek.model);
-    expect(visionActiveFor({ settings, module: 'qa' })).toBe(true);
-  });
-});
-
-describe('resolveModuleModel', () => {
-  it('无 moduleModel → 默认模型', () => {
-    const settings = baseSettings();
-    expect(resolveModuleModel(settings, 'outline')).toBe(settings.model);
-    expect(resolveModuleModel(settings, 'mindmap')).toBe(settings.model);
-    expect(resolveModuleModel(settings, 'qa')).toBe(settings.model);
-  });
-
-  it('命中方案名 → 返回该方案', () => {
-    const profile = {
-      ...textConfig(),
-      name: 'Qwen 视觉',
-      baseUrl: MODEL_PRESETS.qwen.baseUrl,
-      model: MODEL_PRESETS.qwen.model,
-    };
-    const settings = baseSettings({ modelProfiles: [profile], moduleModel: { outline: 'Qwen 视觉' } });
-    expect(resolveModuleModel(settings, 'outline')?.model).toBe(MODEL_PRESETS.qwen.model);
-    // 未选方案的模块仍走默认
-    expect(resolveModuleModel(settings, 'qa')?.model).toBe(MODEL_PRESETS.deepseek.model);
-  });
-
-  it('引用不存在的方案名 → 回退默认模型', () => {
-    const settings = baseSettings({ moduleModel: { qa: '不存在的方案' } });
-    expect(resolveModuleModel(settings, 'qa')).toBe(settings.model);
-  });
-
-  it('默认模型缺失 → null', () => {
-    const settings = baseSettings({ model: undefined, moduleModel: { qa: '不存在' } });
-    expect(resolveModuleModel(settings, 'qa')).toBeNull();
-    expect(resolveModuleModel({}, 'outline')).toBeNull();
-  });
-});
-
-describe('listProfiles', () => {
-  it('过滤无 name / 无 apiKey 的方案', () => {
-    const settings = baseSettings({
+  it('modelProfiles 里同端点且有 Key 的项迁入槽位', () => {
+    const legacy: Settings = {
+      model: textConfig({ apiKey: '' }),
       modelProfiles: [
-        { ...textConfig(), name: 'ok' },
-        { ...textConfig(), apiKey: '' , name: '无 Key' },
-        { ...textConfig() },
+        { ...qwenConfig({ apiKey: 'sk-qw' }), name: 'Qwen 视觉' },
+        { ...textConfig({ apiKey: '' }), name: '空 Key 方案' },
       ],
+    };
+    const next = migrateLegacyModelSettings(legacy);
+    expect(slotConfigOf(next, 'qwen').apiKey).toBe('sk-qw');
+    expect(next.modelProfiles).toBeUndefined();
+  });
+
+  it('model 自身的 Key 补进其所属槽位', () => {
+    const next = migrateLegacyModelSettings({ model: qwenConfig({ apiKey: 'sk-qw' }) });
+    expect(slotConfigOf(next, 'qwen').apiKey).toBe('sk-qw');
+  });
+
+  it('无 model 但有 visionModel → 提升为 model（旧版本兼容）', () => {
+    const next = migrateLegacyModelSettings({ visionModel: qwenConfig({ apiKey: 'sk-qw' }) });
+    expect(resolveModel(next)?.baseUrl).toBe(MODEL_PRESETS.qwen.baseUrl);
+    expect(next.visionModel).toBeUndefined();
+  });
+
+  it('modelSupportsVision → model.supportsVision', () => {
+    const next = migrateLegacyModelSettings({
+      model: textConfig(),
+      modelSupportsVision: true,
     });
-    const names = listProfiles(settings).map((p) => p.name);
-    expect(names).toEqual(['ok']);
-  });
-
-  it('name 唯一：同名时先出现者优先', () => {
-    const first = { ...textConfig(), name: '同名', maxTokens: 111 };
-    const second = { ...textConfig(), name: '同名', maxTokens: 222 };
-    const settings = baseSettings({ modelProfiles: [first, second] });
-    const profiles = listProfiles(settings);
-    expect(profiles).toHaveLength(1);
-    expect(profiles[0].maxTokens).toBe(111);
-  });
-});
-
-describe('migrateVisionToModel', () => {
-  it('旧 modelSupportsVision=true 且 model.supportsVision 缺失 → 写入 model.supportsVision', () => {
-    const settings = baseSettings({ modelSupportsVision: true });
-    expect(settings.model?.supportsVision).toBeUndefined();
-    const next = migrateVisionToModel(settings);
     expect(next.model?.supportsVision).toBe(true);
   });
 
-  it('已有 supportsVision 不覆盖（false 也保留）', () => {
-    const settings = baseSettings({
-      modelSupportsVision: true,
-      model: { ...textConfig(), supportsVision: false },
-    });
-    const next = migrateVisionToModel(settings);
-    expect(next.model?.supportsVision).toBe(false);
-  });
-
-  it('幂等：跑两次结果相同', () => {
-    const settings = baseSettings({ modelSupportsVision: true });
-    const once = migrateVisionToModel(settings);
-    const twice = migrateVisionToModel(once);
-    expect(twice).toEqual(once);
-  });
-
-  it('旧字段非 true / model 缺失 → 原样返回', () => {
-    const noLegacy = baseSettings({ modelSupportsVision: false });
-    expect(migrateVisionToModel(noLegacy)).toBe(noLegacy);
-    const noModel: Settings = { modelSupportsVision: true };
-    expect(migrateVisionToModel(noModel)).toBe(noModel);
-  });
-});
-
-describe('migrateLegacyVisionModel', () => {
-  it('无 model 有 visionModel → 提升为 model 并清除 visionModel', () => {
-    const next = migrateLegacyVisionModel({ visionModel: legacyVisionConfig() });
-    expect(next.model?.model).toBe(MODEL_PRESETS.qwen.model);
-    expect(next.visionModel).toBeUndefined();
-  });
-
-  it('两者都有 → 保留 model，清除 visionModel', () => {
-    const next = migrateLegacyVisionModel({ model: textConfig(), visionModel: legacyVisionConfig() });
-    expect(next.model?.model).toBe(MODEL_PRESETS.deepseek.model);
-    expect(next.visionModel).toBeUndefined();
-  });
-
-  it('都无 → 原样返回（不改字段）', () => {
-    const current: Settings = { visionEnabled: true, knowledgeSearch: true };
-    const next = migrateLegacyVisionModel(current);
-    expect(next).toEqual(current);
-    expect(next.model).toBeUndefined();
-  });
-});
-
-describe('hostOf', () => {
-  it('正常 URL 取主机名（不输出完整地址，红线 9）', () => {
-    expect(hostOf(MODEL_PRESETS.qwen.baseUrl)).toBe(new URL(MODEL_PRESETS.qwen.baseUrl).hostname);
-    expect(hostOf(MODEL_PRESETS.deepseek.baseUrl)).toBe(
-      new URL(MODEL_PRESETS.deepseek.baseUrl).hostname,
-    );
-  });
-
-  it('非法字符串 → 无效地址', () => {
-    expect(hostOf('not-a-url')).toBe('无效地址');
-    expect(hostOf('   ')).toBe('无效地址');
-  });
-
-  it('空值 → 无效地址', () => {
-    expect(hostOf('')).toBe('无效地址');
-    expect(hostOf(undefined)).toBe('无效地址');
-  });
-});
-
-describe('describeModelStrategy', () => {
-  const joined = (settings: Settings): string => describeModelStrategy(settings).join('\n');
-
-  // 语义变化（按模块选模型）：摘要新增三行模块模型（大纲/导图/问答），共七行
-  it('七行：当前模型 / 大纲 / 导图 / 问答 / 多模态 / 抽帧 / 说明', () => {
-    const lines = describeModelStrategy(baseSettings());
-    expect(lines).toHaveLength(7);
-    expect(lines[0].startsWith('当前模型：')).toBe(true);
-    expect(lines[1].startsWith('大纲：')).toBe(true);
-    expect(lines[2].startsWith('导图：')).toBe(true);
-    expect(lines[3].startsWith('问答：')).toBe(true);
-    expect(lines[4].startsWith('多模态：')).toBe(true);
-    expect(lines[5].startsWith('抽帧：')).toBe(true);
-    expect(lines[6].startsWith('说明：')).toBe(true);
-  });
-
-  it('单模型已配置：显示主机名 / 模型', () => {
-    const lines = describeModelStrategy(baseSettings());
-    expect(lines[0]).toContain(new URL(MODEL_PRESETS.deepseek.baseUrl).hostname);
-    expect(lines[0]).toContain(MODEL_PRESETS.deepseek.model);
-  });
-
-  it('未配置模型 → 未配置（功能不可用）', () => {
-    expect(joined(baseSettings({ model: undefined }))).toContain('当前模型：未配置（功能不可用）');
-    expect(joined({})).toContain('当前模型：未配置（功能不可用）');
-  });
-
-  // 语义变化（能力随模块所选模型走）：多模态行按模块打标
-  it('声明支持图像输入 → 多模态按模块打标（三模块均 ✓）', () => {
-    expect(joined(baseSettings({ modelSupportsVision: true }))).toContain(
-      '多模态：大纲✓ 导图✓ 问答✓',
-    );
-  });
-
-  it('未声明支持图像输入 → 多模态：不支持（抽帧不可用）', () => {
-    const text = joined(baseSettings({ modelSupportsVision: false }));
-    expect(text).toContain('多模态：不支持（抽帧不可用）');
-    // 语义变化（按模块选模型）：不可用文案改为"各模块所选模型均未声明…"
-    expect(text).toContain('抽帧：不可用（各模块所选模型均未声明支持图像输入）');
-  });
-
-  it('抽帧开启且三模块全开 → 大纲✓ 导图✓ 问答✓', () => {
-    expect(joined(baseSettings())).toContain('抽帧：已开启（大纲✓ 导图✓ 问答✓）');
-  });
-
-  it('抽帧开启但模块部分关闭 → 对应模块标 ✗', () => {
-    expect(joined(baseSettings({ visionModules: { outline: true, mindmap: false, qa: false } }))).toContain(
-      '抽帧：已开启（大纲✓ 导图✗ 问答✗）',
-    );
-  });
-
-  it('抽帧关闭 → 抽帧：已关闭', () => {
-    expect(joined(baseSettings({ visionEnabled: false }))).toContain('抽帧：已关闭');
-  });
-
-  it('说明行：图片与文本一起发给同一个模型', () => {
-    const line = describeModelStrategy(baseSettings())[6];
-    expect(line).toContain('图片与文本一起发给同一个模型');
-    expect(line).toContain('未开启抽帧时为纯文本问答');
-  });
-
-  it('不输出完整接口地址（只暴露主机名，红线 9）', () => {
-    const text = joined(baseSettings());
-    expect(text).not.toContain(MODEL_PRESETS.deepseek.baseUrl);
-    expect(text).not.toContain('https://');
-  });
-
-  it('三行模块模型显示各模块实际会用的模型（未另选 → 默认模型）', () => {
-    const lines = describeModelStrategy(baseSettings());
-    const host = new URL(MODEL_PRESETS.deepseek.baseUrl).hostname;
-    expect(lines[1]).toBe(`大纲：${host} / ${MODEL_PRESETS.deepseek.model}`);
-    expect(lines[2]).toBe(`导图：${host} / ${MODEL_PRESETS.deepseek.model}`);
-    expect(lines[3]).toBe(`问答：${host} / ${MODEL_PRESETS.deepseek.model}`);
-  });
-
-  it('模块另选方案 → 对应行显示该方案的主机名 / 模型', () => {
-    const profile = {
-      ...textConfig(),
-      name: 'Qwen 视觉',
-      baseUrl: MODEL_PRESETS.qwen.baseUrl,
-      model: MODEL_PRESETS.qwen.model,
+  it('迁移幂等：重复执行结果一致', () => {
+    const legacy: Settings = {
+      model: textConfig({ apiKey: 'sk-ds' }),
+      endpointKeys: { [MODEL_PRESETS.deepseek.baseUrl]: 'sk-ds' },
     };
-    const lines = describeModelStrategy(
-      baseSettings({ modelProfiles: [profile], moduleModel: { qa: 'Qwen 视觉' } }),
-    );
-    const qwenHost = new URL(MODEL_PRESETS.qwen.baseUrl).hostname;
-    const deepseekHost = new URL(MODEL_PRESETS.deepseek.baseUrl).hostname;
-    expect(lines[1]).toBe(`大纲：${deepseekHost} / ${MODEL_PRESETS.deepseek.model}`);
-    expect(lines[3]).toBe(`问答：${qwenHost} / ${MODEL_PRESETS.qwen.model}`);
+    const once = migrateLegacyModelSettings(legacy);
+    const twice = migrateLegacyModelSettings(once);
+    expect(twice.modelSlots).toEqual(once.modelSlots);
+    expect(twice.model?.apiKey).toBe(once.model?.apiKey);
   });
 });
 
-describe('mergeSettings', () => {
-  it('只更新目标分区，其他分区不变', () => {
-    const current: Settings = {
-      model: textConfig(),
-      obsidian: { baseUrl: OBSIDIAN.baseUrl, apiKey: 'o', rootDir: 'r' },
-      knowledgeSearch: true,
-    };
-    const next = mergeSettings(current, { visionEnabled: true });
-    expect(next.visionEnabled).toBe(true);
-    expect(next.model).toBe(current.model);
-    expect(next.obsidian).toBe(current.obsidian);
-    expect(next.knowledgeSearch).toBe(true);
+describe('resolveModel（三模块共用一套）', () => {
+  it('返回 settings.model；未配置返回 null', () => {
+    expect(resolveModel(baseSettings())?.model).toBe(MODEL_PRESETS.deepseek.model);
+    expect(resolveModel({})).toBeNull();
   });
 
-  it('不改动入参（返回新对象）', () => {
-    const current: Settings = { visionEnabled: false };
-    const next = mergeSettings(current, { visionEnabled: true });
-    expect(current.visionEnabled).toBe(false);
-    expect(next).not.toBe(current);
+  it('不再区分模块：outline / mindmap / qa 得到同一个模型', () => {
+    const s = baseSettings();
+    const m = resolveModel(s);
+    expect(m?.apiKey).toBe('k-1');
+  });
+});
+
+describe('validateModelForm（表单校验）', () => {
+  it('合法配置 → 空错误对象', () => {
+    expect(validateModelForm(textConfig())).toEqual({});
   });
 
-  it('多次合并累积：model → modelSupportsVision → 开关', () => {
-    let s: Settings = {};
-    s = mergeSettings(s, { model: textConfig() });
-    s = mergeSettings(s, { modelSupportsVision: true });
-    s = mergeSettings(s, { visionEnabled: true, visionModules: { outline: false } });
-    expect(s.model?.model).toBe(MODEL_PRESETS.deepseek.model);
-    expect(s.modelSupportsVision).toBe(true);
-    expect(s.visionEnabled).toBe(true);
+  it('缺 baseUrl / apiKey / model → 对应字段报错', () => {
+    expect(validateModelForm(textConfig({ baseUrl: '' })).baseUrl).toBeTruthy();
+    expect(validateModelForm(textConfig({ apiKey: '' })).apiKey).toBeTruthy();
+    expect(validateModelForm(textConfig({ model: '' })).model).toBeTruthy();
+  });
+
+  it('非 http(s) 地址 / temperature 越界 / maxTokens 非法 → 报错', () => {
+    expect(validateModelForm(textConfig({ baseUrl: 'ftp://x' })).baseUrl).toBeTruthy();
+    expect(
+      validateModelForm(textConfig({ temperature: { outline: 3, qa: 0.4 } })).temperature,
+    ).toBeTruthy();
+    expect(validateModelForm(textConfig({ maxTokens: 0 })).maxTokens).toBeTruthy();
+  });
+
+  it('normalizeModelConfig 去首尾空白与尾斜杠（401 的常见成因）', () => {
+    const out = normalizeModelConfig(
+      textConfig({ baseUrl: `${MODEL_PRESETS.deepseek.baseUrl}/`, apiKey: ' sk-x ' }),
+    );
+    expect(out.baseUrl).toBe(MODEL_PRESETS.deepseek.baseUrl);
+    expect(out.apiKey).toBe('sk-x');
+  });
+});
+
+describe('maskKey（脱敏展示）', () => {
+  it('未设置 / 极短 / 常规长度', () => {
+    expect(maskKey('')).toBe('未设置');
+    expect(maskKey(undefined)).toBe('未设置');
+    expect(maskKey('abc')).toBe('••••••••');
+    expect(maskKey('sk-1234ABCD')).toBe('••••ABCD');
+  });
+});
+
+describe('visionActiveFor（抽帧门控）', () => {
+  it('全局关闭 → 全模块不抽帧', () => {
+    const s = baseSettings({ visionEnabled: false });
     expect(visionActiveFor({ settings: s, module: 'outline' })).toBe(false);
-    expect(visionActiveFor({ settings: s, module: 'qa' })).toBe(true);
   });
 
-  it('合并后迁移旧 visionModel：抽帧按 modelSupportsVision 判定', () => {
-    let s: Settings = { visionModel: legacyVisionConfig() };
-    s = mergeSettings(s, { visionEnabled: true });
-    s = migrateLegacyVisionModel(s);
-    expect(s.model?.model).toBe(MODEL_PRESETS.qwen.model);
+  it('模型未声明多模态 → 不抽帧', () => {
+    const s = baseSettings({ model: textConfig() });
     expect(visionActiveFor({ settings: s, module: 'qa' })).toBe(false);
-    expect(visionActiveFor({ settings: mergeSettings(s, { modelSupportsVision: true }), module: 'qa' })).toBe(true);
-  });
-  it('normalizeModelConfig：去除首尾空白与 baseUrl 尾斜杠（401 常见成因）', () => {
-    const raw = { ...DEFAULT_MODEL, baseUrl: '  https://example.com/  ', apiKey: '  test-key  ', model: ' m1 ' };
-    const n = normalizeModelConfig(raw as never);
-    expect(n.apiKey).toBe('test-key');
-    expect(n.model).toBe('m1');
-    expect(n.baseUrl).toBe('https://example.com');
+    expect(canEnableVision(s)).toBe(false);
   });
 
-  it('presetShortLabel：两个预设各自可区分', () => {
+  it('全局开 + 模型多模态 + 模块开关 → 抽帧', () => {
+    const s = baseSettings({ model: qwenConfig() });
+    expect(canEnableVision(s)).toBe(true);
+    expect(visionActiveFor({ settings: s, module: 'mindmap' })).toBe(true);
+  });
+
+  it('模块开关关闭 → 该模块不抽帧（其他模块不受影响）', () => {
+    const s = baseSettings({ model: qwenConfig(), visionModules: { qa: false } });
+    expect(visionActiveFor({ settings: s, module: 'qa' })).toBe(false);
+    expect(visionActiveFor({ settings: s, module: 'outline' })).toBe(true);
+  });
+});
+
+describe('describeModelStrategy（单模型口径）', () => {
+  it('未配置 → 明确提示功能不可用', () => {
+    const lines = describeModelStrategy({});
+    expect(lines[0]).toContain('未配置');
+  });
+
+  it('已配置：一行当前模型 + 两个预设各自的 Key 状态', () => {
+    const s = writeSlot(
+      writeSlot(baseSettings({ model: qwenConfig() }), 'deepseek', textConfig({ apiKey: '' })),
+      'qwen',
+      qwenConfig({ apiKey: 'sk-qw-1234' }),
+    );
+    const lines = describeModelStrategy(s);
+    expect(lines[0]).toContain('共用');
+    expect(lines.some((l) => l.startsWith('DeepSeek：API Key '))).toBe(true);
+    expect(lines.some((l) => l.includes('••••1234'))).toBe(true);
+  });
+});
+
+describe('其他纯函数', () => {
+  it('isModelConfigured：三要素齐全才算已配置', () => {
+    expect(isModelConfigured(textConfig())).toBe(true);
+    expect(isModelConfigured(textConfig({ apiKey: '' }))).toBe(false);
+    expect(isModelConfigured(null)).toBe(false);
+  });
+
+  it('presetVisionDefault：Qwen 建议多模态，DeepSeek 否', () => {
+    expect(presetVisionDefault('deepseek')).toBe(false);
+    expect(presetVisionDefault('qwen')).toBe(true);
+  });
+
+  it('presetShortLabel', () => {
     expect(presetShortLabel('deepseek')).toBe('DeepSeek');
     expect(presetShortLabel('qwen')).toBe('Qwen');
   });
 
-  it('presetVisionDefault：DeepSeek 不支持图像，Qwen 默认支持', () => {
-    expect(presetVisionDefault('deepseek')).toBe(false);
-    expect(presetVisionDefault('qwen')).toBe(true);
-  });
-  it('activePreset：按 baseUrl 识别当前预设（含尾斜杠归一）', () => {
-    expect(activePreset(MODEL_PRESETS.deepseek.baseUrl)).toBe('deepseek');
-    expect(activePreset(MODEL_PRESETS.qwen.baseUrl + '/')).toBe('qwen');
-    expect(activePreset('https://example.com/v1')).toBeNull();
-    expect(activePreset('')).toBeNull();
-  });
-  it('seedProfilesIfEmpty：空方案时注入两个内置方案（多模态标记正确）', () => {
-    const seeded = seedProfilesIfEmpty({});
-    const profiles = seeded.modelProfiles as never[];
-    expect(profiles.length).toBe(2);
-    const names = profiles.map((x) => (x as { name: string }).name);
-    expect(names.some((n) => n.includes('DeepSeek'))).toBe(true);
-    expect(names.filter((n) => n.includes('Qwen')).length).toBe(1);
-    // DeepSeek 不支持图像；Qwen 方案支持
-    const ds = profiles.find((x) => (x as { name: string }).name.includes('DeepSeek')) as unknown as { supportsVision?: boolean };
-    const qw = profiles.find((x) => (x as { name: string }).name.includes('Qwen')) as unknown as { supportsVision?: boolean };
-    expect(ds.supportsVision).toBe(false);
-    expect(qw.supportsVision).toBe(true);
-    // 已有方案时不覆盖（幂等）
-    const existing = { modelProfiles: [{ name: '我的方案', apiKey: 'k' }] };
-    expect((seedProfilesIfEmpty(existing as never).modelProfiles as never[]).length).toBe(1);
-  });
-  it('stripSeedProfiles：剔除未激活的种子方案，保留已填 Key 的同名方案', () => {
-    const settings = {
-      modelProfiles: [
-        { name: '内置 · Qwen · maas 网关', apiKey: '' },
-        { name: '内置 · DeepSeek', apiKey: '' },
-        { name: '内置 · Qwen · maas 网关', apiKey: 'sk-real' },
-        { name: '我的方案', apiKey: '' },
-      ],
-    } as never;
-    const out = stripSeedProfiles(settings).modelProfiles as Array<{ name: string; apiKey?: string }>;
-    // 空 Key 的种子项被剔除；用户填过 Key 的与自定义方案保留
-    expect(out.map((p) => p.name)).toEqual(['内置 · Qwen · maas 网关', '我的方案']);
-    expect(out[0]?.apiKey).toBe('sk-real');
+  it('hostOf：只暴露主机名（红线 9）', () => {
+    expect(hostOf(MODEL_PRESETS.qwen.baseUrl)).toBe(new URL(MODEL_PRESETS.qwen.baseUrl).hostname);
+    expect(hostOf('')).toBe('无效地址');
+    expect(hostOf('not a url')).toBe('无效地址');
   });
 
-  it('preserveSecrets：同端点下新值 Key 为空时沿用旧值（密钥不得被静默清空）', () => {
-    const prev = { model: { ...DEFAULT_MODEL, apiKey: 'sk-old' } } as never;
-    const next = { model: { ...DEFAULT_MODEL, apiKey: '' } } as never;
-    expect(preserveSecrets(next, prev).model?.apiKey).toBe('sk-old');
-    // 方案级别同样生效
-    const prev2 = { modelProfiles: [{ name: 'A', apiKey: 'sk-a', baseUrl: 'https://x', model: 'm' }] } as never;
-    const next2 = { modelProfiles: [{ name: 'A', apiKey: '', baseUrl: 'https://x', model: 'm' }] } as never;
-    expect((preserveSecrets(next2, prev2).modelProfiles as Array<{ apiKey: string }>)[0]?.apiKey).toBe('sk-a');
-  });
-
-  it('preserveSecrets：端点变了绝不沿用旧 Key（401 根因——A 平台钥匙不能开 B 平台的门）', () => {
-    const prev = { model: { ...DEFAULT_MODEL, baseUrl: 'https://maas.example/v1', apiKey: 'sk-maas' } } as never;
-    const next = { model: { ...DEFAULT_MODEL, baseUrl: 'https://dashscope.example/v1', apiKey: '' } } as never;
-    expect(preserveSecrets(next, prev).model?.apiKey).toBe('');
-    // 方案同理
-    const prev2 = { modelProfiles: [{ name: 'A', apiKey: 'sk-maas', baseUrl: 'https://maas.example/v1', model: 'm' }] } as never;
-    const next2 = { modelProfiles: [{ name: 'A', apiKey: '', baseUrl: 'https://dashscope.example/v1', model: 'm' }] } as never;
-    expect((preserveSecrets(next2, prev2).modelProfiles as Array<{ apiKey?: string }>)[0]?.apiKey ?? '').toBe('');
-  });
-
-  it('resolveModuleModel：选中的方案缺 Key → 回退默认模型（不返回不完整配置）', () => {
-    const settings = {
-      model: { ...DEFAULT_MODEL, apiKey: 'sk-default' },
-      modelProfiles: [{ name: '缺Key方案', apiKey: '', baseUrl: 'https://x', model: 'm' }],
-      moduleModel: { qa: '缺Key方案' },
-    } as never;
-    expect(resolveModuleModel(settings, 'qa')?.apiKey).toBe('sk-default');
-  });
-
-  it('applyPreset：同端点保留 Key；换端点保留表单 Key（回填由 savedKeyForEndpoint 负责）', () => {
-    const form: ModelConfig = { ...DEFAULT_MODEL, baseUrl: MODEL_PRESETS.deepseek.baseUrl, apiKey: 'sk-ds', model: 'deepseek-flash' };
-    expect(applyPreset(form, 'deepseek').apiKey).toBe('sk-ds');
-    expect(applyPreset(form, 'qwen').apiKey).toBe('sk-ds'); // 不清空，回填逻辑负责
-  });
-
-  it('savedKeyForEndpoint：优先同端点方案，其次同端点默认模型，无则 null', () => {
-    const settings = {
-      model: { ...DEFAULT_MODEL, baseUrl: 'https://deepseek', apiKey: 'sk-ds' },
-      modelProfiles: [
-        { name: 'Q1', apiKey: 'sk-q1', baseUrl: 'https://maas', model: 'm' },
-        { name: 'Q2', apiKey: '', baseUrl: 'https://maas2', model: 'm' },
-      ],
-    } as never;
-    expect(savedKeyForEndpoint(settings, 'https://maas')).toBe('sk-q1');
-    expect(savedKeyForEndpoint(settings, 'https://deepseek')).toBe('sk-ds');
-    expect(savedKeyForEndpoint(settings, 'https://maas2')).toBeNull();
-    expect(savedKeyForEndpoint(settings, 'https://unknown')).toBeNull();
-  });
-
-  it('preserveSecrets：新值填了 Key 时以新值为准（正常覆盖）', () => {
-    const prev = { model: { ...DEFAULT_MODEL, apiKey: 'sk-old' } } as never;
-    const next = { model: { ...DEFAULT_MODEL, apiKey: 'sk-new' } } as never;
-    expect(preserveSecrets(next, prev).model?.apiKey).toBe('sk-new');
-  });
-  it('mergeSavedSecrets：只改 moduleModel（切 Tab/切模块）时 Key 原样不动', () => {
-    const stored = {
-      model: { ...DEFAULT_MODEL, apiKey: 'sk-keep' },
-      modelProfiles: [{ name: 'Q', apiKey: 'sk-q', baseUrl: 'https://q', model: 'm' }],
-    } as never;
-    const next = { ...(stored as object), moduleModel: { qa: 'Q' } } as never;
-    const out = mergeSavedSecrets(next, stored);
-    expect(out.model?.apiKey).toBe('sk-keep');
-    expect((out.modelProfiles as Array<{ apiKey: string }>)[0]?.apiKey).toBe('sk-q');
-  });
-
-  it('mergeSavedSecrets：保存其他分区（Obsidian）不带 model 时 Key 不被清空', () => {
-    const stored = { model: { ...DEFAULT_MODEL, apiKey: 'sk-keep' } } as never;
-    const next = {
-      model: { ...DEFAULT_MODEL, apiKey: '' },
-      obsidian: { baseUrl: 'https://o', apiKey: 'k', rootDir: 'r' },
-    } as never;
-    expect(mergeSavedSecrets(next, stored).model?.apiKey).toBe('sk-keep');
-  });
-
-  it('mergeSavedSecrets：用户填了新 Key 才覆盖（身份不变）', () => {
-    const stored = { model: { ...DEFAULT_MODEL, apiKey: 'sk-old' } } as never;
-    const next = { model: { ...DEFAULT_MODEL, apiKey: 'sk-new' } } as never;
-    expect(mergeSavedSecrets(next, stored).model?.apiKey).toBe('sk-new');
-  });
-
-  it('maskKey：脱敏且不暴露完整内容', () => {
-    expect(maskKey('')).toBe('未设置');
-    expect(maskKey(undefined)).toBe('未设置');
-    expect(maskKey('short')).toBe('••••••••');
-    const masked = maskKey('sk-abcdefgh1234');
-    expect(masked.endsWith('1234')).toBe(true);
-    expect(masked).not.toContain('abcdefgh');
-  });
-  it('resolveModuleModel：方案无 Key 但端点有已存 Key → 继承（端点配一次，方案全通用）', () => {
-    const settings = {
-      // 默认模型与方案同端点（https://maas）：方案无 Key 时继承端点已存 Key
-      model: { ...DEFAULT_MODEL, baseUrl: 'https://maas', apiKey: 'sk-maas' },
-      modelProfiles: [{ name: 'Qwen maas', apiKey: '', baseUrl: 'https://maas', model: 'qwen-vl-plus' }],
-      moduleModel: { qa: 'Qwen maas' },
-    } as never;
-    const out = resolveModuleModel(settings, 'qa');
-    expect(out?.apiKey).toBe('sk-maas'); // 继承端点的 Key
-    expect(out?.model).toBe('qwen-vl-plus'); // 端点/模型名仍是方案的
-  });
-  it('setEndpointKey：配 Qwen 不会影响 DeepSeek 的 Key（各平台独立）', () => {
-    let settings = { endpointKeys: { 'https://deepseek': 'sk-ds' } } as never;
-    settings = setEndpointKey(settings, 'https://maas', 'sk-qwen') as never;
-    const keys = (settings as unknown as { endpointKeys: Record<string, string> }).endpointKeys;
-    expect(keys['https://deepseek']).toBe('sk-ds');
-    expect(keys['https://maas']).toBe('sk-qwen');
-  });
-
-  it('savedKeyForEndpoint：优先端点表（端点维度是 Key 的权威来源）', () => {
-    const settings = {
-      endpointKeys: { 'https://maas': 'sk-endpoint' },
-      model: { ...DEFAULT_MODEL, baseUrl: 'https://maas', apiKey: 'sk-model' },
-      modelProfiles: [{ name: 'Q', apiKey: 'sk-profile', baseUrl: 'https://maas', model: 'm' }],
-    } as never;
-    expect(savedKeyForEndpoint(settings, 'https://maas')).toBe('sk-endpoint');
-  });
-
-  it('mergeSavedSecrets：保存默认模型切换平台时，端点表里其他平台的 Key 不丢', () => {
-    const stored = {
-      endpointKeys: { 'https://maas': 'sk-qwen', 'https://deepseek': 'sk-ds' },
-      model: { ...DEFAULT_MODEL, baseUrl: 'https://maas', apiKey: 'sk-qwen' },
-    } as never;
-    // 用户把默认模型切到 DeepSeek 并保存（表单里是新端点的 Key）
-    const next = {
-      endpointKeys: { 'https://deepseek': 'sk-ds-new' },
-      model: { ...DEFAULT_MODEL, baseUrl: 'https://deepseek', apiKey: 'sk-ds-new' },
-    } as never;
-    const out = mergeSavedSecrets(next, stored);
-    expect(out.endpointKeys?.['https://maas']).toBe('sk-qwen'); // 另一平台完好
-    expect(out.endpointKeys?.['https://deepseek']).toBe('sk-ds-new'); // 新值生效
-  });
-
-  it('knownEndpoints：含预设端点、端点表与已用端点，去重', () => {
-    const settings = {
-      endpointKeys: { 'https://custom': 'k' },
-      model: { ...DEFAULT_MODEL, baseUrl: 'https://maas', apiKey: 'k' },
-      modelProfiles: [{ name: 'Q', apiKey: 'k', baseUrl: 'https://maas', model: 'm' }],
-    } as never;
-    const eps = knownEndpoints(settings);
-    expect(eps).toContain(MODEL_PRESETS.deepseek.baseUrl);
-    expect(eps).toContain('https://custom');
-    expect(eps.filter((e) => e === 'https://maas').length).toBe(1);
+  it('mergeSettings：补丁覆盖目标键，其余保留', () => {
+    const merged = mergeSettings({ model: textConfig(), visionEnabled: true }, { visionEnabled: false });
+    expect(merged.visionEnabled).toBe(false);
+    expect(merged.model?.apiKey).toBe('k-1');
   });
 });

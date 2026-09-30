@@ -1,13 +1,26 @@
 /**
- * 设置页模型表单的纯逻辑（预设/校验/抽帧可用性/合并写回/当前策略摘要）。
+ * 设置页模型表单的纯逻辑（预设槽位 / 校验 / 抽帧可用性 / 合并写回 / 当前策略摘要）。
+ *
  * 抽成纯函数便于单测；端点与模型标识一律来自 src/config 的 MODEL_PRESETS（红线 9）。
+ *
+ * ## 单一模型配置 + 预设槽位（本次重构）
+ *
+ * 产品口径：大纲 / 导图 / 问答三模块**共用一套模型配置**，设置页只有一个模型区、
+ * 一个 API Key 输入框，下拉框只在两个内置预设（DeepSeek / Qwen）之间切换。
+ *
+ * Key 的存储口径：**一个预设一个槽位**（`Settings.modelSlots`），切换预设时各带各的
+ * Key。这从根上消除了旧版"配了 A 平台，B 平台的 Key 就没了"的问题——旧版用
+ * `endpointKeys` + `modelProfiles` 打补丁，UI 上暴露成两个额外模块，用户看不懂，
+ * 且"已保存"提示恒读单一 `settings.model.apiKey`，看起来像互相覆盖。
+ *
+ * 槽位对 UI 不可见：设置页只显示"当前预设的 Key"，切换预设时由本模块带出对应值。
  */
-import { MODEL_PRESETS } from '../../config';
+import { DEFAULT_MODEL, MODEL_PRESETS } from '../../config';
 import type { ModelConfig, Settings } from '../../types';
 
 export type PresetKey = keyof typeof MODEL_PRESETS;
 
-/** 抽帧作用的三个模块 */
+/** 抽帧作用的三个模块（三模块共用一套模型，此键仅用于抽帧开关的模块级细分） */
 export type VisionModule = 'outline' | 'mindmap' | 'qa';
 
 export interface ModelFormErrors {
@@ -28,68 +41,130 @@ const ERR = {
   maxTokensRange: 'maxTokens 需为 ≥ 1 的整数',
 } as const;
 
+/** 内置预设的固定顺序（下拉框与设置页按钮共用） */
+export function presetKeys(): PresetKey[] {
+  return Object.keys(MODEL_PRESETS) as PresetKey[];
+}
+
 /** 三要素齐全才算已配置（未配置 → 自动跳过抽帧） */
 export function isModelConfigured(cfg?: Partial<ModelConfig> | null): boolean {
   if (!cfg) return false;
   return Boolean(cfg.baseUrl?.trim() && cfg.apiKey?.trim() && cfg.model?.trim());
 }
 
-/** 应用预设：只覆盖 baseUrl 与 model，保留用户已填的 apiKey、temperature 等字段 */
-export function applyPreset(form: ModelConfig, preset: PresetKey): ModelConfig {
+/**
+ * 预设的默认配置骨架（端点与模型标识的唯一来源，红线 9）：
+ * 不含 Key——Key 只存在槽位里，由 slotConfigOf 带出。
+ */
+export function presetConfigOf(preset: PresetKey): ModelConfig {
   const p = MODEL_PRESETS[preset];
-  // Key 不在此处理：调用方会用 savedKeyForEndpoint 按新端点回填已保存的 Key
-  // （有已存 Key → 直接能测试连接；没有 → 留空由用户填写）
-  return { ...form, baseUrl: p.baseUrl, model: p.model };
+  return {
+    baseUrl: p.baseUrl,
+    model: p.model,
+    apiKey: '',
+    temperature: { outline: DEFAULT_MODEL.temperature.outline, qa: DEFAULT_MODEL.temperature.qa },
+    maxTokens: DEFAULT_MODEL.maxTokens,
+    outlineTokenBudget: DEFAULT_MODEL.outlineTokenBudget,
+    supportsVision: presetVisionDefault(preset),
+  };
 }
 
-/** 写入某端点的 Key（保留其他端点；空字符串表示清空该端点） */
-export function setEndpointKey(settings: Settings, baseUrl: string, apiKey: string): Settings {
-  const b = (baseUrl ?? '').trim();
-  if (!b) return settings;
-  const keys = { ...(settings.endpointKeys ?? {}) };
-  const value = (apiKey ?? '').trim();
-  if (value) keys[b] = value;
-  else delete keys[b];
-  return { ...settings, endpointKeys: keys };
-}
-
-/** 已知端点列表：预设端点 ∪ 端点 Key 表 ∪ 默认模型/方案的端点 */
-export function knownEndpoints(settings: Settings): string[] {
-  const set = new Set<string>();
-  for (const key of Object.keys(MODEL_PRESETS) as Array<keyof typeof MODEL_PRESETS>) {
-    set.add(MODEL_PRESETS[key].baseUrl);
+/**
+ * 某预设槽位当前的配置（含该平台已保存的 Key）。
+ * 槽位为空时回落到预设骨架（Key 为空，由用户填写）。
+ */
+export function slotConfigOf(settings: Settings, preset: PresetKey): ModelConfig {
+  const stored = settings?.modelSlots?.[preset];
+  if (stored && typeof stored === 'object') {
+    return { ...presetConfigOf(preset), ...stored };
   }
-  for (const k of Object.keys(settings.endpointKeys ?? {})) if (k.trim()) set.add(k.trim());
-  if (settings.model?.baseUrl?.trim()) set.add(settings.model.baseUrl.trim());
-  for (const p of (settings.modelProfiles ?? []) as Array<ModelConfig>) {
-    if (p?.baseUrl?.trim()) set.add(p.baseUrl.trim());
-  }
-  return [...set];
+  return presetConfigOf(preset);
 }
 
-/** 端点展示名（优先匹配预设短名，否则显示主机） */
-export function endpointLabel(baseUrl: string): string {
-  for (const key of Object.keys(MODEL_PRESETS) as Array<keyof typeof MODEL_PRESETS>) {
-    if (MODEL_PRESETS[key].baseUrl === baseUrl) return presetShortLabel(key);
-  }
-  return hostOf(baseUrl);
+/** 某预设槽位是否已保存 API Key（下拉框的红字提示依据） */
+export function slotHasKey(settings: Settings, preset: PresetKey): boolean {
+  return Boolean(slotConfigOf(settings, preset).apiKey?.trim());
 }
 
-/** 端点 → 已保存的 Key：优先同名同端点的方案，其次端点相同的默认模型；都没有返回 null */
-export function savedKeyForEndpoint(settings: Settings, baseUrl: string): string | null {
-  const b = (baseUrl ?? '').trim();
-  if (!b) return null;
-  // ① 端点级 Key 表（权威来源：一个平台一个 Key，互不影响）
-  const byEndpoint = (settings.endpointKeys ?? {})[b];
-  if (byEndpoint?.trim()) return byEndpoint.trim();
-  const profile = ((settings.modelProfiles ?? []) as Array<ModelConfig>).find(
-    (q) => (q?.baseUrl ?? '').trim() === b && Boolean(q?.apiKey?.trim()),
-  );
-  if (profile?.apiKey?.trim()) return profile.apiKey.trim();
-  if ((settings.model?.baseUrl ?? '').trim() === b && settings.model?.apiKey?.trim()) {
-    return settings.model.apiKey.trim();
+/** 把一份配置写入指定预设槽位（不动其他槽位，也不动其他分区） */
+export function writeSlot(settings: Settings, preset: PresetKey, cfg: ModelConfig): Settings {
+  return {
+    ...settings,
+    modelSlots: { ...(settings.modelSlots ?? {}), [preset]: cfg },
+  };
+}
+
+/** 当前生效配置落在哪个预设上（按 baseUrl 精确匹配；自定义端点返回 null） */
+export function activePreset(baseUrl: string): PresetKey | null {
+  const normalized = (baseUrl ?? '').trim().replace(/\/+$/, '');
+  if (!normalized) return null;
+  for (const key of presetKeys()) {
+    if (MODEL_PRESETS[key].baseUrl === normalized) return key;
   }
   return null;
+}
+
+/**
+ * 三模块共用的模型解析（替代旧的 resolveModuleModel）：
+ * 三模块不再分别选模型，统一返回 settings.model。
+ */
+export function resolveModel(settings: Settings): ModelConfig | null {
+  return settings?.model ?? null;
+}
+
+/**
+ * 旧数据迁移（幂等，读时执行，不强制落盘）：
+ * 1. 无 model 但有 visionModel → 提升为 model
+ * 2. modelSupportsVision → model.supportsVision
+ * 3. endpointKeys / modelProfiles 里能匹配到预设端点的 Key → 迁入对应 modelSlots
+ * 4. model 本身若落在某预设端点上，其 Key 也补进该槽位
+ * 5. 清除已废弃字段（endpointKeys / modelProfiles / moduleModel / visionModel）
+ *
+ * 迁移后 Key 永不丢失：老用户此前配的 Key 一定落在上述三处之一。
+ */
+export function migrateLegacyModelSettings(settings: Settings): Settings {
+  if (!settings || typeof settings !== 'object') return settings;
+  let next: Settings = { ...settings };
+
+  // 1+2. 视觉模型与能力字段
+  if (next.visionModel && !isModelConfigured(next.model)) {
+    next.model = next.visionModel;
+  }
+  if (next.modelSupportsVision === true && next.model && next.model.supportsVision === undefined) {
+    next.model = { ...next.model, supportsVision: true };
+  }
+
+  // 3. 端点级 Key → 槽位
+  const slots: Record<string, ModelConfig> = { ...(next.modelSlots ?? {}) };
+  const endpointKeys = next.endpointKeys ?? {};
+  for (const preset of presetKeys()) {
+    if (slots[preset]?.apiKey?.trim()) continue;
+    const endpoint = MODEL_PRESETS[preset].baseUrl;
+    const fromEndpoint = endpointKeys[endpoint]?.trim();
+    if (fromEndpoint) {
+      slots[preset] = { ...slotConfigOf(next, preset), apiKey: fromEndpoint };
+      continue;
+    }
+    // 方案里同端点且有 Key 的项
+    const fromProfile = (next.modelProfiles ?? []).find(
+      (p) => (p?.baseUrl ?? '').trim() === endpoint && Boolean(p?.apiKey?.trim()),
+    );
+    if (fromProfile?.apiKey?.trim()) {
+      slots[preset] = { ...slotConfigOf(next, preset), apiKey: fromProfile.apiKey.trim() };
+    }
+  }
+  // 4. 当前 model 的 Key 补进其所属槽位
+  const modelPreset = next.model ? activePreset(next.model.baseUrl ?? '') : null;
+  if (modelPreset && next.model?.apiKey?.trim() && !slots[modelPreset]?.apiKey?.trim()) {
+    slots[modelPreset] = { ...slotConfigOf(next, modelPreset), apiKey: next.model.apiKey.trim() };
+  }
+
+  next.modelSlots = slots;
+  delete next.endpointKeys;
+  delete next.modelProfiles;
+  delete next.moduleModel;
+  delete next.visionModel;
+  return next;
 }
 
 function isHttpUrl(value: string): boolean {
@@ -119,87 +194,27 @@ export function validateModelForm(form: ModelConfig): ModelFormErrors {
   return errors;
 }
 
-/** 用户声明当前（默认）模型支持图像输入 → 抽帧开关才可用（未声明视为不支持） */
-export function canEnableVision(settings: Settings): boolean {
-  return modelSupportsVisionOf(settings.model ?? null, settings);
+/**
+ * 建议值：预设是否默认按多模态勾选（仅作默认值，用户可自行改）。
+ * DeepSeek 为纯文本 → false；Qwen 兼容模式支持图文 → true。
+ */
+export function presetVisionDefault(preset: PresetKey): boolean {
+  return preset !== 'deepseek';
 }
 
-/**
- * 模型的图像能力判定：model.supportsVision 优先（能力随方案走），
- * 缺失时回退旧字段 settings.modelSupportsVision（旧数据兼容）。
- */
-function modelSupportsVisionOf(model: ModelConfig | null, settings: Settings): boolean {
+/** 模型的图像能力判定：model.supportsVision 优先，缺失时回退旧字段（旧数据兼容） */
+export function modelSupportsVisionOf(model: ModelConfig | null, settings: Settings): boolean {
   if (model) return model.supportsVision ?? settings.modelSupportsVision === true;
   return settings.modelSupportsVision === true;
 }
 
-/**
- * 方案列表（纯函数）：过滤无 name / 无 apiKey 的项，并保证 name 唯一
- * （同名时先出现者优先）。供设置页方案区与各模块下拉共用。
- */
-export function listProfiles(settings: Settings): ModelConfig[] {
-  const out: ModelConfig[] = [];
-  const seen = new Set<string>();
-  for (const p of settings.modelProfiles ?? []) {
-    const name = p?.name?.trim();
-    if (!name || !p.apiKey?.trim()) continue;
-    if (seen.has(name)) continue;
-    seen.add(name);
-    out.push({ ...p, name });
-  }
-  return out;
+/** 当前（默认）模型是否支持图像输入 → 抽帧开关才可用（未声明视为不支持） */
+export function canEnableVision(settings: Settings): boolean {
+  return modelSupportsVisionOf(resolveModel(settings), settings);
 }
 
 /**
- * 按模块解析模型（纯函数，供 loader 与 visionActiveFor 共用）：
- * moduleModel 命中的方案（须有 Key，缺失/不完整回退默认）→ 否则默认 settings.model。
- * 默认模型也未配置时返回 null。
- */
-export function resolveModuleModel(
-  settings: Settings,
-  module: VisionModule,
-): ModelConfig | null {
-  const wanted = settings.moduleModel?.[module];
-  if (wanted) {
-    // 注意：不能走 listProfiles（它会过滤掉无 Key 的方案）——
-    // 无 Key 的方案正是需要走「继承端点 Key」路径的对象
-    const profile = ((settings.modelProfiles ?? []) as ModelConfig[]).find(
-      (p) => p?.name?.trim() === wanted,
-    );
-    if (profile) {
-      if (profile.apiKey?.trim()) return profile;
-      // 方案无 Key → 继承该端点已保存的 Key（端点配一次，方案全通用）；
-      // 端点也没有 → 回退默认模型（绝不让主流程拿到不完整配置）
-      const inherited = savedKeyForEndpoint(settings, profile.baseUrl);
-      if (inherited) return { ...profile, apiKey: inherited };
-    }
-  }
-  return settings.model ?? null;
-}
-
-/**
- * 旧数据迁移（幂等）：settings.modelSupportsVision → settings.model.supportsVision。
- * 仅当旧字段为 true 且 model.supportsVision 缺失时写入；已有值不覆盖。
- */
-export function migrateVisionToModel(settings: Settings): Settings {
-  if (settings.modelSupportsVision !== true) return settings;
-  const model = settings.model;
-  if (!model || model.supportsVision !== undefined) return settings;
-  return { ...settings, model: { ...model, supportsVision: true } };
-}
-
-/**
- * 建议值：预设模型是否默认按多模态勾选（仅作默认值，用户可自行改）。
- * DeepSeek 为纯文本 → false；Qwen 兼容模式支持图文 → true。
- */
-export function presetVisionDefault(preset: PresetKey): boolean {
-  // DeepSeek 文本模型不支持图像；Qwen 两个端点均可使用多模态模型（由用户选的模型名决定）
-  return preset !== 'deepseek';
-}
-
-/**
- * 抽帧可用判断：全局开关 + 该模块开关（未配置视为开启）+ 该模块实际使用模型的图像能力。
- * 模型按 resolveModuleModel 解析（模块可另选方案，能力随方案走）；未配置模型即不支持。
+ * 抽帧可用判断：全局开关 + 该模块开关（未配置视为开启）+ 当前模型的图像能力。
  * 任一条件不满足即为 false（调用方据此跳过抽帧，不影响纯文本功能）。
  */
 export function visionActiveFor({
@@ -210,124 +225,8 @@ export function visionActiveFor({
   module: VisionModule;
 }): boolean {
   if (settings.visionEnabled !== true) return false;
-  const model = resolveModuleModel(settings, module);
-  if (!modelSupportsVisionOf(model, settings)) return false;
+  if (!modelSupportsVisionOf(resolveModel(settings), settings)) return false;
   return settings.visionModules?.[module] !== false;
-}
-
-/**
- * 旧设置迁移：历史版本把多模态模型存在 visionModel。
- * - 无 model 但有 visionModel → 提升为 model 并清除 visionModel
- * - 两者都有 → 保留 model，清除 visionModel
- * - 都无 → 原样返回
- * 返回新对象，不改入参。
- */
-export function migrateLegacyVisionModel(settings: Settings): Settings {
-  if (!settings.visionModel) return settings;
-  const next: Settings = { ...settings };
-  if (!isModelConfigured(next.model)) {
-    next.model = settings.visionModel;
-  }
-  delete next.visionModel;
-  return next;
-}
-
-/** 合并写回：把局部更新合并进整份 settings（不动其他分区） */
-/**
- * 规范化方案列表（幂等）：
- * 1. 旧版本的内置方案（名称以「内置 · 」开头）——其 Key 若有，先迁入端点表，
- *    然后从方案列表删除（旧名称与当前两个内置方案不一致，会残留在下拉里）
- * 2. 重新播种当前的两个内置方案（DeepSeek / Qwen）
- * 3. 用户的自定义方案（非「内置 · 」前缀）原样保留
- */
-export function normalizeProfiles(settings: Settings): Settings {
-  let endpointKeys = { ...(settings.endpointKeys ?? {}) };
-  const profiles = (settings.modelProfiles ?? []) as Array<ModelConfig & { name?: string }>;
-  const custom: Array<ModelConfig & { name?: string }> = [];
-  for (const p of profiles) {
-    const name = p?.name?.trim() ?? '';
-    if (name.startsWith(SEED_PROFILE_PREFIX)) {
-      // 旧内置方案：Key 迁入端点表后删除
-      if (p.apiKey?.trim() && p.baseUrl?.trim()) {
-        endpointKeys[p.baseUrl.trim()] = p.apiKey.trim();
-      }
-      continue;
-    }
-    if (name) custom.push(p);
-  }
-  // 播种当前的两个内置方案（已有同名者不重复——理论上迁移后不会存在）
-  const seeded = seedProfilesIfEmpty({ ...(settings as Settings), modelProfiles: custom as never });
-  return { ...(seeded as Settings), endpointKeys };
-}
-
-/** 内置种子方案的名称前缀（seedProfilesIfEmpty 生成，Key 为空） */
-export const SEED_PROFILE_PREFIX = '内置 · ';
-
-/**
- * 写回前剥离"未激活的种子方案"：种子方案是**派生的展示项**（Key 为空），
- * 若随保存写回，会把用户已填好 Key 的同名方案覆盖成空 Key——这是密钥丢失的根因。
- */
-export function stripSeedProfiles(settings: Settings): Settings {
-  const profiles = settings.modelProfiles as Array<ModelConfig & { name?: string }> | undefined;
-  if (!profiles || profiles.length === 0) return settings;
-  const kept = profiles.filter((p) => {
-    const name = p?.name?.trim() ?? '';
-    const seeded = name.startsWith(SEED_PROFILE_PREFIX);
-    // 只剔除"仍是种子状态"（无 Key）的项；用户填过 Key 的同名方案必须保留
-    return !(seeded && !p.apiKey?.trim());
-  });
-  return { ...settings, modelProfiles: kept as Settings['modelProfiles'] };
-}
-
-/** 身份槽位：方案名 + 端点。Key 归属于"这个端点上的这个方案"，不是归属于某个下标 */
-function slotId(m?: { name?: string; baseUrl?: string }): string {
-  return `${(m?.name ?? '').trim()}|${(m?.baseUrl ?? '').trim()}`;
-}
-
-/**
- * 【核心不变式】已保存的 API Key 是用户资产，只有"用户在表单里填了非空的新值"才能改变它。
- *
- * 除该动作外的任何路径——切换 Tab、刷新页面、保存其他分区（Obsidian/检索）、
- * 内置方案种子注入、旧数据迁移、模块下拉写回——都不得改动已保存的 Key。
- *
- * 规则（逐槽位，身份 = 方案名 + 端点）：
- * - 新值 Key 非空 → 视为用户新填，接受（覆盖）
- * - 新值 Key 为空 → 沿用同身份槽位里已保存的 Key
- * - 身份不同（换端点/换名）→ 无 Key 可沿用，保持空（需用户填写，避免平台错配 401）
- */
-export function mergeSavedSecrets(next: Settings, stored: Settings): Settings {
-  const nm = next.model;
-  const sm = stored.model;
-  const model =
-    nm && sm && slotId(nm) === slotId(sm) && !nm.apiKey?.trim() && sm.apiKey?.trim()
-      ? { ...nm, apiKey: sm.apiKey }
-      : nm;
-
-  const storedProfiles = (stored.modelProfiles ?? []) as Array<ModelConfig & { name?: string }>;
-  const nextProfiles = (next.modelProfiles ?? []) as Array<ModelConfig & { name?: string }>;
-  const profiles =
-    nextProfiles.length > 0
-      ? nextProfiles.map((p) => {
-          if (p?.apiKey?.trim()) return p;
-          const old = storedProfiles.find((q) => slotId(q) === slotId(p));
-          return old?.apiKey?.trim() ? { ...p, apiKey: old.apiKey } : p;
-        })
-      : next.modelProfiles;
-
-  // 端点级 Key 表：新值里缺失的端点沿用已保存的 Key（不得因某次保存而丢失其他平台的 Key）
-  const storedKeys = stored.endpointKeys ?? {};
-  const nextKeys = { ...(next.endpointKeys ?? {}) };
-  for (const [endpoint, key] of Object.entries(storedKeys)) {
-    const incoming = nextKeys[endpoint];
-    if (!incoming?.trim() && key?.trim()) nextKeys[endpoint] = key;
-  }
-
-  return {
-    ...next,
-    model: model ?? next.model,
-    modelProfiles: profiles ?? next.modelProfiles,
-    endpointKeys: nextKeys,
-  };
 }
 
 /** 脱敏展示：让用户能确认"Key 还在"，但不暴露内容 */
@@ -336,14 +235,6 @@ export function maskKey(apiKey?: string): string {
   if (k.length === 0) return '未设置';
   if (k.length <= 8) return '••••••••';
   return `••••${k.slice(-4)}`;
-}
-
-/**
- * 密钥护栏：新值 Key 为空而旧值非空时沿用旧值。
- * 任何保存路径都不得因为"表单里没填 / 载入未完成"而把已配置的 Key 清空。
- */
-export function preserveSecrets(next: Settings, prev: Settings): Settings {
-  return mergeSavedSecrets(next, prev);
 }
 
 export function presetShortLabel(preset: PresetKey): string {
@@ -355,34 +246,6 @@ export function presetShortLabel(preset: PresetKey): string {
     default:
       return preset;
   }
-}
-
-/**
- * 内置方案种子：modelProfiles 为空时，从 MODEL_PRESETS 生成带名称的方案
- * （Key 为空，用户在设置页填好后以同名保存即可覆盖）。幂等：已有方案不重复注入。
- */
-export function seedProfilesIfEmpty(settings: Settings): Settings {
-  if ((settings.modelProfiles ?? []).length > 0) return settings;
-  const profiles = (Object.keys(MODEL_PRESETS) as Array<keyof typeof MODEL_PRESETS>).map(
-    (key) => ({
-      ...MODEL_PRESETS[key],
-      name: `内置 · ${presetShortLabel(key)}`,
-      supportsVision: presetVisionDefault(key),
-      temperature: { outline: 0.3, qa: 0.3 },
-      maxTokens: 4096,
-    }),
-  );
-  return { ...settings, modelProfiles: profiles as never };
-}
-
-/** 当前表单的接口地址匹配哪个预设（用于高亮显示"当前选用"） */
-export function activePreset(baseUrl: string): PresetKey | null {
-  const normalized = (baseUrl ?? '').trim().replace(/\/+$/, '');
-  if (!normalized) return null;
-  for (const key of Object.keys(MODEL_PRESETS) as PresetKey[]) {
-    if (MODEL_PRESETS[key].baseUrl === normalized) return key;
-  }
-  return null;
 }
 
 /** 归一化：去除粘贴带来的首尾空白（API Key 前后空格是 401 的常见成因） */
@@ -399,19 +262,8 @@ export function mergeSettings(current: Settings, patch: Partial<Settings>): Sett
   return { ...current, ...patch };
 }
 
-/** 策略摘要的模块中文名（只用于展示） */
-const STRATEGY_MODULE_LABELS: Record<VisionModule, string> = {
-  outline: '大纲',
-  mindmap: '导图',
-  qa: '问答',
-};
-
-/** 策略摘要固定行：单模型口径的说明（图片与文本一起发给同一个模型） */
-const ROUTING_RULE =
-  '说明：图片与文本一起发给同一个模型；未开启抽帧时为纯文本问答';
-
 /**
- * 取接口地址的主机名（红线 9：摘要只暴露主机名，不输出完整地址）。
+ * 接口地址的主机名（红线 9：摘要只暴露主机名，不输出完整地址）。
  * 空值或非法 URL → '无效地址'。
  */
 export function hostOf(baseUrl?: string): string {
@@ -424,50 +276,41 @@ export function hostOf(baseUrl?: string): string {
   }
 }
 
+/** 策略摘要的模块中文名（只用于展示） */
+const STRATEGY_MODULE_LABELS: Record<VisionModule, string> = {
+  outline: '大纲',
+  mindmap: '导图',
+  qa: '问答',
+};
+
 /**
- * 「当前策略」摘要（设置页展示用纯函数，按模块选模型口径）：
- * 当前（默认）模型 / 三行模块模型（各模块实际会用到的模型）/ 多模态能力（按模块）/
- * 抽帧状态（含各模块生效情况）/ 说明，每行一条。
+ * 「当前策略」摘要（设置页展示用纯函数）：单模型口径。
+ * 三模块使用同一个模型，故只输出一行模型 + 各模块抽帧状态 + 各预设 Key 状态。
  */
 export function describeModelStrategy(settings: Settings): string[] {
-  const current = isModelConfigured(settings.model)
-    ? `当前模型：${hostOf(settings.model?.baseUrl)} / ${settings.model?.model ?? ''}`
-    : '当前模型：未配置（功能不可用）';
-
+  const model = resolveModel(settings);
   const modules = Object.keys(STRATEGY_MODULE_LABELS) as VisionModule[];
 
-  // 各模块实际使用的模型（moduleModel 命中方案 → 否则默认模型）
-  const moduleLines = modules.map((m) => {
-    const model = resolveModuleModel(settings, m);
-    return `${STRATEGY_MODULE_LABELS[m]}：${
-      model ? `${hostOf(model.baseUrl)} / ${model.model}` : '未配置'
-    }`;
-  });
+  const current = isModelConfigured(model)
+    ? `当前模型：${hostOf(model?.baseUrl)} / ${model?.model ?? ''}（大纲 / 导图 / 问答共用）`
+    : '当前模型：未配置（功能不可用）';
 
-  // 多模态能力按模块：能力随各模块所选模型（model.supportsVision，兼容旧字段）
-  const anyCapable = modules.some((m) =>
-    modelSupportsVisionOf(resolveModuleModel(settings, m), settings),
-  );
-  const capabilityMarks = modules
-    .map(
-      (m) =>
-        `${STRATEGY_MODULE_LABELS[m]}${
-          modelSupportsVisionOf(resolveModuleModel(settings, m), settings) ? '✓' : '✗'
-        }`,
-    )
-    .join(' ');
-  const multimodal = anyCapable
-    ? `多模态：${capabilityMarks}（能力随各模块所选模型）`
-    : '多模态：不支持（抽帧不可用）';
+  const multimodal = modelSupportsVisionOf(model, settings)
+    ? '多模态：当前模型已声明支持图像输入（抽帧可用）'
+    : '多模态：当前模型未声明支持图像输入（抽帧不可用）';
 
   const activeMarks = modules
     .map((m) => `${STRATEGY_MODULE_LABELS[m]}${visionActiveFor({ settings, module: m }) ? '✓' : '✗'}`)
     .join(' ');
-  const frame = !anyCapable
-    ? '抽帧：不可用（各模块所选模型均未声明支持图像输入）'
+  const frame = !modelSupportsVisionOf(model, settings)
+    ? '抽帧：不可用'
     : settings.visionEnabled === true
       ? `抽帧：已开启（${activeMarks}）`
       : '抽帧：已关闭';
 
-  return [current, ...moduleLines, multimodal, frame, ROUTING_RULE];
+  const slotLines = presetKeys().map(
+    (p) => `${presetShortLabel(p)}：API Key ${maskKey(slotConfigOf(settings, p).apiKey)}`,
+  );
+
+  return [current, multimodal, frame, ...slotLines];
 }

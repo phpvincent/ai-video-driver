@@ -12,6 +12,8 @@ import {
   type DrawToDataUrl,
   type HTMLVideoElementLike,
 } from '../../../src/content/frameCapture';
+import { DEFAULT_MAX_FRAMES } from '../../../src/content/frameCapture';
+import { FRAME_PLAN } from '../../../src/config';
 import { MSG } from '../../../src/messages';
 
 // ---------- 假 video ----------
@@ -66,6 +68,19 @@ class FakeVideo implements HTMLVideoElementLike {
 
   fire(type: string): void {
     for (const l of [...(this.listeners.get(type) ?? [])]) l();
+  }
+
+  /** 记录暂停/恢复调用，供"抽帧期间暂停"的用例断言 */
+  pauseCalls = 0;
+  playCalls = 0;
+  pause(): void {
+    this.pauseCalls += 1;
+    this.paused = true;
+  }
+  play(): Promise<void> {
+    this.playCalls += 1;
+    this.paused = false;
+    return Promise.resolve();
   }
 }
 
@@ -123,9 +138,9 @@ describe('computeCanvasSize（保持比例 / 最长边上限 / 最小 16）', ()
     expect(size.height).toBeGreaterThanOrEqual(16);
   });
 
-  it('maxSize 非法 → 回落默认 512', () => {
-    expect(computeCanvasSize(1920, 1080, 0)).toEqual({ width: 512, height: 288 });
-    expect(computeCanvasSize(1920, 1080, Number.NaN)).toEqual({ width: 512, height: 288 });
+  it('maxSize 非法 → 回落默认 896（代码小字可读）', () => {
+    expect(computeCanvasSize(1920, 1080, 0)).toEqual({ width: 896, height: 504 });
+    expect(computeCanvasSize(1920, 1080, Number.NaN)).toEqual({ width: 896, height: 504 });
   });
 });
 
@@ -165,7 +180,7 @@ describe('captureFrameAt（seek → 绘制 → base64）', () => {
     const { draw, calls } = fakeDraw();
     const frame = await captureFrameAt(video, 30_000, { drawToDataUrl: draw });
     expect(frame).toEqual({ targetMs: 30_000, actualMs: 30_000, dataBase64: 'QUJDRA==' });
-    expect(calls[0]).toEqual({ width: 512, height: 288, quality: 0.7 });
+    expect(calls[0]).toEqual({ width: 896, height: 504, quality: 0.75 });
     expect(video.seekCount).toBe(1);
   });
 
@@ -196,7 +211,7 @@ describe('captureFrameAt（seek → 绘制 → base64）', () => {
     const video = new FakeVideo({ width: 0, height: 0 });
     const { draw, calls } = fakeDraw();
     const frame = await captureFrameAt(video, 5_000, { drawToDataUrl: draw });
-    expect(calls[0]).toEqual({ width: 16, height: 16, quality: 0.7 });
+    expect(calls[0]).toEqual({ width: 16, height: 16, quality: 0.75 });
     expect(frame.dataBase64).toBe('QUJDRA==');
   });
 
@@ -233,12 +248,42 @@ describe('captureFrames（批量 / 截断 / 单帧失败跳过）', () => {
     expect(calls).toHaveLength(2);
   });
 
-  it('默认 maxFrames=6', async () => {
+  it('默认上限跟随目标数：规划 10 帧就抽 10 帧（兜底上限 48）', async () => {
     const video = new FakeVideo();
     const { draw } = fakeDraw();
     const targets = Array.from({ length: 10 }, (_, i) => i * 1_000);
     const frames = await captureFrames(video, targets, { drawToDataUrl: draw });
-    expect(frames).toHaveLength(6);
+    expect(frames).toHaveLength(10);
+  });
+
+  it('超过兜底上限（48）才截断', async () => {
+    const video = new FakeVideo();
+    const { draw } = fakeDraw();
+    const targets = Array.from({ length: 60 }, (_, i) => i * 1_000);
+    const frames = await captureFrames(video, targets, { drawToDataUrl: draw });
+    expect(frames).toHaveLength(48);
+  });
+
+  it('兜底上限 ≥ 导图帧预算硬上限（否则长视频规划的帧在 content 侧被截断）', () => {
+    expect(DEFAULT_MAX_FRAMES).toBeGreaterThanOrEqual(FRAME_PLAN.mindmap.hardMax);
+  });
+
+  it('抽帧期间先暂停，结束后恢复原播放状态', async () => {
+    const video = new FakeVideo();
+    video.paused = false; // 正在播放
+    const { draw } = fakeDraw();
+    const seen: boolean[] = [];
+    const spyDraw = (...args: Parameters<typeof draw>) => {
+      seen.push(video.paused);
+      return draw(...args);
+    };
+    await captureFrames(video, [1_000, 2_000], { drawToDataUrl: spyDraw });
+    // 抽帧过程中一直处于暂停态
+    expect(seen).toEqual([true, true]);
+    // 抽完恢复播放（pause 一次、play 一次）
+    expect(video.pauseCalls).toBe(1);
+    expect(video.playCalls).toBe(1);
+    expect(video.paused).toBe(false);
   });
 
   it('单帧失败跳过，其余帧照常返回（不整体失败）', async () => {
@@ -317,7 +362,7 @@ describe('registerFrameCaptureHandler（CAPTURE_FRAMES）', () => {
     const frames = (responses[0] as { frames: Array<{ dataBase64: string }> }).frames;
     expect(frames).toHaveLength(2);
     expect(frames[0]?.dataBase64).toBe('RkFM');
-    expect(canvases[0]).toMatchObject({ width: 512, height: 288 });
+    expect(canvases[0]).toMatchObject({ width: 896, height: 504 });
   });
 
   it('payload.maxSize 透传到画布尺寸', async () => {

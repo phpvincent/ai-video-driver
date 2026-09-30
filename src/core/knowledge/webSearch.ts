@@ -1,24 +1,20 @@
 /**
- * 可选公开资料检索（SPEC-08 问答增强第 3 条）：把用户自填的检索服务结果
- * 折成少量摘要片段，注入问答上下文，回答课程外的事实时有据可依。
+ * 内置公开资料检索（DuckDuckGo Instant Answer，免 API Key）。
  *
  * 设计约束：
- * - endpoint / apiKey 全部来自用户配置（WebSearchConfig），代码内零 URL 字面量
- *   （红线 9：唯一 URL 来源为 src/config）；
+ * - **用户零配置**：不需要填 endpoint / API Key，问答时自动调用；检索到就注入上下文，
+ *   检索不到静默返回空，回答照常（红线 8 精神）；
+ * - 端点唯一来源是 src/config 的 WEB_SEARCH.endpoint（红线 9）；
  * - 检索内容与字幕、个人知识库共享同一上下文预算（红线 3）：由
  *   CONTEXT.webContextMaxChars 限制注入字符数；
- * - 全程不 throw：非 2xx / 网络失败 / 解析失败一律返回空结果，问答链路不受影响
- *   （红线 8 精神）。fetch 由调用方注入（SearchFetch），本模块零 chrome.* 依赖。
+ * - 全程不 throw：非 2xx / 网络失败 / 超时 / 解析失败一律返回空结果。
+ *   fetch 由调用方注入（SearchFetch），本模块零 chrome.* 依赖。
+ *
+ * 为什么不用 Tavily / Serper：那些都要用户注册拿 Key，与"用户无感知"矛盾；
+ * DuckDuckGo Instant Answer 免鉴权、返回 JSON、对"课程外事实"（人物、版本、规范、
+ * 外部工具）常能给出 Wikipedia 摘要，足够 MVP 用。覆盖率不足时宁可空手，也不编造。
  */
 import { CONTEXT, WEB_SEARCH } from '../../config';
-
-export interface WebSearchConfig {
-  /** 检索服务地址（用户自填：Tavily / Serper / 自建代理），运行时值 */
-  endpoint: string;
-  apiKey: string;
-  /** 引擎差异封装用；缺省 tavily */
-  engine?: string;
-}
 
 export interface WebSnippet {
   title: string;
@@ -40,102 +36,127 @@ export function formatSnippetLine(s: WebSnippet): string {
 }
 
 /**
- * 构造检索请求（引擎差异封装在唯一入口）。
- *
- * - tavily（默认）：POST，body {query, max_results}，Authorization: Bearer <key>
- * - serper：POST，body {q, num}，X-API-KEY: <key>
- * endpoint 完全来自配置；apiKey 由配置运行时提供，代码不落任何字面量。
+ * 构造 DuckDuckGo Instant Answer 请求 URL（红线 9：前缀只能来自 config 常量）。
+ * `no_html=1` 去掉内嵌标记；`skip_disambig=1` 跳过歧义页。
  */
-export function buildSearchRequest(
-  cfg: WebSearchConfig,
-  query: string,
-  maxResults: number,
-): { url: string; init: RequestInit } {
-  const engine = (cfg.engine ?? WEB_SEARCH.defaultEngine).trim().toLowerCase();
-  const limit = Number.isFinite(maxResults) && maxResults > 0
-    ? Math.floor(maxResults)
-    : WEB_SEARCH.defaultMaxResults;
-  const url = (cfg.endpoint ?? '').trim();
-  const key = cfg.apiKey ?? '';
-
-  if (engine === 'serper') {
-    return {
-      url,
-      init: {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'X-API-KEY': key },
-        body: JSON.stringify({ q: query, num: limit }),
-      },
-    };
-  }
-  return {
-    url,
-    init: {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
-      body: JSON.stringify({ query, max_results: limit }),
-    },
-  };
-}
-
-/** 从响应体取结果数组：兼容 {results:[…]} 与 {organic:[…]} 两种常见形状 */
-function pickResultArray(json: unknown): unknown[] {
-  if (!json || typeof json !== 'object') return [];
-  const raw = json as Record<string, unknown>;
-  for (const key of ['results', 'organic']) {
-    const value = raw[key];
-    if (Array.isArray(value)) return value;
-  }
-  return [];
-}
-
-/** 单条结果归一为 WebSnippet；标题与 url 都取不到时返回 null（丢弃） */
-function toSnippet(item: unknown): WebSnippet | null {
-  if (!item || typeof item !== 'object') return null;
-  const raw = item as Record<string, unknown>;
-  const title = typeof raw.title === 'string' ? raw.title.trim() : '';
-  const url =
-    typeof raw.url === 'string'
-      ? raw.url.trim()
-      : typeof raw.link === 'string'
-        ? raw.link.trim()
-        : '';
-  if (title.length === 0 || url.length === 0) return null;
-  const snippetRaw = [raw.content, raw.snippet, raw.description].find(
-    (v): v is string => typeof v === 'string',
-  );
-  return { title, url, snippet: snippetRaw ?? '' };
-}
-
-/** 解析响应体为片段列表（最多 maxResults 条） */
-export function parseSnippets(json: unknown, maxResults?: number): WebSnippet[] {
-  const items = pickResultArray(json);
-  const out: WebSnippet[] = [];
-  for (const item of items) {
-    const s = toSnippet(item);
-    if (s) out.push(s);
-  }
-  const limit = Number.isFinite(maxResults) && (maxResults as number) > 0
-    ? Math.floor(maxResults as number)
-    : out.length;
-  return out.slice(0, limit);
+export function buildSearchUrl(query: string): string {
+  const params = new URLSearchParams({
+    q: query,
+    format: 'json',
+    no_html: '1',
+    skip_disambig: '1',
+  });
+  return `${WEB_SEARCH.endpoint}?${params.toString()}`;
 }
 
 /**
- * 执行检索：失败（非 2xx / 网络 / 解析）一律返回空数组，不 throw。
- * fetch 由调用方注入；未配置 endpoint 时直接返回空。
+ * Instant Answer 响应里的一条相关主题：可能是叶子（`FirstURL`/`Text`），
+ * 也可能是分组（`Name`/`Topics: [...]`）。
+ */
+interface RawTopic {
+  FirstURL?: unknown;
+  Text?: unknown;
+  Name?: unknown;
+  Topics?: unknown;
+}
+
+/** 从 RelatedTopics（含嵌套分组）里摊平出叶子条目 */
+function flattenTopics(items: unknown[], depth = 0): RawTopic[] {
+  const out: RawTopic[] = [];
+  if (depth > 2) return out;
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
+    const topic = item as RawTopic;
+    if (Array.isArray(topic.Topics)) {
+      out.push(...flattenTopics(topic.Topics as unknown[], depth + 1));
+      continue;
+    }
+    out.push(topic);
+  }
+  return out;
+}
+
+/** 单条叶子 → WebSnippet；标题或 url 缺失时返回 null（丢弃） */
+function topicToSnippet(topic: RawTopic): WebSnippet | null {
+  const url = typeof topic.FirstURL === 'string' ? topic.FirstURL.trim() : '';
+  const text = typeof topic.Text === 'string' ? topic.Text.trim() : '';
+  if (!url || !text) return null;
+  // DDG 的 Text 形如「标题 - 摘要」或纯摘要；按首个分隔符切出标题，切不出就整体当摘要
+  const sepIndex = text.indexOf(' - ');
+  const title = sepIndex > 0 ? text.slice(0, sepIndex).trim() : text.slice(0, 20);
+  const snippet = sepIndex > 0 ? text.slice(sepIndex + 3).trim() : text;
+  return { title: title || text, url, snippet: snippet || text };
+}
+
+/**
+ * 解析 Instant Answer 响应：Abstract 优先（最贴合查询的摘要），
+ * 不足时补 RelatedTopics 的叶子条目。
+ */
+export function parseSnippets(json: unknown, maxResults?: number): WebSnippet[] {
+  if (!json || typeof json !== 'object') return [];
+  const raw = json as Record<string, unknown>;
+  const out: WebSnippet[] = [];
+
+  const abstractText = typeof raw.AbstractText === 'string' ? raw.AbstractText.trim() : '';
+  const abstractUrl = typeof raw.AbstractURL === 'string' ? raw.AbstractURL.trim() : '';
+  const heading = typeof raw.Heading === 'string' ? raw.Heading.trim() : '';
+  if (abstractText) {
+    out.push({
+      title: heading || 'DuckDuckGo 摘要',
+      url: abstractUrl || WEB_SEARCH.endpoint,
+      snippet: abstractText,
+    });
+  }
+
+  if (Array.isArray(raw.RelatedTopics)) {
+    for (const topic of flattenTopics(raw.RelatedTopics as unknown[])) {
+      const s = topicToSnippet(topic);
+      if (s) out.push(s);
+    }
+  }
+
+  const limit =
+    typeof maxResults === 'number' && Number.isFinite(maxResults) && maxResults > 0
+      ? Math.floor(maxResults)
+      : out.length;
+  // 去重（同 url 只留首条）
+  const seen = new Set<string>();
+  return out.filter((s) => (seen.has(s.url) ? false : (seen.add(s.url), true))).slice(0, limit);
+}
+
+/** 带超时的 fetch：超时按失败处理（返回空结果，不拖慢问答） */
+async function fetchWithTimeout(
+  fetchFn: SearchFetch,
+  url: string,
+  timeoutMs: number,
+): Promise<Response> {
+  if (typeof AbortController === 'undefined' || timeoutMs <= 0) {
+    return await fetchFn(url, { method: 'GET' });
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetchFn(url, { method: 'GET', signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * 执行检索（内置 DuckDuckGo，免配置）。
+ * 失败（非 2xx / 网络 / 超时 / 解析）一律返回空数组，不 throw。
  */
 export async function searchWeb(
-  cfg: WebSearchConfig,
-  fetchFn: SearchFetch,
   query: string,
-  opts: { maxResults?: number; signal?: AbortSignal } = {},
+  fetchFn: SearchFetch,
+  opts: { maxResults?: number; timeoutMs?: number } = {},
 ): Promise<WebSnippet[]> {
   const maxResults = opts.maxResults ?? WEB_SEARCH.defaultMaxResults;
+  const timeoutMs = opts.timeoutMs ?? WEB_SEARCH.requestTimeoutMs;
+  const q = (query ?? '').trim();
+  if (!q) return [];
   try {
-    const { url, init } = buildSearchRequest(cfg, query, maxResults);
-    if (url.length === 0) return [];
-    const res = await fetchFn(url, { ...init, signal: opts.signal });
+    const res = await fetchWithTimeout(fetchFn, buildSearchUrl(q), timeoutMs);
     if (!res || res.ok !== true) return [];
     const json: unknown = await res.json();
     return parseSnippets(json, maxResults);

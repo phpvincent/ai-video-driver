@@ -11,6 +11,7 @@ import { chunkCues } from './chunk';
 import { finalizeOutline, IncrementalMerger } from './merge';
 import { buildOutlinePrompts, formatTimecode } from './prompts';
 import { snapCandidates } from './snap';
+import { parseJsonLoose, withRepairHint } from './jsonRepair';
 import {
   OutlineChunkSchema,
   type OutlineChunkState,
@@ -72,7 +73,14 @@ export function describeChunkImages(
 ): string {
   if (!images || images.length === 0) return '';
   const times = images.map((image, i) => imageTimeLabel(image, i, chunk));
-  return `以下附带 ${images.length} 张教学画面（对应本段内容的时间点：${times.join('、')}）；画面中的文字、代码、界面也是讲解内容的一部分，可与字幕互相印证。`;
+  const paired = images.some((image) => typeof image.caption === 'string' && image.caption.length > 0);
+  const base = `以下附带 ${images.length} 张教学画面（对应本段内容的时间点：${times.join('、')}）；画面中的文字、代码、界面也是讲解内容的一部分，可与字幕互相印证。`;
+  if (!paired) return base;
+  return (
+    `${base}\n每张图前有一行【说明】给出它的时间点与此刻字幕。` +
+    '画面切换（新一页 PPT、新文件、新的界面）往往就是章节或知识点的边界，可据此判断章节起点；' +
+    '画面中能看清的标题可用于拟定章节标题，但 startSec 仍必须取自字幕时间戳。'
+  );
 }
 
 /**
@@ -80,18 +88,25 @@ export function describeChunkImages(
  * 解析/校验失败 throw，由 runOutline 的重试逻辑捕获。
  */
 export function parseModelOutline(content: string): SectionCandidate[] {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(content);
-  } catch (err) {
-    throw new Error(`模型输出不是合法 JSON：${err instanceof Error ? err.message : String(err)}`);
-  }
+  // 分块输出同样可能被截断（末尾缺 `}` 或最后一个章节写了一半）：先严格解析，
+  // 失败则由代码补齐闭合括号后重试解析，再交给 Schema 校验
+  const loose = parseJsonLoose(content);
+  const raw =
+    loose?.value ?? (() => {
+      let message = '未知原因';
+      try {
+        JSON.parse(content);
+      } catch (err) {
+        message = err instanceof Error ? err.message : String(err);
+      }
+      throw new Error(`模型输出不是合法 JSON：${message}`);
+    })();
   const parsed = OutlineChunkSchema.safeParse(raw);
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((i) => `${i.path.join('.')}: ${i.message}`)
       .join('; ');
-    throw new Error(`模型输出未通过 Schema 校验：${issues}`);
+    throw new Error(withRepairHint(`模型输出未通过 Schema 校验：${issues}`, loose?.repaired === true));
   }
   return parsed.data.sections;
 }
@@ -170,10 +185,15 @@ export async function runOutline(
     let lastError = '';
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       // 失败附错误信息重试（红线 4 的"重试"落在本层）
+      // 截断（JSON 没写完就结束）时提示要求"输出更短、务必闭合"，避免同样上下文再截一次
+      const truncated = lastError.includes('不是合法 JSON');
+      const retryHint = truncated
+        ? '上次输出在 JSON 结束前就被截断了。请减少章节数与每条文案的长度，务必输出完整闭合的 JSON。'
+        : '请重新输出严格符合要求的 JSON，不要包含任何其他文字。';
       const userPrompt =
         attempt === 0
           ? baseUserPrompt
-          : `${baseUserPrompt}\n\n[重试] 上一次输出未通过校验：${lastError}\n请重新输出严格符合要求的 JSON，不要包含任何其他文字。`;
+          : `${baseUserPrompt}\n\n[重试] 上一次输出未通过校验：${lastError}\n${retryHint}`;
       if (attempt > 0) {
         const est = estTokens(prompts.systemPrompt + userPrompt);
         usedTokens += est;

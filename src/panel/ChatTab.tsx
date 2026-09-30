@@ -60,8 +60,6 @@ export interface ChatTabProps {
   onSaveNote?: (args: { kind: 'term' | 'segment'; term?: string; payload: unknown }) => Promise<string>;
   /** 历史恢复入口（父 agent 接线 db.listQaByVideo）：未注入时保持内存行为 */
   loadHistory?: (videoId: string) => Promise<QaRecord[]>;
-  /** 是否已配置公开资料检索（未配置时 needsWeb 走兜底搜索链接） */
-  webSearchEnabled?: boolean;
   /** 动态回答角色（每视频一次判定，父 agent 注入；未注入则不显示角色条） */
   persona?: Persona | null;
   /** 重判角色（父 agent 注入 personaLoader.generatePersona；未注入则按钮隐藏） */
@@ -641,10 +639,10 @@ export function ChatTab(props: ChatTabProps) {
                     {m.term.needsWeb && <span className="chat-needs-web">需要联网核实</span>}
                   </div>
                 )}
-                {/* 未配置联网检索：术语卡 needsWeb 时给兜底搜索链接（URL 取自 config 常量） */}
-                {!m.typing && m.term?.needsWeb && !props.webSearchEnabled && (
+                {/* 模型自报需联网核实：给人工查证入口（URL 取自 config 常量，红线 9） */}
+                {!m.typing && m.term?.needsWeb && (
                   <div style={KNOWLEDGE_HINT_STYLE}>
-                    这节课外的内容建议联网核实：在搜索引擎中查证{' '}
+                    这节课外的内容建议再查证一次：
                     <a href={buildSearchUrl(m.term.term)} target="_blank" rel="noreferrer">
                       {m.term.term}
                     </a>
@@ -743,8 +741,8 @@ export function ChatTab(props: ChatTabProps) {
         </div>
       )}
 
-      {/* 模块模型选择（问答模块；persona 随问答模块解析） */}
-      <ModelPicker module="qa" />
+      {/* 模型选择（与设置页模型配置同源；三模块共用一套） */}
+      <ModelPicker onOpenSettings={props.onOpenSettings} />
       <GenerationBanner module="qa" />
 
       <div className="chat-input-bar">

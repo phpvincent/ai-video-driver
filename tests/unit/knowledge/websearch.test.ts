@@ -1,32 +1,24 @@
 /**
- * 可选联网检索单测（问答增强第 3 条）：请求构造 / 响应解析 / 失败降级 /
- * 预算裁剪与素材块组装。
+ * 内置公开资料检索单测（DuckDuckGo Instant Answer，免 Key 免配置）：
+ * 请求构造 / 响应解析 / 失败降级 / 预算裁剪与素材块组装。
  *
- * 红线 9：测试同样零 URL 字面量——endpoint 由 src/config 常量派生
- * （new URL(WEB_SEARCH_FALLBACK_URL).origin），apiKey 只作运行时注入值。
+ * 红线 9：测试同样零 URL 字面量——端点由 src/config 的 WEB_SEARCH.endpoint 派生。
  */
 import { describe, expect, it, vi } from 'vitest';
-import { WEB_SEARCH, WEB_SEARCH_FALLBACK_URL } from '../../../src/config';
+import { WEB_SEARCH } from '../../../src/config';
 import {
   WEB_BEGIN_MARK,
-  buildSearchRequest,
+  buildSearchUrl,
   buildWebContext,
   formatSnippetLine,
   searchWeb,
   trimSnippets,
   type SearchFetch,
-  type WebSearchConfig,
   type WebSnippet,
 } from '../../../src/core/knowledge/webSearch';
 
-/** 测试用 endpoint：由 config 常量派生，测试文件内不写 URL 字面量 */
-const ENDPOINT = `${new URL(WEB_SEARCH_FALLBACK_URL).origin}/search`;
-
-const cfg = (over: Partial<WebSearchConfig> = {}): WebSearchConfig => ({
-  endpoint: ENDPOINT,
-  apiKey: 'runtime-key',
-  ...over,
-});
+/** 测试用端点：由 config 常量派生，测试文件内不写 URL 字面量 */
+const ENDPOINT = WEB_SEARCH.endpoint;
 
 /** 假 Response：ok + json 可注入异常 */
 function fakeResponse(ok: boolean, json: unknown, throwOnJson = false): Response {
@@ -46,127 +38,125 @@ const snippet = (title: string, url: string, text: string): WebSnippet => ({
   snippet: text,
 });
 
-describe('buildSearchRequest（引擎差异封装）', () => {
-  it('默认 tavily：POST + body {query, max_results} + endpoint 原样来自配置', () => {
-    const { url, init } = buildSearchRequest(cfg(), '注意力机制 是什么', 3);
-    expect(url).toBe(ENDPOINT);
-    expect(init.method).toBe('POST');
-    expect(JSON.parse(String(init.body))).toEqual({
-      query: '注意力机制 是什么',
-      max_results: 3,
-    });
+describe('buildSearchUrl（免鉴权请求构造）', () => {
+  it('端点来自 config 常量，带 format=json 等参数', () => {
+    const url = buildSearchUrl('注意力机制');
+    expect(url.startsWith(ENDPOINT)).toBe(true);
+    const parsed = new URL(url);
+    expect(parsed.searchParams.get('q')).toBe('注意力机制');
+    expect(parsed.searchParams.get('format')).toBe('json');
+    expect(parsed.searchParams.get('no_html')).toBe('1');
+    expect(parsed.searchParams.get('skip_disambig')).toBe('1');
   });
 
-  it('tavily：apiKey 走 Authorization Bearer（来自配置，非字面量）', () => {
-    const { init } = buildSearchRequest(cfg(), 'q', 5);
-    const headers = init.headers as Record<string, string>;
-    expect(headers.authorization).toBe('Bearer runtime-key');
-    expect(headers['content-type']).toBe('application/json');
-  });
-
-  it('serper：body {q, num} + X-API-KEY 头', () => {
-    const { init } = buildSearchRequest(cfg({ engine: 'serper' }), 'q', 4);
-    const headers = init.headers as Record<string, string>;
-    expect(headers['X-API-KEY']).toBe('runtime-key');
-    expect(JSON.parse(String(init.body))).toEqual({ q: 'q', num: 4 });
-  });
-
-  it('未知 engine 回落 tavily 形状', () => {
-    const { init } = buildSearchRequest(cfg({ engine: '自建代理' }), 'q', 2);
-    expect(JSON.parse(String(init.body))).toEqual({ query: 'q', max_results: 2 });
-  });
-
-  it('maxResults 非法（0 / 负数 / NaN）回落默认条数', () => {
-    for (const bad of [0, -3, Number.NaN]) {
-      const { init } = buildSearchRequest(cfg(), 'q', bad);
-      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
-      expect(body.max_results ?? body.num).toBe(WEB_SEARCH.defaultMaxResults);
-    }
-  });
-
-  it('endpoint 为空时 url 为空串（调用方据此跳过检索）', () => {
-    expect(buildSearchRequest(cfg({ endpoint: '' }), 'q', 3).url).toBe('');
+  it('查询串做 URL 编码（中文与空格）', () => {
+    const url = buildSearchUrl('a b&c');
+    expect(url).not.toContain(' ');
+    expect(url).not.toContain('&c&');
   });
 });
 
 describe('searchWeb（解析与降级）', () => {
-  it('解析 {results:[{title,url,content}]} 形状', async () => {
-    const fetchFn: SearchFetch = vi.fn(async () =>
-      fakeResponse(true, {
-        results: [
-          { title: 'T1', url: 'u1', content: 'c1' },
-          { title: 'T2', url: 'u2', content: 'c2' },
-        ],
-      }),
-    ) as unknown as SearchFetch;
-    const out = await searchWeb(cfg(), fetchFn, 'q');
-    expect(out).toEqual([
-      { title: 'T1', url: 'u1', snippet: 'c1' },
-      { title: 'T2', url: 'u2', snippet: 'c2' },
-    ]);
-  });
-
-  it('解析 {organic:[{title,link,snippet}]} 形状（link/snippet 别名）', async () => {
+  it('解析 Abstract（Heading + AbstractText + AbstractURL）', async () => {
     const fetchFn = (async () =>
-      fakeResponse(true, { organic: [{ title: 'T1', link: 'u1', snippet: 's1' }] })) as SearchFetch;
-    expect(await searchWeb(cfg({ engine: 'serper' }), fetchFn, 'q')).toEqual([
-      { title: 'T1', url: 'u1', snippet: 's1' },
+      fakeResponse(true, {
+        Heading: 'Transformer',
+        AbstractText: '一种基于注意力的网络结构',
+        AbstractURL: 'https://example.com/transformer',
+      })) as SearchFetch;
+    const out = await searchWeb('Transformer', fetchFn);
+    expect(out[0]).toEqual({
+      title: 'Transformer',
+      url: 'https://example.com/transformer',
+      snippet: '一种基于注意力的网络结构',
+    });
+  });
+
+  it('Abstract 缺失时用 RelatedTopics 叶子条目补齐', async () => {
+    const fetchFn = (async () =>
+      fakeResponse(true, {
+        AbstractText: '',
+        RelatedTopics: [
+          { FirstURL: 'https://example.com/a', Text: '标题A - 摘要A' },
+          { FirstURL: 'https://example.com/b', Text: '标题B - 摘要B' },
+        ],
+      })) as SearchFetch;
+    const out = await searchWeb('q', fetchFn);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toEqual({ title: '标题A', url: 'https://example.com/a', snippet: '摘要A' });
+  });
+
+  it('RelatedTopics 的嵌套分组（Topics）被摊平', async () => {
+    const fetchFn = (async () =>
+      fakeResponse(true, {
+        RelatedTopics: [
+          {
+            Name: '分组',
+            Topics: [
+              { FirstURL: 'https://example.com/x', Text: 'X - 摘要X' },
+              { FirstURL: 'https://example.com/y', Text: 'Y - 摘要Y' },
+            ],
+          },
+        ],
+      })) as SearchFetch;
+    const out = await searchWeb('q', fetchFn);
+    expect(out.map((s) => s.url)).toEqual([
+      'https://example.com/x',
+      'https://example.com/y',
     ]);
   });
 
-  it('非 2xx → 空数组，不 throw', async () => {
-    const fetchFn = (async () => fakeResponse(false, { results: [] })) as SearchFetch;
-    await expect(searchWeb(cfg(), fetchFn, 'q')).resolves.toEqual([]);
+  it('同 url 去重（只留首条）', async () => {
+    const fetchFn = (async () =>
+      fakeResponse(true, {
+        RelatedTopics: [
+          { FirstURL: 'https://example.com/a', Text: 'A - 1' },
+          { FirstURL: 'https://example.com/a', Text: 'A - 2' },
+        ],
+      })) as SearchFetch;
+    expect(await searchWeb('q', fetchFn)).toHaveLength(1);
   });
 
-  it('json 解析失败 → 空数组，不 throw', async () => {
-    const fetchFn = (async () => fakeResponse(true, {}, true)) as SearchFetch;
-    await expect(searchWeb(cfg(), fetchFn, 'q')).resolves.toEqual([]);
-  });
-
-  it('网络异常（fetch reject）→ 空数组，不 throw', async () => {
-    const fetchFn = (async () => {
+  it('非 2xx / json 失败 / 网络异常 → 空数组，不 throw', async () => {
+    const notOk = (async () => fakeResponse(false, {})) as SearchFetch;
+    await expect(searchWeb('q', notOk)).resolves.toEqual([]);
+    const badJson = (async () => fakeResponse(true, {}, true)) as SearchFetch;
+    await expect(searchWeb('q', badJson)).resolves.toEqual([]);
+    const rejected = (async () => {
       throw new Error('network down');
     }) as SearchFetch;
-    await expect(searchWeb(cfg(), fetchFn, 'q')).resolves.toEqual([]);
+    await expect(searchWeb('q', rejected)).resolves.toEqual([]);
   });
 
-  it('结果为空数组 / 无结果字段 → 空数组', async () => {
-    const fetchFn = (async () => fakeResponse(true, { results: [] })) as SearchFetch;
-    expect(await searchWeb(cfg(), fetchFn, 'q')).toEqual([]);
-    const fetchFn2 = (async () => fakeResponse(true, { foo: 'bar' })) as SearchFetch;
-    expect(await searchWeb(cfg(), fetchFn2, 'q')).toEqual([]);
+  it('空查询 / 无结果字段 → 空数组', async () => {
+    const fetchFn = vi.fn(async () => fakeResponse(true, { foo: 'bar' })) as unknown as SearchFetch;
+    expect(await searchWeb('', fetchFn)).toEqual([]);
+    expect(await searchWeb('   ', fetchFn)).toEqual([]);
+    expect(fetchFn).not.toHaveBeenCalled();
+    const empty = (async () => fakeResponse(true, {})) as SearchFetch;
+    expect(await searchWeb('q', empty)).toEqual([]);
   });
 
-  it('缺 title 或 url 的条目丢弃；snippet 缺失视为空串', async () => {
+  it('缺 FirstURL 或 Text 的条目丢弃', async () => {
     const fetchFn = (async () =>
       fakeResponse(true, {
-        results: [
-          { title: '', url: 'u0', content: 'x' },
-          { title: 'T1', url: '', content: 'x' },
-          { title: 'T2', url: 'u2' },
+        RelatedTopics: [
+          { FirstURL: '', Text: 'x' },
+          { FirstURL: 'https://example.com/a', Text: '' },
+          { FirstURL: 'https://example.com/b', Text: 'B - 摘要B' },
           'not-an-object',
         ],
       })) as SearchFetch;
-    expect(await searchWeb(cfg(), fetchFn, 'q')).toEqual([
-      { title: 'T2', url: 'u2', snippet: '' },
-    ]);
+    expect(await searchWeb('q', fetchFn)).toHaveLength(1);
   });
 
   it('maxResults 限制返回条数', async () => {
     const many = Array.from({ length: 6 }, (_, i) => ({
-      title: `T${i}`,
-      url: `u${i}`,
-      content: 'c',
+      FirstURL: `https://example.com/${i}`,
+      Text: `T${i} - c`,
     }));
-    const fetchFn = (async () => fakeResponse(true, { results: many })) as SearchFetch;
-    expect(await searchWeb(cfg(), fetchFn, 'q', { maxResults: 2 })).toHaveLength(2);
-  });
-
-  it('endpoint 未配置 → 空数组且不发起请求', async () => {
-    const fetchFn = vi.fn(async () => fakeResponse(true, { results: [] })) as unknown as SearchFetch;
-    expect(await searchWeb(cfg({ endpoint: '' }), fetchFn, 'q')).toEqual([]);
-    expect(fetchFn).not.toHaveBeenCalled();
+    const fetchFn = (async () => fakeResponse(true, { RelatedTopics: many })) as SearchFetch;
+    expect(await searchWeb('q', fetchFn, { maxResults: 2 })).toHaveLength(2);
   });
 });
 

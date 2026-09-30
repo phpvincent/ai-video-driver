@@ -463,3 +463,47 @@ g.mm-active foreignObject span {
 .mindmap-container g.markmap-node {
   cursor: pointer;
 }
+
+/* ===== 概念图视觉增强：阶段色带 + 重要性热力 + 顶部统计条 ===== */
+.cm-summary-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  border-radius: 8px;
+  background: #f7f8fa;
+  border: 1px solid #e5e6eb;
+  font-size: 12px;
+  color: #4e5969;
+}
+.cm-summary-item b {
+  font-size: 14px;
+  color: #1f2329;
+}
+.cm-summary-sep {
+  width: 1px;
+  height: 12px;
+  background: #e5e6eb;
+}
+
+/* 阶段序号色带：按顺序轮换，让"推进阶段"有视觉节奏 */
+.cm-stage-step.stage-hue-0 { background: #185fa5; }
+.cm-stage-step.stage-hue-1 { background: #0f6e56; }
+.cm-stage-step.stage-hue-2 { background: #854f0b; }
+.cm-stage-step.stage-hue-3 { background: #993556; }
+.cm-stage-step.stage-hue-4 { background: #3c3489; }
+
+/* 概念重要性热力：1（浅）→ 5（深），左侧色条强度随重要性递增 */
+.cm-concept {
+  border-left: 3px solid #e5e6eb;
+}
+.cm-concept.imp-1 { border-left-color: #dfe3e8; }
+.cm-concept.imp-2 { border-left-color: #b5d4f4; }
+.cm-concept.imp-3 { border-left-color: #85b7eb; }
+.cm-concept.imp-4 { border-left-color: #378add; }
+.cm-concept.imp-5 { border-left-color: #185fa5; }
+.cm-concept.imp-5 .cm-concept-label {
+  font-weight: 600;
+  color: #0c447c;
+}

@@ -1,76 +1,67 @@
 /**
- * 模块模型选择器（按模块选模型）：
- * 下拉选择本模块使用「默认（当前模型）」或某个命名方案（settings.modelProfiles）。
- * - 挂载读 GET_SETTINGS；onChange 经 SET_SETTINGS 合并写 moduleModel（选「默认」删键回退）
- * - 选中方案缺少 Key（不完整）时提示将回退默认（与 resolveModuleModel 的回退语义一致）
- * 自包含组件：自管理状态，不需要父组件传数据；三个 Tab 各挂一个（outline/mindmap/qa）。
+ * 模型选择器（与设置页「模型配置」深度绑定）：
+ * 下拉只在内置预设（DeepSeek / Qwen）之间切换，选项即设置页里那两个模型，
+ * 切一个等于三个 Tab 一起切（大纲 / 导图 / 问答共用一套配置）。
+ *
+ * - 选项与 Key 状态来自 `Settings.modelSlots`（每个预设各存各的 Key，互不覆盖）；
+ * - 支持图像输入的预设标红（`picker-opt-vision`），提示可用于抽帧；
+ * - 未配置 API Key → 红色提示 + 「去设置」入口，不静默回退；
+ * - 实测保存：切换即写入 settings.model（该预设槽位已保存的完整配置）。
+ *
+ * 自包含组件：自管理状态，不需要父组件传数据；三个 Tab 各挂一个。
  */
+import { useEffect, useState } from 'react';
+import { MSG } from '../messages';
 import {
-  useEffect, useState } from 'react';
-import {
-  MSG } from '../messages';
-import {
-  isModelConfigured,
-  normalizeProfiles,
-  stripSeedProfiles,
-  savedKeyForEndpoint,
+  activePreset,
+  migrateLegacyModelSettings,
+  presetKeys,
+  presetShortLabel,
+  presetVisionDefault,
+  slotConfigOf,
+  slotHasKey,
+  type PresetKey,
 } from './settings/modelForm';
-import type { ModelConfig, Settings } from '../types';
-
-export type PickerModule = 'outline' | 'mindmap' | 'qa';
+import type { Settings } from '../types';
 
 export interface PickerOption {
-  /** '' = 默认模型；否则方案名 */
-  value: string;
+  /** 内置预设键（deepseek / qwen） */
+  value: PresetKey;
   label: string;
-  /** 三要素是否齐全（方案无 Key 时 UI 提示回退默认） */
+  /** 该预设是否已保存 API Key（红色提示依据） */
   hasKey: boolean;
-  /** 该方案声明支持图像输入（下拉项绿色显示，提示可用于抽帧） */
+  /** 该预设是否支持图像输入（下拉项标红） */
   vision: boolean;
 }
 
 export interface ModelPickerProps {
-  module: PickerModule;
+  /** 未配置 Key 时的「去设置」入口（由各 Tab 透传 App 的 onOpenSettings） */
+  onOpenSettings?: () => void;
 }
 
-/** 选中方案缺少 Key 时的提示文案（导出供测试） */
-export const PICKER_MISSING_KEY_HINT = '该方案缺少 Key，将回退默认';
+/** 未配置 Key 时的提示文案（导出供测试） */
+export const PICKER_MISSING_KEY_HINT = '未配置 API Key';
 
 /**
- * 下拉选项（纯函数，导出供测试）：
- * 首项「默认（{默认模型名}）」+ 各方案名（含无 Key 的方案，hasKey=false 供 UI 提示）。
- * name 重复时先出现者优先（与设置页同名覆盖的保存语义一致）。
+ * 下拉选项（纯函数，导出供测试）：固定为 MODEL_PRESETS 的两个内置预设。
+ * label 里带「· 多模态」后缀，hasKey 取该预设槽位的 Key 状态。
  */
 export function buildPickerOptions(settings: Settings): PickerOption[] {
-  const defaultModel = settings.model;
-  const defaultLabel = defaultModel?.model?.trim()
-    ? `默认（${defaultModel.model.trim()}）`
-    : '默认（未配置）';
-  const options: PickerOption[] = [
-    {
-      value: '',
-      label: defaultLabel,
-      hasKey: isModelConfigured(defaultModel),
-      vision: defaultModel?.supportsVision === true,
-    },
-  ];
-  const seen = new Set<string>(['']);
-  for (const p of (settings.modelProfiles ?? []) as ModelConfig[]) {
-    const name = p?.name?.trim();
-    if (!name || seen.has(name)) continue;
-    seen.add(name);
-    const vision = p.supportsVision === true;
-    // 方案无 Key 但该端点有已保存的 Key → 视为可用（继承语义，与 resolveModuleModel 一致）
-    const effectiveKey = p.apiKey?.trim() || savedKeyForEndpoint(settings, p.baseUrl);
-    options.push({
-      value: name,
-      // 多模态方案在标签中显式标注（下拉列表里绿色渲染，闭合同样可见后缀）
-      label: vision ? `${name} · 多模态` : name,
-      hasKey: Boolean(effectiveKey),
+  return presetKeys().map((key) => {
+    const cfg = slotConfigOf(settings, key);
+    const vision = cfg.supportsVision ?? presetVisionDefault(key);
+    return {
+      value: key,
+      label: vision ? `${presetShortLabel(key)} · 多模态` : presetShortLabel(key),
+      hasKey: slotHasKey(settings, key),
       vision,
-    });
-  }
-  return options;
+    };
+  });
+}
+
+/** 当前生效配置落在哪个预设上（自定义端点 → null，下拉显示为未选中） */
+export function currentPresetOf(settings: Settings): PresetKey | null {
+  return activePreset(settings.model?.baseUrl ?? '');
 }
 
 /** chrome.runtime.sendMessage 的安全包装：上下文失效时静默返回 null */
@@ -87,24 +78,22 @@ function fetchSettings(): Promise<Settings> {
   return sendRuntimeMessage({ type: MSG.GET_SETTINGS })
     .then((response) => {
       const stored = (response ?? {}) as Settings;
-      return stored && typeof stored === 'object' ? stored : {};
+      return stored && typeof stored === 'object' ? migrateLegacyModelSettings(stored) : {};
     })
     .catch(() => ({}));
 }
 
-export function ModelPicker({ module }: ModelPickerProps) {
+export function ModelPicker({ onOpenSettings }: ModelPickerProps) {
   const [options, setOptions] = useState<PickerOption[]>([]);
-  /** 当前选中方案名（'' = 默认模型） */
-  const [selected, setSelected] = useState('');
+  const [selected, setSelected] = useState<PresetKey | ''>('');
 
   useEffect(() => {
     let cancelled = false;
     fetchSettings()
       .then((stored) => {
         if (cancelled) return;
-        // 读取时补种子：内置方案此前只在设置页载入时生成且未持久化，导致下拉只有默认项
-        setOptions(buildPickerOptions(normalizeProfiles(stored)));
-        setSelected(stored.moduleModel?.[module] ?? '');
+        setOptions(buildPickerOptions(stored));
+        setSelected(currentPresetOf(stored) ?? '');
       })
       .catch(() => {
         /* 未读到设置时保持空选项 */
@@ -112,22 +101,22 @@ export function ModelPicker({ module }: ModelPickerProps) {
     return () => {
       cancelled = true;
     };
-  }, [module]);
+  }, []);
 
-  /** 选择变化：重读最新 settings 后合并写 moduleModel（只动本模块键） */
+  /**
+   * 切换预设：把该槽位已保存的配置整体写为当前生效模型（含它自己的 Key）。
+   * 只写 model 一个键，不动其他分区，也不覆盖另一预设的 Key。
+   */
   const handleChange = (value: string) => {
-    setSelected(value);
+    const preset = value as PresetKey;
+    setSelected(preset);
     fetchSettings()
       .then((stored) => {
-        const moduleModel = { ...(stored.moduleModel ?? {}) };
-        if (value) moduleModel[module] = value;
-        else delete moduleModel[module];
-        // 只写模块选择，绝不把派生的种子方案（空 Key）写回，避免覆盖用户已填的方案
-        const next: Settings = stripSeedProfiles({ ...stored, moduleModel });
+        const next: Settings = { ...stored, model: slotConfigOf(stored, preset) };
         return sendRuntimeMessage({ type: MSG.SET_SETTINGS, payload: next }).then(
           (response: unknown) => {
             if ((response as { ok?: boolean } | null)?.ok === true) {
-              setOptions(buildPickerOptions(normalizeProfiles(next)));
+              setOptions(buildPickerOptions(next));
             }
           },
         );
@@ -137,13 +126,13 @@ export function ModelPicker({ module }: ModelPickerProps) {
       });
   };
 
-  // 选中项（方案被删/改名后不在选项中时补一项占位，避免下拉显示空白）
   const matched = options.find((o) => o.value === selected);
+  /** 未保存过任何配置（自定义端点或空）时，下拉显示为空选中 */
   const displayOptions =
     selected && !matched
       ? [...options, { value: selected, label: selected, hasKey: false, vision: false }]
       : options;
-  const missingKey = selected !== '' && (matched ? !matched.hasKey : true);
+  const missingKey = Boolean(selected) && (matched ? !matched.hasKey : true);
 
   return (
     <div className="model-picker">
@@ -154,9 +143,10 @@ export function ModelPicker({ module }: ModelPickerProps) {
           value={selected}
           onChange={(e) => handleChange(e.target.value)}
         >
+          {!selected && <option value="">（未选择）</option>}
           {displayOptions.map((o) => (
             <option
-              key={o.value || 'default'}
+              key={o.value}
               value={o.value}
               className={o.vision ? 'picker-opt-vision' : undefined}
             >
@@ -165,7 +155,16 @@ export function ModelPicker({ module }: ModelPickerProps) {
           ))}
         </select>
       </label>
-      {missingKey && <span className="model-picker-warn">{PICKER_MISSING_KEY_HINT}</span>}
+      {missingKey && (
+        <span className="model-picker-missing">
+          {PICKER_MISSING_KEY_HINT}
+          {onOpenSettings && (
+            <button type="button" className="btn" onClick={onOpenSettings}>
+              去设置
+            </button>
+          )}
+        </span>
+      )}
     </div>
   );
 }

@@ -17,7 +17,13 @@ import {
   sectionWindows,
 } from '../core/vision/framePlanner';
 import { mergeFrameTargets, requestFramePlan, suggestFrameRange } from '../core/vision/llmFramePlan';
-import { resolveModuleModel } from './settings/modelForm';
+import {
+  buildStructuralCandidates,
+  ensureChapterCoverage,
+  pickCandidatesByPriority,
+  type FrameCandidate,
+} from '../core/vision/structuralCandidates';
+import { resolveModel } from './settings/modelForm';
 import type { Cue, ModelConfig, Section } from '../types';
 
 export interface FrameRequestOptions {
@@ -85,6 +91,12 @@ export async function planFrames(args: FramePlanArgs): Promise<number[]> {
 
   const model = (await readModuleModel(args.module)) ?? null;
   const suggested = suggestFrameRange(args.durationMs, budget);
+  // 结构化候选：章节开头 / 知识点 / 章节结尾（无章节时按时段）。模型从中挑，代码不替它猜
+  const candidates = buildStructuralCandidates(sections, cues, {
+    minGapMs: VISION.minGapMs,
+    windowMs: Math.max(20_000, Math.ceil(args.durationMs / Math.max(4, budget * 2))),
+    maxCandidates: Math.max(24, budget * 3),
+  });
   const req = {
     sections,
     cues,
@@ -93,7 +105,10 @@ export async function planFrames(args: FramePlanArgs): Promise<number[]> {
     minGapMs: VISION.minGapMs,
     meta: args.meta,
     suggested,
+    candidates,
   };
+  const guard = (targets: number[]): number[] =>
+    ensureChapterCoverage(targets, sections, candidates, { max: suggested.max, minGapMs: VISION.minGapMs });
 
   // ① 模型规划（可选）
   if (model?.apiKey) {
@@ -105,7 +120,9 @@ export async function planFrames(args: FramePlanArgs): Promise<number[]> {
           apiKey: model.apiKey,
           model: model.model,
           temperature: model.temperature.outline,
-          maxTokens: Math.min(model.maxTokens, 1024),
+          // 每个 target（id+covers+why）约 50~70 token：40 帧需要 ~3k。
+          // 旧值写死 1024，帧数一多 JSON 就被截断 → 整份规划失效、静默回退公式
+          maxTokens: Math.min(Math.max(model.maxTokens, 1024), Math.max(1024, 400 + budget * 80)),
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
@@ -113,6 +130,7 @@ export async function planFrames(args: FramePlanArgs): Promise<number[]> {
           responseFormatJson: true,
           // 规划任务禁用思考：只要时间点，思考会吃掉输出预算
           thinking: { type: 'disabled' },
+          label: 'frame-plan',
         }).then((res) => ({ content: res.content })),
       getFramePlanSystemPrompt,
     ).catch(() => null);
@@ -120,11 +138,13 @@ export async function planFrames(args: FramePlanArgs): Promise<number[]> {
     if (plan && plan.targets.length > 0) {
       let targets = plan.targets;
       if (targets.length < suggested.min) {
-        targets = mergeFrameTargets(plan.targets, formulaTargets(args, sections, cues, suggested), {
+        targets = mergeFrameTargets(plan.targets, fallbackTargets(args, candidates, suggested), {
           ...suggested,
           minGapMs: VISION.minGapMs,
         });
       }
+      // 模型可自由决定每章看几帧，但不允许某章一帧都不看（导图会直接漏掉一个阶段）
+      targets = guard(targets);
       const blocks = plan.coverage?.knowledgeBlocks ?? 0;
       const covered = plan.coverage?.covered ?? 0;
       recordDiag({
@@ -139,13 +159,26 @@ export async function planFrames(args: FramePlanArgs): Promise<number[]> {
     }
   }
 
-  // ② 公式回退
-  const targets = mergeFrameTargets([], formulaTargets(args, sections, cues, suggested), {
-    ...suggested,
-    minGapMs: VISION.minGapMs,
-  });
+  // ② 确定性回退：结构候选优先（章节首尾 → 知识点），不足再用打分公式补
+  const targets = guard(
+    mergeFrameTargets([], fallbackTargets(args, candidates, suggested), {
+      ...suggested,
+      minGapMs: VISION.minGapMs,
+    }),
+  );
   recordDiag({ module: args.module, source: 'formula', frames: targets.length, covers: [], targets });
   return targets;
+}
+
+/** 确定性回退：结构候选按优先级取满预算，候选不够时追加打分公式帧 */
+function fallbackTargets(
+  args: FramePlanArgs,
+  candidates: FrameCandidate[],
+  suggested: { min: number; max: number },
+): number[] {
+  const structural = pickCandidatesByPriority(candidates, suggested.max);
+  if (structural.length >= suggested.max) return structural;
+  return [...structural, ...formulaTargets(args, args.sections, args.cues, suggested)];
 }
 
 /** 公式规划（章节存在时按章节打分，否则按固定窗口） */
@@ -158,7 +191,8 @@ function formulaTargets(
   const windows =
     sections.length > 0
       ? sectionWindows(sections, cues)
-      : cueWindows(cues, Math.max(60_000, Math.ceil(args.durationMs / 8)));
+      // 窗口要够密：早期按 durationMs/8（10 分钟仅 8 个窗口），预算提到 16 帧也选不出来
+      : cueWindows(cues, Math.max(30_000, Math.ceil(args.durationMs / 24)));
   return planFrameTargets(windows, cues, {
     budget: suggested.max,
     minGapMs: VISION.minGapMs,
@@ -172,7 +206,7 @@ async function readModuleModel(module: 'outline' | 'mindmap' | 'qa'): Promise<Mo
     const settings = (await chrome.runtime.sendMessage({ type: MSG.GET_SETTINGS })) as {
       model?: ModelConfig;
     } | null;
-    return resolveModuleModel((settings ?? {}) as never, module);
+    return resolveModel((settings ?? {}) as never);
   } catch {
     return null;
   }
@@ -184,11 +218,12 @@ export async function requestFrames(args: FrameRequestOptions): Promise<Captured
   try {
     const response = (await chrome.runtime.sendMessage({
       type: MSG.CAPTURE_FRAMES,
-      payload: { videoId: args.videoId, targetsMs: args.targetsMs },
+      // maxSize 由 panel 决定（VISION.maxSize）：此前 content 一直用自己写死的 512，常量从未接线
+      payload: { videoId: args.videoId, targetsMs: args.targetsMs, maxSize: VISION.maxSize },
     })) as { frames?: CapturedFrame[] } | null;
     const rawFrames = Array.isArray(response?.frames) ? (response?.frames as CapturedFrame[]) : [];
     // 结构感知抽帧第二道闸门：时间过近且画面几乎未变（同一页 PPT）的帧丢弃
-    return dedupeFrames(rawFrames, { minGapMs: VISION.minGapMs });
+    return dedupeFrames(rawFrames, { minGapMs: VISION.minGapMs, dhashMaxDistance: VISION.dhashMaxDistance });
   } catch {
     return [];
   }
@@ -199,6 +234,12 @@ export function toPipelineImage(frame: CapturedFrame): {
   dataBase64: string;
   mime: string;
   timeMs: number;
+  thumbBase64?: string;
 } {
-  return { dataBase64: frame.dataBase64, mime: 'image/jpeg', timeMs: frame.actualMs };
+  return {
+    dataBase64: frame.dataBase64,
+    mime: 'image/jpeg',
+    timeMs: frame.actualMs,
+    ...(frame.thumbBase64 ? { thumbBase64: frame.thumbBase64 } : {}),
+  };
 }

@@ -34,8 +34,9 @@ describe('manifest.json（TECH-DESIGN §9 可执行快照）', () => {
       'https://*.hdslb.com/*',
       'https://api.deepseek.com/*',
       'http://127.0.0.1:27123/*',
-      'https://dashscope.aliyuncs.com/*',
       'https://maas.qianwenaiapi.com/*',
+      // 内置公开资料检索（DuckDuckGo，免 Key）
+      'https://api.duckduckgo.com/*',
     ]);
   });
 

@@ -88,16 +88,19 @@ export const CONTEXT = {
   webContextMaxChars: 1_000,
 } as const;
 
-/** 可选联网检索默认参数（endpoint / apiKey 为用户自填的运行时值，不在此处） */
+/**
+ * 内置公开资料检索（DuckDuckGo Instant Answer）：**免 API Key、免用户配置**，
+ * 问答时自动调用，用户无感知。红线 9：检索端点只能来自本常量。
+ */
 export const WEB_SEARCH = {
-  defaultEngine: 'tavily',
+  endpoint: 'https://api.duckduckgo.com/',
   defaultMaxResults: 5,
   requestTimeoutMs: 8_000,
 } as const;
 
 /**
- * 未配置联网检索时的兜底搜索页前缀（红线 9：代码里唯一的 URL 来源，
- * 任何搜索链接只能由本常量 + encodeURIComponent(query) 拼出）。
+ * 兜底搜索页前缀（红线 9：代码里唯一的 URL 来源，任何搜索链接只能由本常量 +
+ * encodeURIComponent(query) 拼出）。用于术语卡"建议联网核实"的人工查证入口。
  */
 export const WEB_SEARCH_FALLBACK_URL = 'https://duckduckgo.com/?q=';
 
@@ -133,17 +136,19 @@ export const MODEL_PRESETS = {
 
 /** 抽帧（视觉）默认参数：成本与延迟的护栏 */
 export const VISION = {
-  /** 单次请求最多携带的帧数 */
-  maxFramesPerRequest: 6,
-  /** 大纲：每个分块取几帧 */
-  outlineFramesPerChunk: 1,
-  /** 概念图：全片取几帧（按章节锚点均匀取） */
-  mindmapFrames: 4,
-  /** 问答：区间取几帧 */
-  qaFrames: 3,
-  /** 帧最长边像素与质量 */
-  maxSize: 512,
-  quality: 0.7,
+  /**
+   * 帧最长边像素与 JPEG 质量。
+   *
+   * **token 由像素尺寸决定，与 JPEG 质量无关**（Qwen-VL 约每 28×28 像素 1 token；
+   * GPT-4o 按 512 瓦片计）。降低 quality 只省传输字节，不省 token；降低分辨率才省 token，
+   * 但会直接损失可读性：512px 宽时 1080p 画面里的代码/PPT 小字只剩 6~7px，模型读不清。
+   * 896px 下正文字号约 12px，可稳定识别；16:9 画面约 896×504 ≈ 576 token/帧。
+   * 省 token 的正确手段是**去重复画面**（dHash），而不是降清晰度。
+   */
+  maxSize: 896,
+  quality: 0.75,
+  /** 感知哈希去重：两帧 dHash 汉明距离 ≤ 此值视为同一画面（64 位中约 8% 差异） */
+  dhashMaxDistance: 5,
   /** 结构感知抽帧：两个取帧点最小间隔（毫秒）——过近大概率是同一页 PPT */
   minGapMs: 15_000,
   /** 结构感知抽帧：低于此画面价值分的窗口不取（避免为抽而抽） */
@@ -151,6 +156,56 @@ export const VISION = {
   /** 单帧抽取超时 */
   timeoutMs: 3000,
 } as const;
+
+/**
+ * 帧预算：**随视频时长增长（分段递减）+ 按章节数兜底 + 知识密集加成**。
+ *
+ * 为什么分段递减而不是线性：长视频的信息量随时长增长，但单次请求的图像 token 与上下文窗口有限；
+ * 线性（45s/帧）会让 3 小时视频要 240 帧，既超窗口又不必要——长课的后半段常有复习、演示重复。
+ * 所以前 10 分钟密（45s/帧）、10~60 分钟次之（90s/帧）、60 分钟后更疏（180s/帧），总量仍单调增长。
+ *
+ * 章节兜底：导图每章至少首尾两帧（章节演进靠首尾对照），长视频章节多，帧数自然跟着涨。
+ *
+ * hardMax 是**唯一的成本护栏**：导图单帧约 576 图像 token（896px），40 帧 ≈ 23k token。
+ * 若所用多模态模型上下文更大、愿意多花钱，调大 hardMax 即可。
+ */
+export interface FrameTier {
+  /** 本段覆盖到视频的第几秒（累计） */
+  uptoSec: number;
+  /** 本段每多少秒一帧 */
+  secPerFrame: number;
+}
+
+export const FRAME_PLAN: Record<
+  'outline' | 'mindmap' | 'qa',
+  { tiers: readonly FrameTier[]; min: number; hardMax: number; perSection: number }
+> = {
+  outline: {
+    tiers: [{ uptoSec: Number.POSITIVE_INFINITY, secPerFrame: 90 }],
+    min: 3,
+    hardMax: 8,
+    perSection: 0,
+  },
+  mindmap: {
+    tiers: [
+      { uptoSec: 600, secPerFrame: 45 },
+      { uptoSec: 3600, secPerFrame: 90 },
+      { uptoSec: Number.POSITIVE_INFINITY, secPerFrame: 180 },
+    ],
+    min: 6,
+    hardMax: 40,
+    perSection: 2,
+  },
+  qa: {
+    tiers: [{ uptoSec: Number.POSITIVE_INFINITY, secPerFrame: 30 }],
+    min: 2,
+    hardMax: 8,
+    perSection: 0,
+  },
+};
+
+/** 知识密集时的密度系数（各段 secPerFrame 除以该值 → 帧数约 ×1.5） */
+export const FRAME_DENSE_BOOST = 1.5;
 
 export const OBSIDIAN = {
   baseUrl: 'http://127.0.0.1:27123', // Local REST API 的 HTTP 模式端口（HTTPS 模式为 27124）
@@ -168,6 +223,10 @@ export const DB = {
     /** SPEC-07 追加：使用统计（键 videoId，值 UsageRecord，纯本地、不上报）。
      *  注意：已有 v1 库需升版本才会建该 store（版本常量在 storage/db.ts 的 open 调用处，留给父 agent 统一处理）。 */
     usage: 'usage',
+    /** LLM 交互日志（键 entry.id，值 LlmLogEntry；验证期报告的「LLM 交互日志」子模块读它） */
+    logs: 'logs',
   },
   traceKeep: 50,
+  /** LLM 交互日志保留条数（超出从最旧一条开始丢弃） */
+  logKeep: 200,
 } as const;

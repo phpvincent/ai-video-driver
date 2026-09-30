@@ -15,9 +15,10 @@ import type { ConceptModelFn } from '../core/pipeline/types';
 import { DB } from '../config';
 import { MSG } from '../messages';
 import { getConceptMapSystemPrompt, PROMPT_VERSIONS } from '../prompts';
-import { VISION } from '../config';
+import { frameBudgetFor, isDenseSections } from '../core/vision/framePlanner';
 import { planFrames, requestFrames, toPipelineImage } from './framesClient';
-import { resolveModuleModel, visionActiveFor } from './settings/modelForm';
+import { captionFrame } from '../core/vision/structuralCandidates';
+import { resolveModel, visionActiveFor } from './settings/modelForm';
 import { setGenerationSource } from './generationTrace';
 import type { Settings } from '../types';
 import { createSubtitleDb, getSubtitle } from '../storage/db';
@@ -67,10 +68,10 @@ async function fetchSettings(): Promise<Settings> {
   return stored && typeof stored === 'object' ? stored : {};
 }
 
-/** 读设置并按导图模块解析模型（moduleModel 命中方案 → 否则默认；方案缺 Key 回退默认） */
+/** 读设置取当前生效模型（三模块共用一套） */
 async function fetchModelConfig(): Promise<ModelConfig | null> {
   const settings = await fetchSettings();
-  return resolveModuleModel(settings, 'mindmap');
+  return resolveModel(settings);
 }
 
 /**
@@ -92,7 +93,7 @@ export async function generateConceptMap(
     throw new Error('无章节可用：请先生成大纲');
   }
 
-  // 抽帧（可选）：按章节锚点均匀取 VISION.mindmapFrames 帧
+  // 抽帧（可选）：预算随时长增长（分段递减）、每章至少首尾两帧，上限 FRAME_PLAN.mindmap.hardMax
   const settings = (await fetchSettings()) as Settings;
   const useVision = visionActiveFor({ settings, module: 'mindmap' });
   // 单模型口径：图片与文本一起发给同一个模型
@@ -101,16 +102,22 @@ export async function generateConceptMap(
     const rec = await getSubtitle(db, videoId).catch(() => null);
     const cues = rec?.cues ?? [];
     // 模型优先（判断如何抽最能还原完整性），失败/未配置则回退确定性公式
+    const durationMs = rec?.meta?.durationMs ?? cues[cues.length - 1]?.endMs ?? 0;
     const targets = await planFrames({
       videoId,
       module: 'mindmap',
       cues,
       sections,
-      durationMs: rec?.meta?.durationMs ?? cues[cues.length - 1]?.endMs ?? 0,
-      budget: VISION.mindmapFrames,
+      durationMs,
+      budget: frameBudgetFor('mindmap', durationMs, isDenseSections(sections, durationMs), sections.length),
       meta: { title: videoTitle || rec?.meta?.title, page: rec?.meta?.page },
     });
-    images = (await requestFrames({ videoId, targetsMs: targets })).map(toPipelineImage);
+    const frames = (await requestFrames({ videoId, targetsMs: targets })).map(toPipelineImage);
+    // 帧-字幕配对：每张图前紧贴"第几章 · 章节开头/知识点/结尾 · 此刻字幕"
+    images = frames.map((f, i) => ({
+      ...f,
+      caption: captionFrame(f.timeMs, i, frames.length, sections, cues),
+    }));
   }
 
   const modelFn: ConceptModelFn = ({ systemPrompt, userPrompt, images: imgs }) => {
@@ -128,7 +135,8 @@ export async function generateConceptMap(
       responseFormatJson: true,
       // 结构化任务禁用思考：推理会消耗输出 token 预算（用户可在设置中开启）
       thinking: settings.disableThinking === false ? { type: 'enabled' } : { type: 'disabled' },
-      images: imgs?.map((i) => ({ dataBase64: i.dataBase64, mime: i.mime ?? 'image/jpeg' })),
+      images: imgs?.map((i) => ({ dataBase64: i.dataBase64, mime: i.mime ?? 'image/jpeg', timeMs: i.timeMs, caption: i.caption, thumbBase64: i.thumbBase64 })),
+      label: 'mindmap',
     }).then((res) => ({ content: res.content }));
   };
 
@@ -174,4 +182,33 @@ export function termIndexFallback(sections: Section[]): ConceptMapData {
     stages,
     generatedAt: '',
   };
+}
+
+/** 兜底文案：错误对象没带 message 时（接口异常/超时/反序列化失败常见）给出排查方向 */
+export const CONCEPT_FAILURE_NO_DETAIL =
+  '概念图生成失败（未提供错误详情）：请打开 DevTools 控制台查看以 [vsc] 开头的日志。' +
+  '常见原因：模型输出不符合格式、接口鉴权失败、网络/代理拦截，或生成超时。';
+
+/** 失败后可操作的排查建议（模型输出类失败才追加；配置类失败原文已含指引） */
+const CONCEPT_FAILURE_HINT =
+  '可尝试：调大 maxTokens（输出若被截断，日志里会标 finish_reason=length）、'
+  + '关闭「结合画面（抽帧）」减少干扰，或更换更稳定的模型。';
+
+/**
+ * 概念图失败原因可读化（导出供单测）：降级横幅不能只说"模型生成失败"——
+ * 要告诉用户是哪一步失败（未配置 / 无章节 / 模型输出未过校验），以及能做什么。
+ *
+ * 纯函数：输入错误对象，输出可直接展示的文案；配置类失败（模型未配置、无章节）
+ * 原样返回其已有指引，其余追加排查建议。
+ */
+export function describeConceptMapFailure(err: unknown): string {
+  const raw =
+    err instanceof Error
+      ? err.message.trim()
+      : typeof err === 'string'
+        ? err.trim()
+        : '';
+  if (raw.length === 0) return CONCEPT_FAILURE_NO_DETAIL;
+  if (raw.includes('模型未配置') || raw.includes('无章节可用')) return raw;
+  return `${raw}。${CONCEPT_FAILURE_HINT}`;
 }

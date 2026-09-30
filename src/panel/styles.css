@@ -735,43 +735,6 @@ body {
   margin-left: auto;
 }
 
-/* ===== 设置页：模型方案列表 ===== */
-.model-profile-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-left: 0 !important;
-  list-style: none !important;
-}
-.model-profile-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.model-profile-name {
-  font-weight: 600;
-  color: #1f2329;
-  white-space: nowrap;
-}
-.model-profile-model {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #86909c;
-}
-.model-profile-delete {
-  flex: 0 0 auto;
-  padding: 2px 10px;
-  font-size: 12px;
-  color: #d93026;
-  border-color: #f2c1bd;
-}
-.model-profile-delete:hover {
-  background: #fef1f0;
-}
-
 /* ===== 工具栏布局修复：换行不重叠、按钮不折行、下拉限宽 ===== */
 .outline-header {
   flex-wrap: wrap;
@@ -792,10 +755,25 @@ body {
   max-width: 100%;
   text-overflow: ellipsis;
 }
-/* 多模态方案在下拉列表中绿色显示（Chromium 支持 option 着色） */
+/* 多模态模型在下拉列表中红色高亮（Chromium 支持 option 着色） */
 .model-picker-select option.picker-opt-vision {
-  color: #0a7d38;
+  color: #d93026;
   font-weight: 600;
+}
+/* 下拉框右侧：未配置 Key 的红色提示与「去设置」入口 */
+.model-picker-missing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #d93026;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.model-picker-missing .btn {
+  padding: 1px 6px;
+  font-size: 11px;
+  color: #d93026;
+  border-color: #f2c1bd;
 }
 .mm-view-switch,
 .chat-persona-row {
@@ -836,4 +814,183 @@ body {
   font-size: 12px;
   color: #86909c;
   font-family: var(--font-mono);
+}
+
+/* ===== 验证期报告：LLM 交互日志子模块 ===== */
+.settings-subtitle {
+  margin: 14px 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2329;
+}
+.llm-log {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px;
+}
+.llm-log-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.llm-log-count {
+  font-size: 12px;
+  color: #1f2329;
+}
+.llm-log-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #1f2329;
+}
+.llm-log-hint,
+.llm-log-feedback,
+.llm-log-empty {
+  margin: 0;
+  font-size: 12px;
+  color: #86909c;
+  line-height: 1.6;
+}
+.llm-log-feedback {
+  color: #0a7d38;
+}
+.llm-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.llm-log-item {
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: #fff;
+}
+.llm-log-item.failed {
+  border-color: #f2c1bd;
+  background: #fffaf9;
+}
+.llm-log-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.llm-log-mark {
+  padding: 0 6px;
+  border-radius: 4px;
+  background: #eaf3e6;
+  color: #0a7d38;
+}
+.llm-log-mark.fail {
+  background: #fdeceb;
+  color: #d93026;
+}
+.llm-log-time {
+  color: #86909c;
+  font-variant-numeric: tabular-nums;
+}
+.llm-log-label {
+  padding: 0 6px;
+  border-radius: 4px;
+  background: #f2f3f5;
+  color: #4e5969;
+}
+.llm-log-summary {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #4e5969;
+}
+.llm-log-toggle {
+  color: #185fa5;
+}
+.llm-log-error {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #d93026;
+  word-break: break-word;
+}
+.llm-log-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+.llm-log-block-title {
+  font-size: 11px;
+  color: #86909c;
+}
+.llm-log-pre {
+  margin: 2px 0 0;
+  padding: 6px 8px;
+  max-height: 220px;
+  overflow: auto;
+  background: #f7f8fa;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* 日志的帧缩略图网格 */
+.llm-log-frames {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+.llm-log-frame {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 96px;
+}
+.llm-log-thumb {
+  width: 96px;
+  height: 54px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #f2f3f5;
+  border: 1px solid #e5e6eb;
+}
+.llm-log-thumb.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: #a9aeb8;
+}
+.llm-log-frame-meta {
+  font-size: 11px;
+  color: #86909c;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 帧的配对字幕（最多 3 行，悬停看全文） */
+.llm-log-frames .llm-log-frame {
+  width: 160px;
+}
+.llm-log-frames .llm-log-thumb {
+  width: 160px;
+  height: 90px;
+}
+.llm-log-frame-caption {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #4e5969;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }

@@ -10,6 +10,7 @@ import {
   type ChatRequest,
   type FetchLike,
 } from '../../../src/core/harness/modelClient';
+import { clearLlmLogs, subscribeLlmLog, type LlmLogEntry } from '../../../src/core/metrics/llmLog';
 
 const BASE_URL = 'https://api.example.test/v1';
 const FAKE_KEY = 'test-key';
@@ -270,5 +271,83 @@ describe('chatCompletion 图像传递', () => {
     expect(sent[0]?.content).toBe('s');
     expect(sent[2]?.content).toBe('a');
     expect(Array.isArray(sent[1]?.content)).toBe(true);
+  });
+});
+
+describe('chatCompletion → LLM 交互日志', () => {
+  it('成功与失败各记一条；失败条目带错误与响应体摘要', async () => {
+    const seen: LlmLogEntry[] = [];
+    const off = subscribeLlmLog((e) => {
+      if (e) seen.push(e);
+    });
+    clearLlmLogs();
+
+    const ok = (async () =>
+      ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ choices: [{ message: { content: 'hi' } }], usage: { prompt_tokens: 3, completion_tokens: 4 } }),
+      }) as unknown as Response) as FetchLike;
+    await chatCompletion(makeRequest({ label: 'qa' }), ok);
+
+    const fail = (async () =>
+      ({
+        ok: false,
+        status: 401,
+        text: async () => 'unauthorized',
+      }) as unknown as Response) as FetchLike;
+    await expect(chatCompletion(makeRequest({ label: 'outline' }), fail)).rejects.toThrow(/401/);
+
+    off();
+    expect(seen).toHaveLength(2);
+    expect(seen[0].ok).toBe(true);
+    expect(seen[0].label).toBe('qa');
+    expect(seen[0].endpointHost).toBe('api.example.test');
+    expect(seen[0].inputTokens).toBe(3);
+    expect(seen[1].ok).toBe(false);
+    expect(seen[1].label).toBe('outline');
+    expect(seen[1].status).toBe(401);
+    expect(seen[1].error).toContain('401');
+    expect(seen[1].responsePreview).toContain('unauthorized');
+  });
+
+  it('**API Key 绝不出现在日志里**（请求预览与响应预览均已脱敏）', async () => {
+    const seen: LlmLogEntry[] = [];
+    const off = subscribeLlmLog((e) => {
+      if (e) seen.push(e);
+    });
+    clearLlmLogs();
+    // 让响应体里"回声"一次密钥，验证脱敏覆盖响应侧
+    const echo = (async () =>
+      ({
+        ok: false,
+        status: 500,
+        text: async () => `upstream error for key=${FAKE_KEY}`,
+      }) as unknown as Response) as FetchLike;
+    await expect(chatCompletion(makeRequest(), echo)).rejects.toThrow();
+    off();
+
+    for (const entry of seen) {
+      expect(entry.requestPreview).not.toContain(FAKE_KEY);
+      expect(entry.responsePreview).not.toContain(FAKE_KEY);
+      expect(JSON.stringify(entry)).not.toContain(FAKE_KEY);
+    }
+  });
+
+  it('网络层失败（fetch reject）也留痕，无 status', async () => {
+    const seen: LlmLogEntry[] = [];
+    const off = subscribeLlmLog((e) => {
+      if (e) seen.push(e);
+    });
+    clearLlmLogs();
+    const down = (async () => {
+      throw new Error('network down');
+    }) as FetchLike;
+    await expect(chatCompletion(makeRequest(), down)).rejects.toThrow();
+    off();
+    expect(seen).toHaveLength(1);
+    expect(seen[0].ok).toBe(false);
+    expect(seen[0].status).toBeUndefined();
+    expect(seen[0].error).toContain('network down');
   });
 });

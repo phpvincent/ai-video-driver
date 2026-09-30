@@ -1,116 +1,106 @@
 /**
- * ModelPicker 单测（按模块选模型）：
- * buildPickerOptions 纯函数（默认项 + 方案项 + hasKey 标记）+
- * renderToString 冒烟（不触发 effect，chrome 未 mock 也能渲染）。
+ * ModelPicker 单测（与设置页模型配置同源）：
+ * buildPickerOptions 纯函数（固定两个内置预设 + hasKey/vision 标记）+
+ * currentPresetOf（按 baseUrl 反推当前预设）+ renderToString 冒烟
+ * （不触发 effect，chrome 未 mock 也能渲染）。
  * 端点与模型标识一律从 src/config 的 MODEL_PRESETS 读取（红线 9）。
  */
 import { createElement } from 'react';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_MODEL, MODEL_PRESETS } from '../../../src/config';
-import { ModelPicker, PICKER_MISSING_KEY_HINT, buildPickerOptions } from '../../../src/panel/ModelPicker';
+import {
+  ModelPicker,
+  PICKER_MISSING_KEY_HINT,
+  buildPickerOptions,
+  currentPresetOf,
+} from '../../../src/panel/ModelPicker';
 import type { ModelConfig, Settings } from '../../../src/types';
 
-function textConfig(overrides: Partial<ModelConfig> = {}): ModelConfig {
+function cfg(baseUrl: string, apiKey: string, model: string): ModelConfig {
   return {
-    baseUrl: MODEL_PRESETS.deepseek.baseUrl,
-    apiKey: 'k-1',
-    model: MODEL_PRESETS.deepseek.model,
+    baseUrl,
+    apiKey,
+    model,
     temperature: { outline: DEFAULT_MODEL.temperature.outline, qa: DEFAULT_MODEL.temperature.qa },
     maxTokens: DEFAULT_MODEL.maxTokens,
     outlineTokenBudget: DEFAULT_MODEL.outlineTokenBudget,
-    ...overrides,
+  };
+}
+
+/** 构造带槽位的 settings（两个预设各一份） */
+function slotsOf(deepseekKey: string, qwenKey: string): Settings {
+  return {
+    model: cfg(MODEL_PRESETS.deepseek.baseUrl, deepseekKey, MODEL_PRESETS.deepseek.model),
+    modelSlots: {
+      deepseek: cfg(MODEL_PRESETS.deepseek.baseUrl, deepseekKey, MODEL_PRESETS.deepseek.model),
+      qwen: cfg(MODEL_PRESETS.qwen.baseUrl, qwenKey, MODEL_PRESETS.qwen.model),
+    },
   };
 }
 
 describe('buildPickerOptions', () => {
-  it('首项为默认：value 空串 + label 含默认模型名 + hasKey=true', () => {
-    const options = buildPickerOptions({ model: textConfig() });
-    // 逐字段断言（vision 为后续新增字段，首项默认模型未声明多模态时为 false）
-    expect(options[0].value).toBe('');
-    expect(options[0].label).toBe(`默认（${MODEL_PRESETS.deepseek.model}）`);
+  it('固定两个内置预设，顺序与 MODEL_PRESETS 一致', () => {
+    const options = buildPickerOptions({});
+    expect(options.map((o) => o.value)).toEqual(['deepseek', 'qwen']);
+    expect(options.map((o) => o.label)).toEqual(['DeepSeek', 'Qwen · 多模态']);
+  });
+
+  it('hasKey 取各预设槽位自己的 Key（互不干扰）', () => {
+    const options = buildPickerOptions(slotsOf('sk-ds', ''));
     expect(options[0].hasKey).toBe(true);
-    expect(options[0].vision).toBe(false);
+    expect(options[1].hasKey).toBe(false);
   });
 
-  it('默认模型未配置 → 「默认（未配置）」且 hasKey=false', () => {
-    const options = buildPickerOptions({ model: undefined });
-    expect(options).toHaveLength(1);
-    expect(options[0].label).toBe('默认（未配置）');
-    expect(options[0].hasKey).toBe(false);
+  it('两个预设都配了 Key → 都可用（修复"配了 A 平台 B 的 Key 就没了"）', () => {
+    const options = buildPickerOptions(slotsOf('sk-ds', 'sk-qw'));
+    expect(options.every((o) => o.hasKey)).toBe(true);
   });
 
-  it('方案项：value 与 label 为方案名，hasKey 按 Key 标记（含端点继承）', () => {
-    const vision = { ...textConfig(), name: 'Qwen 视觉' };
-    // 无 Key 方案：端点与默认模型相同 → 继承默认模型的 Key（hasKey=true）
-    const keylessSameEndpoint = { ...textConfig({ apiKey: '' }), name: '无 Key 方案' };
-    // 无 Key 方案：独立端点且无处可继承 → hasKey=false
-    const keylessOtherEndpoint = { ...textConfig({ apiKey: '', baseUrl: 'https://other.example/v1' }), name: '孤儿方案' };
-    const options = buildPickerOptions({
-      model: textConfig(),
-      modelProfiles: [vision, keylessSameEndpoint, keylessOtherEndpoint],
-    } as never);
-    expect(options.map((o) => o.value)).toEqual(['', 'Qwen 视觉', '无 Key 方案', '孤儿方案']);
-    expect(options[1].hasKey).toBe(true);
-    expect(options[2].hasKey).toBe(true); // 继承同端点默认模型的 Key
-    expect(options[3].hasKey).toBe(false); // 独立端点无处继承
+  it('多模态预设 vision=true 且 label 带后缀；文本预设不带', () => {
+    const options = buildPickerOptions(slotsOf('k', 'k'));
+    const qwen = options.find((o) => o.value === 'qwen');
+    const ds = options.find((o) => o.value === 'deepseek');
+    expect(qwen?.vision).toBe(true);
+    expect(qwen?.label).toContain('多模态');
+    expect(ds?.vision).toBe(false);
+    expect(ds?.label).not.toContain('多模态');
   });
 
-  it('无 name 的方案不出现；同名方案先出现者优先', () => {
-    const settings: Settings = {
-      model: textConfig(),
-      modelProfiles: [
-        { ...textConfig(), name: '同名', maxTokens: 111 },
-        { ...textConfig(), name: '同名', maxTokens: 222 },
-        textConfig(),
-      ],
-    };
-    const options = buildPickerOptions(settings);
-    expect(options).toHaveLength(2);
-    expect(options[1].value).toBe('同名');
-    // label 不暴露模型细节（只显示方案名；能力/端点详情在设置页方案列表展示）
-    expect(options[1].label).toBe('同名');
-  });
-
-  it('moduleModel 的选择不影响选项构造（选项只由 model/modelProfiles 决定）', () => {
-    const profile = { ...textConfig(), name: 'A' };
-    const withSelection = buildPickerOptions({
-      model: textConfig(),
-      modelProfiles: [profile],
-      moduleModel: { qa: 'A' },
+  it('自定义端点不影响选项（选项只由 MODEL_PRESETS 决定）', () => {
+    const withCustom = buildPickerOptions({
+      ...slotsOf('k', 'k'),
+      model: cfg('https://my-gateway.example/v1', 'k', 'my-model'),
     });
-    const withoutSelection = buildPickerOptions({
-      model: textConfig(),
-      modelProfiles: [profile],
-    });
-    expect(withSelection).toEqual(withoutSelection);
+    expect(withCustom.map((o) => o.value)).toEqual(['deepseek', 'qwen']);
+  });
+});
+
+describe('currentPresetOf', () => {
+  it('按 baseUrl 反推当前预设', () => {
+    expect(currentPresetOf(slotsOf('k', ''))).toBe('deepseek');
+    expect(
+      currentPresetOf({
+        model: cfg(MODEL_PRESETS.qwen.baseUrl, 'k', MODEL_PRESETS.qwen.model),
+        modelSlots: slotsOf('k', 'k').modelSlots,
+      }),
+    ).toBe('qwen');
+  });
+
+  it('自定义端点 / 未配置 → null', () => {
+    expect(currentPresetOf({ model: cfg('https://my-gateway.example/v1', 'k', 'm') })).toBeNull();
+    expect(currentPresetOf({})).toBeNull();
   });
 });
 
 describe('ModelPicker renderToString 冒烟', () => {
   it('初始渲染：一行「模型：」+ 下拉（无 chrome 环境不抛错）', () => {
-    const html = renderToString(createElement(ModelPicker, { module: 'qa' }));
+    const html = renderToString(createElement(ModelPicker, {}));
     expect(html).toContain('模型：');
     expect(html).toContain('model-picker-select');
   });
 
   it('缺 Key 提示文案常量导出（供 UI 与测试共用）', () => {
-    expect(PICKER_MISSING_KEY_HINT).toBe('该方案缺少 Key，将回退默认');
-  });
-  it('buildPickerOptions：多模态方案标签带「· 多模态」且 vision=true', () => {
-    const settings = {
-      model: { ...DEFAULT_MODEL },
-      modelProfiles: [
-        { name: 'Qwen 视觉', apiKey: 'k', supportsVision: true },
-        { name: 'DeepSeek 文本', apiKey: 'k', supportsVision: false },
-      ],
-    } as never;
-    const opts = buildPickerOptions(settings);
-    const qwen = opts.find((o) => o.value === 'Qwen 视觉');
-    const ds = opts.find((o) => o.value === 'DeepSeek 文本');
-    expect(qwen?.vision).toBe(true);
-    expect(qwen?.label).toContain('多模态');
-    expect(ds?.vision).toBe(false);
-    expect(ds?.label).not.toContain('多模态');
+    expect(PICKER_MISSING_KEY_HINT).toBe('未配置 API Key');
   });
 });

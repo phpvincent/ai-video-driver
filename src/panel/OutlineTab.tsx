@@ -519,7 +519,7 @@ export function OutlineTab(props: OutlineTabProps) {
   // 顶栏常驻：模型选择 + 生成来源横幅（所有状态可见）
   const pickerRow = (
     <div className="outline-picker-row">
-      <ModelPicker module="outline" />
+      <ModelPicker onOpenSettings={onOpenSettings} />
       <GenerationBanner module="outline" />
     </div>
   );

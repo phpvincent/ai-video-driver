@@ -18,7 +18,7 @@ import { DB } from '../config';
 import { MSG } from '../messages';
 import { getPersonaSystemPrompt, PROMPT_VERSIONS } from '../prompts';
 import { createSubtitleDb, getSubtitle } from '../storage/db';
-import { resolveModuleModel } from './settings/modelForm';
+import { resolveModel } from './settings/modelForm';
 import type { Settings, ModelConfig, Persona, Section } from '../types';
 
 /** 模块级单例 DB（惰性 open 由 db 层内部保证幂等） */
@@ -68,7 +68,7 @@ async function fetchSettings(): Promise<Settings> {
 /** 读设置并按问答模块解析模型（角色判定随问答模块：方案缺 Key 回退默认） */
 async function fetchModelConfig(): Promise<ModelConfig | null> {
   const settings = await fetchSettings();
-  return resolveModuleModel(settings, 'qa');
+  return resolveModel(settings);
 }
 
 /**
@@ -112,6 +112,7 @@ export async function generatePersona(args: {
         responseFormatJson: true,
         // 结构化任务禁用思考：推理会消耗输出 token 预算
         thinking: settings.disableThinking === false ? { type: 'enabled' } : { type: 'disabled' },
+        label: 'persona',
       }).then((res) => ({ content: res.content }));
 
     const judged = await judgePersona({

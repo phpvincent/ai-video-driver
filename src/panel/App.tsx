@@ -19,9 +19,16 @@ import { applyUsageEvent, createEmptyUsage, type UsageRecord } from '../core/met
 import { createSubtitleDb, getUsage, saveUsage, listAllUsage } from '../storage/db';
 import { DB } from '../config';
 import { ValidationReportView } from './ValidationReportView';
+import { LlmLogView } from './LlmLogView';
+import { wireLlmLogPersistence } from './llmLogStore';
 import { generatePersona, getPersonaCached } from './personaLoader';
 import type { Persona } from '../types';
-import { generateConceptMap as genConceptMap, getConceptMapCached, termIndexFallback } from './mindmapLoader';
+import {
+  describeConceptMapFailure,
+  generateConceptMap as genConceptMap,
+  getConceptMapCached,
+  termIndexFallback,
+} from './mindmapLoader';
 import type { ConceptMapData, QaRecord } from '../types';
 import type { Section } from '../types';
 import { loadSubtitles as runWaterfall, loadSubtitlesManual } from './subtitleLoader';
@@ -89,6 +96,9 @@ async function listAllQaFromDb(): Promise<QaRecord[]> {
   }
 }
 
+// LLM 交互日志：订阅核心日志流并落 IndexedDB（幂等，模块级只接一次）
+wireLlmLogPersistence();
+
 export function App() {
   const [video, setVideo] = useState<VideoInfoPayload | null>(null);
   const [playback, setPlayback] = useState<PlaybackPayload | null>(null);
@@ -108,9 +118,11 @@ export function App() {
   const [conceptGenerating, setConceptGenerating] = useState(false);
   /** 概念图是否为降级产物（模型生成失败回退本地术语图时为 true） */
   const [conceptDegraded, setConceptDegraded] = useState(false);
+  /** 概念图生成失败原因（降级横幅展示；成功或重新生成时清空） */
+  const [conceptError, setConceptError] = useState<string | null>(null);
   const [showReport, setShowReport] = useState(false);
-  /** 是否配置了公开资料检索（问答增强） */
-  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  /** LLM 交互日志（验证期报告的子模块） */
+  const [showLlmLog, setShowLlmLog] = useState(false);
   /** 当前视频的问答角色（每视频一次判定并缓存） */
   const [persona, setPersona] = useState<Persona | null>(null);
   /** 设置中的模型配置（modelReady 判断用；生成时 loadOutlineForVideo 会实时重读） */
@@ -145,6 +157,7 @@ export function App() {
     setSections([]);
     setPendingTerm(null);
     setConceptMap(null);
+    setConceptError(null);
   }, [video?.videoId]);
 
   /** 问答角色：缓存命中直接用；未命中则按视频内容判定一次（失败降级默认角色） */
@@ -192,6 +205,19 @@ export function App() {
 
   useEffect(() => {
     refreshModelConfig();
+    // 三个 Tab 的下拉框切换预设会直接写 settings（含 API Key），此处跟随刷新
+    // modelReady，避免"下拉切到没配 Key 的模型，界面仍显示可生成"
+    if (typeof chrome === 'undefined' || !chrome.storage?.onChanged) return;
+    const onSettingsChanged: (
+      changes: Record<string, unknown>,
+      area: string,
+    ) => void = (changes, area) => {
+      if (area === 'local' && Object.prototype.hasOwnProperty.call(changes, 'settings')) {
+        refreshModelConfig();
+      }
+    };
+    chrome.storage.onChanged.addListener(onSettingsChanged);
+    return () => chrome.storage.onChanged.removeListener(onSettingsChanged);
   }, []);
 
   useEffect(() => {
@@ -290,18 +316,25 @@ export function App() {
     }
   };
 
-  /** 生成概念知识图；失败降级为本地术语关联图（零成本兜底） */
+  /**
+   * 生成概念知识图；失败降级为本地术语关联图（零成本兜底）。
+   * 失败一律留痕：原因进控制台（[vsc] 前缀）+ 降级横幅文案，
+   * 否则界面只有一句"模型生成失败"，无从定位。
+   */
   const handleGenerateConceptMap = async (secs: Section[], title: string) => {
     setConceptGenerating(true);
     setConceptDegraded(false);
+    setConceptError(null);
     try {
       const data = await genConceptMap(video?.videoId ?? '', secs, title);
       setConceptMap(data);
       await trackUsage('conceptMap');
       await trackVision();
-    } catch {
+    } catch (err) {
+      console.error('[vsc] concept map generate failed', err);
       setConceptMap(termIndexFallback(secs));
       setConceptDegraded(true);
+      setConceptError(describeConceptMapFailure(err));
     } finally {
       setConceptGenerating(false);
     }
@@ -430,6 +463,13 @@ export function App() {
               })}
             />
             </div>
+          ) : showLlmLog ? (
+            <div className="report-wrap">
+              <button type="button" className="btn" onClick={() => setShowLlmLog(false)}>
+                返回设置
+              </button>
+              <LlmLogView />
+            </div>
           ) : (
             <SettingsPage
               onClose={() => {
@@ -438,6 +478,7 @@ export function App() {
                 refreshModelConfig();
               }}
               onOpenValidationReport={() => setShowReport(true)}
+              onOpenLlmLog={() => setShowLlmLog(true)}
             />
           )}
         </>
@@ -509,6 +550,7 @@ export function App() {
                 generateConceptMap={handleGenerateConceptMap}
                 conceptMap={conceptMap}
                 degraded={conceptDegraded}
+                degradedText={conceptError ?? undefined}
                 generating={conceptGenerating}
                 onGoOutline={() => setTab('outline')}
               />
@@ -524,7 +566,6 @@ export function App() {
                 onOpenSettings={() => setShowSettings(true)}
                 explain={explainFn}
                 loadHistory={loadChatHistory}
-                webSearchEnabled={webSearchEnabled}
                 persona={persona}
                 onRefreshPersona={handleRefreshPersona}
                 onSaveNote={handleSaveNote}

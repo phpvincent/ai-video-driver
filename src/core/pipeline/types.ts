@@ -41,7 +41,10 @@ export interface PipelineImage {
   mime?: string;
   /** 该帧对应的时间点（毫秒），用于提示词里生成 mm:ss 标注 */
   timeMs?: number;
+  /** 帧-字幕配对说明：随图交错发送（见 modelClient.buildUserContent） */
   caption?: string;
+  /** 160px 缩略图（仅日志展示） */
+  thumbBase64?: string;
 }
 
 /**

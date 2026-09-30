@@ -47,6 +47,12 @@ export type SegmentAnswerPayload = z.infer<typeof SegmentAnswerSchema>;
 export interface ExplainModelImage {
   dataBase64: string;
   mime?: string;
+  /** 该帧对应的时间点（毫秒）；随图像下行，仅用于日志展示 */
+  timeMs?: number;
+  /** 帧-字幕配对说明（随图交错发送） */
+  caption?: string;
+  /** 160px 缩略图（仅日志展示） */
+  thumbBase64?: string;
 }
 
 /** ExplainInput 里的图像：caption 用于提示词说明该帧对应时间点（如"第 12:30 的画面"） */

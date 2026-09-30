@@ -23,13 +23,14 @@ import {
   PROMPT_VERSIONS,
 } from '../prompts';
 import { chunkCues } from '../core/pipeline/chunk';
-import { VISION } from '../config';
+import { frameBudgetFor } from '../core/vision/framePlanner';
+import { captionFrame } from '../core/vision/structuralCandidates';
 import { planFrames, requestFrames, toPipelineImage } from './framesClient';
-import { resolveModuleModel, visionActiveFor } from './settings/modelForm';
+import { resolveModel, visionActiveFor } from './settings/modelForm';
 import { setGenerationSource } from './generationTrace';
 import type { Settings } from '../types';
 import { createSubtitleDb, getOutline, getSubtitle, saveOutline } from '../storage/db';
-import type { ModelConfig, Section } from '../types';
+import type { Cue, ModelConfig, Section } from '../types';
 
 /** 模块级单例 DB（惰性 open 由 db 层内部保证幂等） */
 const db = createSubtitleDb();
@@ -86,7 +87,8 @@ export async function loadOutlineForVideo(
   const settings = await fetchSettings();
   const useVision = visionActiveFor({ settings, module: 'outline' });
   // 单模型口径：图片与文本一起发给同一个模型（模型不支持图像时抽帧会被门控关闭）
-  const chunkFrameMap = new Map<number, ReturnType<typeof toPipelineImage>>();
+  /** 预抽到的帧（按时间升序），按块下标顺序分配给各分块 */
+  let orderedFrames: Array<ReturnType<typeof toPipelineImage>> = [];
   if (useVision) {
     // 结构感知抽帧：大纲生成时还没有章节，按固定窗口切分后用字幕画面提示词打分，
     // 按分数分配帧预算（预算内取分最高的窗口，命中提示词的字幕时刻优先）
@@ -98,11 +100,14 @@ export async function loadOutlineForVideo(
       cues,
       sections: [],
       durationMs: subRec?.meta?.durationMs ?? cues[cues.length - 1]?.endMs ?? 0,
-      budget: VISION.maxFramesPerRequest,
+      budget: frameBudgetFor(
+        'outline',
+        subRec?.meta?.durationMs ?? cues[cues.length - 1]?.endMs ?? 0,
+      ),
       meta: { title: subRec?.meta?.title, page: subRec?.meta?.page },
     });
     const frames = await requestFrames({ videoId, targetsMs: targets });
-    for (const f of frames) chunkFrameMap.set(f.targetMs, toPipelineImage(f));
+    orderedFrames = frames.map(toPipelineImage);
   }
 
   const modelFn: OutlineModelFn = ({ systemPrompt, userPrompt, images }) => {
@@ -121,7 +126,8 @@ export async function loadOutlineForVideo(
       responseFormatJson: true,
       // 结构化任务禁用思考：推理会消耗输出 token 预算（用户可在设置中开启）
       thinking: settings.disableThinking === false ? { type: 'enabled' } : { type: 'disabled' },
-      images: images?.map((i) => ({ dataBase64: i.dataBase64, mime: i.mime ?? 'image/jpeg' })),
+      images: images?.map((i) => ({ dataBase64: i.dataBase64, mime: i.mime ?? 'image/jpeg', timeMs: i.timeMs, caption: i.caption, thumbBase64: i.thumbBase64 })),
+      label: 'outline',
     }).then((res) => ({ content: res.content }));
   };
 
@@ -134,12 +140,12 @@ export async function loadOutlineForVideo(
       userPrompt: buildOutlinePrompts(chunk).userPrompt,
     }),
     onProgress: opts.onProgress,
-    // 每块的帧（预抽后按块首时间查表；未开启时返回空数组）
-    imagesForChunk: (chunk) => {
-      const key = chunk[0]?.startMs;
-      const frame = typeof key === 'number' ? chunkFrameMap.get(key) : undefined;
-      return frame ? [frame] : [];
-    },
+    /**
+     * 每块的帧：**按时间落在块内**分配（一块可有多帧，也可没有），并附帧-字幕配对说明。
+     * 历史：①按 targetMs 精确相等匹配 → 几乎全落空；②按下标顺序分配 → 第 i 帧未必属于第 i 块，
+     * 帧与字幕错位。按时间归属是唯一正确的口径。
+     */
+    imagesForChunk: (chunk, index) => framesForChunk(orderedFrames, chunk, index, cues),
   });
 
   // 结果落缓存（含 chunkState 断点供续跑；写失败不阻断返回）
@@ -180,10 +186,10 @@ async function fetchSettings(): Promise<Settings> {
   return stored && typeof stored === 'object' ? stored : {};
 }
 
-/** 读设置并按大纲模块解析模型（moduleModel 命中方案 → 否则默认；方案缺 Key 回退默认） */
+/** 读设置取当前生效模型（三模块共用一套） */
 async function fetchModelConfig(): Promise<ModelConfig | null> {
   const settings = await fetchSettings();
-  const model = resolveModuleModel(settings, 'outline');
+  const model = resolveModel(settings);
   setGenerationSource(
     'outline',
     model?.apiKey ? { kind: 'model', model: model.model } : { kind: 'fallback', reason: '模型未配置' },
@@ -289,6 +295,7 @@ export async function regenerateOne(
       responseFormatJson: true,
       // 结构化任务禁用思考：推理会消耗输出 token 预算（用户可在设置中开启）
       thinking: settings.disableThinking === false ? { type: 'enabled' } : { type: 'disabled' },
+      label: 'outline',
     }).then((res) => ({ content: res.content }));
 
   // 反馈仅方向性引导：空白视为未填写
@@ -321,4 +328,23 @@ export async function regenerateOne(
     budgetHit: false,
     failedChunks: 0,
   };
+}
+
+/**
+ * 把预抽帧按时间归属到分块（纯函数，导出供单测）：帧时间 ∈ [块首句, 下一块首句)。
+ * 返回的帧带配对说明（本块内的第几张 + 此刻字幕）；大纲阶段尚无章节，说明里不含章节名。
+ */
+export function framesForChunk(
+  frames: Array<{ dataBase64: string; mime: string; timeMs: number; caption?: string }>,
+  chunk: Cue[],
+  _index: number,
+  allCues: Cue[],
+): Array<{ dataBase64: string; mime: string; timeMs: number; caption?: string }> {
+  if (chunk.length === 0) return [];
+  const start = chunk[0]!.startMs;
+  const last = chunk[chunk.length - 1]!;
+  const next = allCues.find((c) => c.startMs > last.startMs);
+  const end = next ? next.startMs : Number.POSITIVE_INFINITY;
+  const mine = frames.filter((f) => f.timeMs >= start && f.timeMs < end);
+  return mine.map((f, i) => ({ ...f, caption: captionFrame(f.timeMs, i, mine.length, [], chunk) }));
 }

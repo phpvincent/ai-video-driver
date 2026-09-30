@@ -26,6 +26,10 @@ class MemoryDbLike implements DbLike {
   async getAll<T>(store: string): Promise<T[]> {
     return [...(this.stores.get(store)?.values() ?? [])] as T[];
   }
+
+  async delete(store: string, key: IDBValidKey): Promise<void> {
+    this.stores.get(store)?.delete(key);
+  }
 }
 
 describe('usage store', () => {
