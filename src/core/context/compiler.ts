@@ -25,6 +25,8 @@ export interface CompileInput {
   term?: string;
   /** 上轮摘要（≤150 token，调用方截断） */
   prevSummary?: string;
+  /** 个人知识库素材（SPEC-05 范围变更第 4 条：由 knowledge/retriever 组装，未命中为空串） */
+  knowledgeContext?: string;
 }
 
 export interface CompiledContext {
@@ -32,6 +34,8 @@ export interface CompiledContext {
   sectionListText: string;
   /** 命中区间字幕原文（[mm:ss] 前缀逐行） */
   rangeCueText: string;
+  /** 实际注入的知识库素材（= knowledgeContext；未注入/被预算截断为空串） */
+  knowledgeText: string;
   /** 组装完成的 user prompt（素材包裹标记内含章节列表与区间字幕，问题在标记外） */
   userPrompt: string;
   /** user prompt 总字符数（供预算断言） */
@@ -106,10 +110,11 @@ function compressRangeCueText(text: string, budgetChars: number): string {
   return `${head.join('\n')}\n${RANGE_TRUNCATED_MARK}\n${tail.join('\n')}`;
 }
 
-/** 组装 user prompt：素材（章节列表+区间字幕）包裹 + 标记外的问题区 */
+/** 组装 user prompt：素材（章节列表+区间字幕+知识库素材）包裹 + 标记外的问题区 */
 function assemblePrompt(
   sectionListText: string,
   rangeCueText: string,
+  knowledgeBlocks: string[],
   input: CompileInput,
   range: [number, number],
 ): string {
@@ -121,9 +126,12 @@ function assemblePrompt(
     '',
     `【区间字幕 ${formatMmSs(range[0])}-${formatMmSs(range[1])}】`,
     rangeCueText,
-    MATERIAL_END_MARK,
-    '',
   ];
+  // 知识库素材（可缺省）：位于区间字幕之后、章节列表之后，同属素材包裹内
+  if (knowledgeBlocks.length > 0) {
+    parts.push('', knowledgeBlocks.join('\n\n'));
+  }
+  parts.push(MATERIAL_END_MARK, '');
   if (input.prevSummary) {
     parts.push(`上一轮问答摘要：${input.prevSummary}`, '');
   }
@@ -136,7 +144,10 @@ function assemblePrompt(
 
 /**
  * 编译提问上下文（红线 3：素材总量受 maxChars 预算约束）。
- * 超预算时优先保区间字幕，截章节列表尾部（逐行弹出直至达标）。
+ *
+ * 预算优先级（从高到低，超限时按此顺序从后往前截断）：
+ *   命中区间字幕 > 个人知识库素材 > 章节列表 > 上轮摘要
+ * ——区间字幕保底不动；先逐行截章节列表，再逐块截知识库素材（块全清则整段丢弃）。
  */
 export function compileContext(
   input: CompileInput,
@@ -155,17 +166,47 @@ export function compileContext(
       ? '（无章节）'
       : input.sections.map((s, i) => `${i + 1}. [${formatMmSs(s.startMs)}] ${s.title}`).join('\n');
 
-  // 预算：超限时截章节列表尾部，区间字幕不动
+  // 知识库素材按空行切块（首块为素材起始标记，逐块弹出时保留标记直到整段清空）
+  const knowledgeBlocks =
+    (input.knowledgeContext ?? '').length > 0
+      ? (input.knowledgeContext as string).split('\n\n')
+      : [];
+
+  // 预算 1：截章节列表尾部（区间字幕与知识库素材不动）
   const sectionLines = baseSectionList.split('\n');
-  let userPrompt = assemblePrompt(sectionLines.join('\n'), rangeCueText, input, range);
+  let userPrompt = assemblePrompt(
+    sectionLines.join('\n'),
+    rangeCueText,
+    knowledgeBlocks,
+    input,
+    range,
+  );
   while (userPrompt.length > maxChars && sectionLines.length > 0) {
     sectionLines.pop();
-    userPrompt = assemblePrompt(sectionLines.join('\n'), rangeCueText, input, range);
+    userPrompt = assemblePrompt(
+      sectionLines.join('\n'),
+      rangeCueText,
+      knowledgeBlocks,
+      input,
+      range,
+    );
+  }
+  // 预算 2：仍超限则截知识库素材（逐块弹出；全部弹完仍超限则整段丢弃）
+  while (userPrompt.length > maxChars && knowledgeBlocks.length > 0) {
+    knowledgeBlocks.pop();
+    userPrompt = assemblePrompt(
+      sectionLines.join('\n'),
+      rangeCueText,
+      knowledgeBlocks,
+      input,
+      range,
+    );
   }
 
   return {
     sectionListText: sectionLines.join('\n'),
     rangeCueText,
+    knowledgeText: knowledgeBlocks.join('\n\n'),
     userPrompt,
     totalChars: userPrompt.length,
   };

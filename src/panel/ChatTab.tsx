@@ -12,7 +12,7 @@ import { CONTEXT } from '../config';
 import { findSectionAt, formatMmSs } from '../core/context/compiler';
 import type { SegmentAnswerPayload, TermPayload } from '../core/pipeline/explain';
 import { nearestCueStartMs } from '../core/pipeline/snap';
-import type { Cue, QaRecord, Section } from '../types';
+import type { Cue, KnowledgeHit, QaRecord, Section } from '../types';
 import './chat.css';
 
 /** 划词/提问请求（父 agent 接线 loader 时组装 compiler + pipeline） */
@@ -28,6 +28,8 @@ export interface ExplainResponse {
   term?: TermPayload;
   answer?: SegmentAnswerPayload;
   record: QaRecord;
+  /** 知识库命中（供回答下方展示"参考知识库"，未命中为空/缺省） */
+  hits?: KnowledgeHit[];
 }
 
 export interface ChatTabProps {
@@ -44,6 +46,8 @@ export interface ChatTabProps {
   explain?: (args: ExplainRequest) => Promise<ExplainResponse>;
   /** 划词入口（SubtitleTab 触发）：收到后自动发起术语解释并 consumed() */
   pendingTerm?: { term: string; consumed: () => void };
+  /** 存库入口（父 agent 接线 obsidianLoader）：未注入时按钮隐藏；返回笔记路径文本 */
+  onSaveNote?: (args: { kind: 'term' | 'segment'; term?: string; payload: unknown }) => Promise<string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +138,27 @@ interface ChatMessage {
   kind?: 'term' | 'segment' | 'error';
   term?: TermPayload;
   answer?: SegmentAnswerPayload;
+  /** 本轮命中的知识库笔记（未命中不展示） */
+  hits?: KnowledgeHit[];
+  /** 存库（存入 Obsidian）状态与行内结果（红线 8：失败不打断面板） */
+  saving?: boolean;
+  savedText?: string;
+  saveError?: string;
+}
+
+/** 知识库来源行样式（复用面板次级文字色，不新增 CSS 文件） */
+const KNOWLEDGE_HINT_STYLE = {
+  marginTop: 6,
+  color: 'var(--text-secondary, #888)',
+  fontSize: 12,
+} as const;
+
+/** 知识库来源文案：取自命中的笔记标题（无标题回落路径）；无命中返回 null（不展示） */
+export function formatKnowledgeSources(hits?: KnowledgeHit[]): string | null {
+  if (!hits || hits.length === 0) return null;
+  const names = hits.map((h) => h.entry.title || h.entry.path).filter((t) => t.length > 0);
+  if (names.length === 0) return null;
+  return `参考知识库：${names.join('、')}`;
 }
 
 function formatTermText(term: TermPayload): string {
@@ -211,6 +236,7 @@ export function ChatTab(props: ChatTabProps) {
           chunkIdx: 0,
           typing: full.length > 0,
           term: res.term,
+          hits: res.hits,
         });
       } else if (res.answer) {
         const full = res.answer.answer;
@@ -224,6 +250,7 @@ export function ChatTab(props: ChatTabProps) {
           chunkIdx: 0,
           typing: full.length > 0,
           answer: res.answer,
+          hits: res.hits,
         });
       } else {
         const full = res.record?.answer ?? '（空回答）';
@@ -236,6 +263,7 @@ export function ChatTab(props: ChatTabProps) {
           chunks: chunkTypewriter(full),
           chunkIdx: 0,
           typing: full.length > 0,
+          hits: res.hits,
         });
       }
     } catch (err) {
@@ -254,6 +282,33 @@ export function ChatTab(props: ChatTabProps) {
 
   const askRef = useRef(ask);
   askRef.current = ask;
+
+  /** 按 id 更新单条消息的存库状态 */
+  const patchSave = (id: number, patch: Partial<ChatMessage>): void => {
+    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
+  };
+
+  /**
+   * 单条 AI 回答存入 Obsidian：术语走 term 卡（带术语名），区间问答走 segment。
+   * 重复术语 throw（"已存在相似术语…"）时行内展示，不弹窗不打断。
+   */
+  const handleSaveNote = (m: ChatMessage): void => {
+    const save = props.onSaveNote;
+    if (!save || (m.kind !== 'term' && m.kind !== 'segment')) return;
+    patchSave(m.id, { saving: true, savedText: undefined, saveError: undefined });
+    save({
+      kind: m.kind,
+      term: m.kind === 'term' ? m.term?.term : undefined,
+      payload: m.kind === 'term' ? m.term : m.answer,
+    })
+      .then((path) => patchSave(m.id, { saving: false, savedText: path ? `已存入：${path}` : '已存入 Obsidian' }))
+      .catch((err: unknown) =>
+        patchSave(m.id, {
+          saving: false,
+          saveError: err instanceof Error ? err.message : String(err),
+        }),
+      );
+  };
 
   // 划词入口：SubtitleTab 触发 pendingTerm → 自动发起术语解释并 consumed()
   useEffect(() => {
@@ -351,6 +406,10 @@ export function ChatTab(props: ChatTabProps) {
                   {m.text}
                   {m.typing && <span className="chat-caret">▍</span>}
                 </div>
+                {/* 知识库来源：仅命中时展示，未命中不打扰 */}
+                {!m.typing && formatKnowledgeSources(m.hits) && (
+                  <div style={KNOWLEDGE_HINT_STYLE}>{formatKnowledgeSources(m.hits)}</div>
+                )}
                 {!m.typing && m.answer && (
                   <>
                     {m.answer.keyPoints.length > 0 && (
@@ -406,6 +465,22 @@ export function ChatTab(props: ChatTabProps) {
                     {m.term.needsWeb && <span className="chat-needs-web">需要联网核实</span>}
                   </div>
                 )}
+                {!m.typing &&
+                  props.onSaveNote &&
+                  (m.kind === 'term' || m.kind === 'segment') && (
+                    <div className="chat-save">
+                      <button
+                        type="button"
+                        className="btn chat-save-btn"
+                        disabled={m.saving}
+                        onClick={() => handleSaveNote(m)}
+                      >
+                        {m.saving ? '存入中…' : '存入 Obsidian'}
+                      </button>
+                      {m.savedText && <span className="chat-save-ok">{m.savedText}</span>}
+                      {m.saveError && <span className="chat-save-error">{m.saveError}</span>}
+                    </div>
+                  )}
               </div>
             )}
           </div>

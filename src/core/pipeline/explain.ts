@@ -32,6 +32,8 @@ export const SegmentAnswerSchema = z.object({
   referencedTimestamps: z.array(z.number().int().nonnegative()).max(6),
   followUpQuestions: z.array(z.string()).max(3),
   coveredByVideo: z.boolean(),
+  /** 引用的个人知识库笔记（路径或标题；未引用时省略，见 segment-qa.md 0.2.0） */
+  knowledgeSources: z.array(z.string()).max(5).optional(),
 });
 export type SegmentAnswerPayload = z.infer<typeof SegmentAnswerSchema>;
 

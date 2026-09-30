@@ -3,7 +3,13 @@
  * （prompts/index 单一事实源，红线 6）+ qaHistory 落库（buildQaRecord 盖章）。
  * ChatTab 的 explain props 由本模块实现。
  */
+import { findSectionAt } from '../core/context/compiler';
 import { chatCompletion } from '../core/harness/modelClient';
+import {
+  buildKnowledgeContext,
+  extractQueryTerms,
+  searchIndex,
+} from '../core/knowledge/retriever';
 import {
   answerSegment,
   buildQaRecord,
@@ -18,8 +24,9 @@ import {
   PROMPT_VERSIONS,
 } from '../prompts';
 import { createSubtitleDb, getOutline, getSubtitle, saveQaRecord } from '../storage/db';
-import type { Cue, ModelConfig, QaRecord, Section } from '../types';
+import type { Cue, KnowledgeHit, ModelConfig, QaRecord, Section } from '../types';
 import type { ExplainRequest, ExplainResponse } from './ChatTab';
+import { getObsidianConfig, readIndex } from './obsidianLoader';
 
 const db = createSubtitleDb();
 
@@ -35,16 +42,49 @@ function sendRuntimeMessage(message: unknown): Promise<unknown> {
   }
 }
 
-async function fetchModelConfig(): Promise<ModelConfig | null> {
+/** 读完整 settings（model 分区 + 知识库检索开关等顶层项） */
+async function fetchSettings(): Promise<Record<string, unknown>> {
   const response = await sendRuntimeMessage({ type: MSG.GET_SETTINGS });
-  const stored = (response ?? {}) as { model?: ModelConfig };
-  return stored.model ?? null;
+  const stored = (response ?? {}) as Record<string, unknown>;
+  return stored && typeof stored === 'object' ? stored : {};
+}
+
+/**
+ * 个人知识库检索（SPEC-05 范围变更第 4 条）：
+ * 开关闭合 + Obsidian 已配置时才检索；任何异常（未配置 / 未启动 / 索引缺失）
+ * 一律静默降级为空上下文，不阻断问答（红线 8 精神）。
+ */
+async function loadKnowledge(args: {
+  question: string;
+  sections: Section[];
+  positionMs: number;
+  enabled: boolean;
+}): Promise<{ hits: KnowledgeHit[]; context: string }> {
+  if (!args.enabled) return { hits: [], context: '' };
+  try {
+    const obsidianConfig = await getObsidianConfig();
+    if (!obsidianConfig) return { hits: [], context: '' };
+    const index = await readIndex(obsidianConfig);
+    const section = findSectionAt(args.sections, args.positionMs);
+    const queryTerms = extractQueryTerms({
+      question: args.question,
+      sectionTerms: section?.terms,
+      positionMs: args.positionMs,
+    });
+    const hits = searchIndex({ index, queryTerms });
+    return { hits, context: buildKnowledgeContext(hits) };
+  } catch {
+    return { hits: [], context: '' };
+  }
 }
 
 /** ChatTab explain props 的实现（App 接线传入） */
 export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
-  const model = await fetchModelConfig();
+  const settings = await fetchSettings();
+  const model = (settings.model as ModelConfig | undefined) ?? null;
   if (!model?.apiKey) throw new Error('模型未配置：请先在设置页配置模型');
+  /** 问答时检索个人知识库（默认开启；未存过该项也视为开启） */
+  const knowledgeSearch = settings.knowledgeSearch !== false;
 
   const videoId = currentVideoIdRef.value;
   if (!videoId) throw new Error('未检测到视频');
@@ -56,11 +96,20 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
   const cues: Cue[] = subRec?.cues ?? [];
   const sections: Section[] = outlineRec?.sections ?? [];
 
+  // 知识库检索（术语解释复用当前章节 terms；区间/自由提问用问题原文）
+  const knowledge = await loadKnowledge({
+    question: args.term ?? args.question,
+    sections,
+    positionMs: args.positionMs,
+    enabled: knowledgeSearch,
+  });
+
   const input: ExplainInput = {
     sections,
     cues,
     rangeMs: args.rangeMs,
     positionMs: args.positionMs,
+    knowledgeContext: knowledge.context,
   };
 
   const modelFn: ExplainModelFn = ({ systemPrompt, userPrompt }) =>
@@ -93,7 +142,7 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
       payload: term,
     });
     await saveQaRecord(db, record).catch(() => {});
-    return { term, record };
+    return { term, record, hits: knowledge.hits };
   }
 
   const answer = await answerSegment({
@@ -111,5 +160,5 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
     payload: answer,
   });
   await saveQaRecord(db, record).catch(() => {});
-  return { answer, record };
+  return { answer, record, hits: knowledge.hits };
 }
