@@ -27,13 +27,15 @@ describe('manifest.json（TECH-DESIGN §9 可执行快照）', () => {
     expect(manifest.permissions).toEqual(['storage', 'sidePanel', 'tabs']);
   });
 
-  it('host_permissions 与 §9 完全一致（不含 v0.1 范围外域名）', () => {
+  it('host_permissions 与 §9 一致（含已支持的模型端点域名）', () => {
     expect(manifest.host_permissions).toEqual([
       'https://www.bilibili.com/*',
       'https://api.bilibili.com/*',
       'https://*.hdslb.com/*',
       'https://api.deepseek.com/*',
       'http://127.0.0.1:27123/*',
+      'https://dashscope.aliyuncs.com/*',
+      'https://maas.qianwenaiapi.com/*',
     ]);
   });
 

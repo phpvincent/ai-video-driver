@@ -114,6 +114,14 @@ describe('chatCompletion', () => {
     await expect(chatCompletion(makeRequest(), again.fetchFn)).rejects.toThrow(/端点|Key/);
   });
 
+  it('fetch 抛错（网络层失败）→ 提示未收到服务器响应与排查方向', async () => {
+    const fetchFn = async (): Promise<Response> => {
+      throw new TypeError('Failed to fetch');
+    };
+    await expect(chatCompletion(makeRequest(), fetchFn)).rejects.toThrow(/未收到服务器响应/);
+    await expect(chatCompletion(makeRequest(), fetchFn)).rejects.toThrow(/网络\/代理/);
+  });
+
   it('500 → throw 且消息含 500', async () => {
     const { fetchFn } = mockFetch(new Response('internal server error', { status: 500 }));
     await expect(chatCompletion(makeRequest(), fetchFn)).rejects.toThrow('500');

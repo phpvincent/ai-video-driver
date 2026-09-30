@@ -3,22 +3,39 @@
   "name": "视频学习副驾",
   "version": "0.1.0",
   "description": "B 站视频学习副驾：带时间戳的字幕、大纲、导图与上下文问答",
-  "permissions": ["storage", "sidePanel", "tabs"],
+  "permissions": [
+    "storage",
+    "sidePanel",
+    "tabs"
+  ],
   "host_permissions": [
     "https://www.bilibili.com/*",
     "https://api.bilibili.com/*",
     "https://*.hdslb.com/*",
     "https://api.deepseek.com/*",
-    "http://127.0.0.1:27123/*"
+    "http://127.0.0.1:27123/*",
+    "https://dashscope.aliyuncs.com/*",
+    "https://maas.qianwenaiapi.com/*"
   ],
-  "background": { "service_worker": "background.js", "type": "module" },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
   "content_scripts": [
     {
-      "matches": ["https://www.bilibili.com/video/*"],
-      "js": ["content.js"],
+      "matches": [
+        "https://www.bilibili.com/video/*"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
-  "action": { "default_title": "打开视频学习副驾" },
-  "side_panel": { "default_path": "panel.html" }
+  "action": {
+    "default_title": "打开视频学习副驾"
+  },
+  "side_panel": {
+    "default_path": "panel.html"
+  }
 }

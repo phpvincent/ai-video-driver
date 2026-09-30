@@ -121,14 +121,23 @@ export async function chatCompletion(req: ChatRequest, fetchFn: FetchLike = fetc
     body.response_format = { type: 'json_object' };
   }
 
-  const res = await fetchFn(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${req.apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetchFn(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${req.apiKey}`,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    // 网络层失败（请求根本没到达服务器）：与 HTTP 4xx/5xx 是完全不同的问题域
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `模型网络请求失败（未收到服务器响应）：${reason} — 请检查网络/代理是否拦截了该接口域名，以及 baseUrl 是否拼写正确`,
+    );
+  }
 
   const text = await res.text();
 
