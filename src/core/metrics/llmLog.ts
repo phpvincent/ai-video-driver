@@ -62,6 +62,18 @@ export const REQUEST_PREVIEW_MAX = 1_500;
 export const RESPONSE_PREVIEW_MAX = 3_000;
 /** 内存环形缓冲保留条数（与 config DB.logKeep 同口径） */
 export const LLM_LOG_KEEP = 200;
+/**
+ * 控制台镜像开关。测试环境默认静音（失败路径用例会大量触发，刷屏淹没断言输出），
+ * 验证镜像行为的单测显式打开。
+ */
+let consoleMirrorEnabled = !(
+  typeof import.meta !== 'undefined' &&
+  (import.meta as { env?: { MODE?: string } }).env?.MODE === 'test'
+);
+export function setConsoleMirrorEnabled(v: boolean): void {
+  consoleMirrorEnabled = v;
+}
+
 /** 是否保存帧缩略图（默认关：图像体积大，只在排查抽帧时临时打开） */
 let thumbnailsEnabled = false;
 export function setThumbnailsEnabled(v: boolean): void {
@@ -226,6 +238,7 @@ export function emitLlmLog(entry: LlmLogEntry): void {
   while (buffer.length > LLM_LOG_KEEP) buffer.shift();
   for (const fn of listeners) fn(entry);
   const head = `[vsc][llm] ${entry.label} ${entry.ok ? 'ok' : 'FAIL'} ${entry.model}@${entry.endpointHost} ${entry.durationMs}ms`;
+  if (!consoleMirrorEnabled) return;
   if (entry.ok) console.debug(head);
   else console.error(head, entry.error ?? '', entry.responsePreview);
 }

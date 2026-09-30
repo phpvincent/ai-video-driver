@@ -2,7 +2,7 @@
  * LLM 交互日志单测：截断 / 脱敏 / 请求预览 / 环形缓冲 / 订阅 / 清空。
  * 重点断言：**API Key 绝不进日志**（脱敏生效）。
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   LLM_LOG_KEEP,
   REDACTED,
@@ -17,6 +17,7 @@ import {
   redactSecrets,
   buildThumbnails,
   describeFrames,
+  setConsoleMirrorEnabled,
   subscribeLlmLog,
   truncateText,
   THUMB_MAX,
@@ -189,7 +190,12 @@ describe('日志缓冲与订阅', () => {
   });
 });
 
-describe('console 镜像', () => {
+describe('console 镜像（显式打开静音开关）', () => {
+  beforeEach(() => {
+    setConsoleMirrorEnabled(true);
+  });
+  afterEach(() => setConsoleMirrorEnabled(false));
+
   beforeEach(() => {
     clearLlmLogs();
     vi.restoreAllMocks();
