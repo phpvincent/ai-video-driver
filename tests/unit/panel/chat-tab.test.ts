@@ -3,11 +3,25 @@
  * renderToString 冒烟（模型未配置引导）+ SubtitleTab 划词提取纯函数。
  * 环境为 node 且未安装 @testing-library/react：纯逻辑直接断言，
  * 渲染用 react-dom/server 的 renderToString（不含 effect）。
+ *
+ * 问答 Tab 三项增强追加：历史恢复映射（recordsToMessages）、兜底搜索链接
+ * （buildSearchUrl）、来源区文案（formatSources / formatRangeSource）。
  */
 import { createElement } from 'react';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { ChatTab, chunkTypewriter, parseMmSs, resolveRange, snapTimestamps } from '../../../src/panel/ChatTab';
+import { WEB_SEARCH_FALLBACK_URL } from '../../../src/config';
+import {
+  ChatTab,
+  buildSearchUrl,
+  chunkTypewriter,
+  formatRangeSource,
+  formatSources,
+  parseMmSs,
+  recordsToMessages,
+  resolveRange,
+  snapTimestamps,
+} from '../../../src/panel/ChatTab';
 import { extractSelectionText } from '../../../src/panel/SubtitleTab';
 import type { Cue, QaRecord, Section } from '../../../src/types';
 
@@ -159,6 +173,110 @@ describe('ChatTab renderToString 冒烟', () => {
     expect(html).toContain('自定义');
     expect(html).toContain('当前区间');
     expect(html).toContain('输入问题');
+  });
+});
+
+describe('recordsToMessages（历史恢复：qaHistory → 消息列表）', () => {
+  const base: QaRecord = {
+    id: 'r1',
+    videoId: 'BV1X_p1',
+    interactionType: 'free',
+    sectionId: null,
+    timestampMs: 0,
+    rangeMs: null,
+    question: 'q',
+    answer: 'a',
+    payload: {},
+    createdAt: '2026-01-01T00:00:00.000Z',
+  };
+
+  const termPayload = {
+    term: '注意力机制',
+    inVideoMeaning: '课上含义',
+    generalDefinition: '通用定义',
+    analogy: '类比',
+    relatedTerms: ['QKV'],
+    needsWeb: false,
+  };
+  const segmentPayload = {
+    answer: '这段讲了 X',
+    keyPoints: ['要点1'],
+    referencedTimestamps: [60],
+    followUpQuestions: ['然后呢'],
+    coveredByVideo: true,
+  };
+
+  it('term 记录：用户消息显示术语名，assistant 回填 term payload', () => {
+    const msgs = recordsToMessages([{ ...base, interactionType: 'term', question: '注意力机制', payload: termPayload }]);
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0]).toMatchObject({ role: 'user', text: '解释「注意力机制」' });
+    expect(msgs[1]).toMatchObject({ role: 'assistant', kind: 'term', text: 'a', typing: false });
+    expect(msgs[1].term?.term).toBe('注意力机制');
+  });
+
+  it('segment 记录：回填 answer payload 与区间', () => {
+    const msgs = recordsToMessages([
+      { ...base, interactionType: 'segment', rangeMs: [30_000, 90_000], payload: segmentPayload },
+    ]);
+    expect(msgs[0].text).toBe('q');
+    expect(msgs[1]).toMatchObject({ kind: 'segment', typing: false });
+    expect(msgs[1].answer?.keyPoints).toEqual(['要点1']);
+    expect(msgs[1].rangeMs).toEqual([30_000, 90_000]);
+  });
+
+  it('free 记录：正文渲染，payload 形状不匹配时不回填', () => {
+    const msgs = recordsToMessages([{ ...base, answer: '自由回答', payload: { foo: 1 } }]);
+    expect(msgs[1]).toMatchObject({ kind: 'free', text: '自由回答' });
+    expect(msgs[1].term).toBeUndefined();
+    expect(msgs[1].answer).toBeUndefined();
+  });
+
+  it('空数组 → 空消息列表', () => {
+    expect(recordsToMessages([])).toEqual([]);
+  });
+
+  it('payload 缺失（undefined）不报错，只渲染正文', () => {
+    const msgs = recordsToMessages([{ ...base, payload: undefined }]);
+    expect(msgs).toHaveLength(2);
+    expect(msgs[1].text).toBe('a');
+    expect(msgs[1].term).toBeUndefined();
+  });
+
+  it('多条回答按序成对展开且 id 唯一递增', () => {
+    const msgs = recordsToMessages([base, { ...base, id: 'r2', interactionType: 'term', question: 'T' }]);
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
+    expect(msgs.map((m) => m.id)).toEqual([1, 2, 3, 4]);
+  });
+});
+
+describe('buildSearchUrl（兜底搜索链接，红线 9）', () => {
+  it('URL 前缀来自 config 常量', () => {
+    expect(buildSearchUrl('注意力').startsWith(WEB_SEARCH_FALLBACK_URL)).toBe(true);
+  });
+
+  it('query 做 URL 编码（中文与空格）', () => {
+    expect(buildSearchUrl('注意力 机制')).toBe(
+      `${WEB_SEARCH_FALLBACK_URL}${encodeURIComponent('注意力 机制')}`,
+    );
+    expect(buildSearchUrl('注意力 机制')).toContain('%E6%B3%A8%E6%84%8F%E5%8A%9B');
+  });
+});
+
+describe('来源区文案（formatSources / formatRangeSource）', () => {
+  it('公开资料：有结果返回标题列表，无结果返回 null', () => {
+    expect(formatSources([{ title: 'MDN', url: 'u1', snippet: 's' }])).toBe('公开资料：MDN');
+    expect(formatSources([])).toBeNull();
+    expect(formatSources(undefined)).toBeNull();
+  });
+
+  it('公开资料：标题缺失回落 url', () => {
+    expect(formatSources([{ title: '', url: 'u1', snippet: 's' }])).toBe('公开资料：u1');
+  });
+
+  it('命中课程区间：无时间戳时给出区间，已有时间戳则省略', () => {
+    expect(formatRangeSource([60_000, 90_000], false)).toBe('命中课程区间 01:00-01:30');
+    expect(formatRangeSource([60_000, 90_000], true)).toBeNull();
+    expect(formatRangeSource(null, false)).toBeNull();
   });
 });
 

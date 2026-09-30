@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { MSG, type PlaybackPayload, type RuntimeMessage, type VideoInfoPayload } from '../messages';
 import type { FetchResult, ModelConfig, VideoMeta } from '../types';
 import { ChatTab } from './ChatTab';
+import { listQaByVideo } from '../storage/db';
 import { MindmapTab } from './MindmapTab';
 import { OutlineTab } from './OutlineTab';
 import { generateOutline, loadOutlineCached, regenerateOne } from './outlineLoader';
@@ -56,6 +57,15 @@ function formatDuration(ms: number): string {
 
 
 
+/** 问答 Tab 历史恢复（切换 Tab / 重开面板不丢内容） */
+async function loadChatHistory(videoId: string): Promise<QaRecord[]> {
+  try {
+    return await listQaByVideo(db, videoId);
+  } catch {
+    return [];
+  }
+}
+
 /** 面板共享 DB 实例（埋点与问答记录读取） */
 const db = createSubtitleDb();
 
@@ -96,6 +106,8 @@ export function App() {
   /** 概念图是否为降级产物（模型生成失败回退本地术语图时为 true） */
   const [conceptDegraded, setConceptDegraded] = useState(false);
   const [showReport, setShowReport] = useState(false);
+  /** 是否配置了公开资料检索（问答增强） */
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   /** 设置中的模型配置（modelReady 判断用；生成时 loadOutlineForVideo 会实时重读） */
   const [modelConfig, setModelConfig] = useState<ModelConfig | null>(null);
 
@@ -444,6 +456,8 @@ export function App() {
                 modelReady={!!modelConfig?.apiKey}
                 onOpenSettings={() => setShowSettings(true)}
                 explain={explainFn}
+                loadHistory={loadChatHistory}
+                webSearchEnabled={webSearchEnabled}
                 onSaveNote={handleSaveNote}
                 pendingTerm={pendingTerm ?? undefined}
               />

@@ -6,10 +6,16 @@
  * props 全部可选：兼容 App.tsx 当前 <ChatTab /> 占位渲染，接线时传齐。
  * AI 回答采用"响应到达即开始打字机渲染"（~15ms/字，A5 口径：真实流式与 Zod
  * 校验冲突，列 v0.1.x）。explain 失败 throw 时以错误气泡呈现，不崩面板（红线 8）。
+ *
+ * 三项增强（问答 Tab 迭代）：
+ * - 切换 Tab / 换视频后从 qaHistory 恢复（loadHistory 注入，未注入则保持内存行为）；
+ * - 回答下方来源区三块：命中课程区间 / 个人知识库 / 公开资料（sources 由父 agent 填入）；
+ * - 未配置联网检索且术语卡 needsWeb 时，给出兜底搜索链接（URL 取自 config 常量，红线 9）。
  */
 import { useEffect, useRef, useState } from 'react';
-import { CONTEXT } from '../config';
+import { CONTEXT, WEB_SEARCH_FALLBACK_URL } from '../config';
 import { findSectionAt, formatMmSs } from '../core/context/compiler';
+import type { WebSnippet } from '../core/knowledge/webSearch';
 import type { SegmentAnswerPayload, TermPayload } from '../core/pipeline/explain';
 import { nearestCueStartMs } from '../core/pipeline/snap';
 import type { Cue, KnowledgeHit, QaRecord, Section } from '../types';
@@ -30,6 +36,8 @@ export interface ExplainResponse {
   record: QaRecord;
   /** 知识库命中（供回答下方展示"参考知识库"，未命中为空/缺省） */
   hits?: KnowledgeHit[];
+  /** 公开资料检索命中（供回答下方展示"参考公开资料"，未检索为空/缺省） */
+  sources?: WebSnippet[];
 }
 
 export interface ChatTabProps {
@@ -48,6 +56,10 @@ export interface ChatTabProps {
   pendingTerm?: { term: string; consumed: () => void };
   /** 存库入口（父 agent 接线 obsidianLoader）：未注入时按钮隐藏；返回笔记路径文本 */
   onSaveNote?: (args: { kind: 'term' | 'segment'; term?: string; payload: unknown }) => Promise<string>;
+  /** 历史恢复入口（父 agent 接线 db.listQaByVideo）：未注入时保持内存行为 */
+  loadHistory?: (videoId: string) => Promise<QaRecord[]>;
+  /** 是否已配置公开资料检索（未配置时 needsWeb 走兜底搜索链接） */
+  webSearchEnabled?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +132,61 @@ export function snapTimestamps(seconds: number[], cues: Cue[]): number[] {
   return out.sort((a, b) => a - b);
 }
 
+/** payload 类型守卫（历史记录恢复时 payload 为 unknown，按形状安全收窄） */
+function isTermPayload(p: unknown): p is TermPayload {
+  if (!p || typeof p !== 'object') return false;
+  const raw = p as Record<string, unknown>;
+  return typeof raw.term === 'string' && typeof raw.inVideoMeaning === 'string';
+}
+
+function isSegmentPayload(p: unknown): p is SegmentAnswerPayload {
+  if (!p || typeof p !== 'object') return false;
+  const raw = p as Record<string, unknown>;
+  return typeof raw.answer === 'string' && Array.isArray(raw.keyPoints);
+}
+
+/**
+ * qaHistory 记录 → 消息列表（切换 Tab / 换视频后恢复会话）。
+ *
+ * 每条记录生成「用户提问 + AI 回答」一对；term 类提问显示为「解释「术语」」；
+ * payload 形状匹配时回填 term / answer（用于要点、时间戳、相关术语等区块），
+ * 不匹配则只渲染正文。恢复的消息不带打字机（typing=false）。
+ */
+export function recordsToMessages(records: QaRecord[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  let id = 0;
+  for (const rec of records ?? []) {
+    if (!rec) continue;
+    const isTerm = rec.interactionType === 'term';
+    id += 1;
+    out.push({
+      id,
+      role: 'user',
+      text: isTerm ? `解释「${rec.question}」` : rec.question,
+    });
+    id += 1;
+    out.push({
+      id,
+      role: 'assistant',
+      kind: rec.interactionType,
+      text: rec.answer ?? '',
+      fullText: rec.answer ?? '',
+      typing: false,
+      term: isTermPayload(rec.payload) ? rec.payload : undefined,
+      answer: isSegmentPayload(rec.payload) ? rec.payload : undefined,
+      rangeMs: rec.rangeMs ?? null,
+    });
+  }
+  return out;
+}
+
+/**
+ * 兜底搜索链接：未配置联网检索时用（红线 9：URL 前缀只能来自 src/config 常量）。
+ */
+export function buildSearchUrl(query: string): string {
+  return `${WEB_SEARCH_FALLBACK_URL}${encodeURIComponent(query ?? '')}`;
+}
+
 // ---------------------------------------------------------------------------
 // 组件内消息模型
 // ---------------------------------------------------------------------------
@@ -135,11 +202,16 @@ interface ChatMessage {
   chunks?: string[];
   chunkIdx?: number;
   typing?: boolean;
-  kind?: 'term' | 'segment' | 'error';
+  /** free = 自由提问（历史恢复时来自 QaRecord.interactionType） */
+  kind?: 'term' | 'segment' | 'free' | 'error';
   term?: TermPayload;
   answer?: SegmentAnswerPayload;
   /** 本轮命中的知识库笔记（未命中不展示） */
   hits?: KnowledgeHit[];
+  /** 公开资料检索结果（父 agent 接线后填入；未检索时为空） */
+  sources?: WebSnippet[];
+  /** 提问区间（历史恢复时来自 QaRecord.rangeMs） */
+  rangeMs?: [number, number] | null;
   /** 存库（存入 Obsidian）状态与行内结果（红线 8：失败不打断面板） */
   saving?: boolean;
   savedText?: string;
@@ -153,12 +225,40 @@ const KNOWLEDGE_HINT_STYLE = {
   fontSize: 12,
 } as const;
 
+/** 来源区容器（三块来源的公共外框，不新增 CSS 文件） */
+const SOURCE_BLOCK_STYLE = {
+  marginTop: 4,
+  paddingTop: 4,
+  borderTop: '1px solid var(--border, #eee)',
+} as const;
+
 /** 知识库来源文案：取自命中的笔记标题（无标题回落路径）；无命中返回 null（不展示） */
 export function formatKnowledgeSources(hits?: KnowledgeHit[]): string | null {
   if (!hits || hits.length === 0) return null;
   const names = hits.map((h) => h.entry.title || h.entry.path).filter((t) => t.length > 0);
   if (names.length === 0) return null;
   return `参考知识库：${names.join('、')}`;
+}
+
+/**
+ * 公开资料来源文案：取自检索结果标题（无标题回落 url）；无结果返回 null（不展示）。
+ * 与知识库、区间命中同属回答下方的"来源区"。
+ */
+export function formatSources(snippets?: WebSnippet[]): string | null {
+  if (!snippets || snippets.length === 0) return null;
+  const names = snippets.map((s) => s.title || s.url).filter((t) => t.length > 0);
+  if (names.length === 0) return null;
+  return `公开资料：${names.join('、')}`;
+}
+
+/** 命中课程区间文案（历史恢复消息无 referencedTimestamps 时给出区间；否则省略） */
+export function formatRangeSource(
+  rangeMs?: [number, number] | null,
+  hasTimestamps?: boolean,
+): string | null {
+  if (hasTimestamps) return null;
+  if (!rangeMs || rangeMs.length !== 2) return null;
+  return `命中课程区间 ${formatMmSs(rangeMs[0])}-${formatMmSs(rangeMs[1])}`;
 }
 
 function formatTermText(term: TermPayload): string {
@@ -283,6 +383,37 @@ export function ChatTab(props: ChatTabProps) {
   const askRef = useRef(ask);
   askRef.current = ask;
 
+  /** loadHistory 的最新引用（恢复 effect 只依赖 videoId，避免父级重渲染反复重置） */
+  const loadHistoryRef = useRef(props.loadHistory);
+  loadHistoryRef.current = props.loadHistory;
+
+  // 历史恢复：videoId 变化时先清空，再按注入的 loadHistory 重建消息列表
+  // （未注入 → 保持内存行为，不报错；读取失败同样静默，红线 8）
+  useEffect(() => {
+    let cancelled = false;
+    setMessages([]);
+    const load = loadHistoryRef.current;
+    if (!videoId || !load) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    load(videoId)
+      .then((records) => {
+        if (cancelled) return;
+        const restored = recordsToMessages(records ?? []);
+        setMessages(restored);
+        const maxId = restored.reduce((max, m) => (m.id > max ? m.id : max), 0);
+        if (maxId >= nextIdRef.current) nextIdRef.current = maxId + 1;
+      })
+      .catch(() => {
+        /* 读取失败不打断面板 */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [videoId]);
+
   /** 按 id 更新单条消息的存库状态 */
   const patchSave = (id: number, patch: Partial<ChatMessage>): void => {
     setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
@@ -391,7 +522,15 @@ export function ChatTab(props: ChatTabProps) {
         {messages.length === 0 && (
           <div className="chat-empty">针对区间提问，或在字幕 Tab 划词解释术语</div>
         )}
-        {messages.map((m) => (
+        {messages.map((m) => {
+          // 来源区三块：命中课程区间 / 个人知识库 / 公开资料（各自有才显示）
+          const rangeLine = formatRangeSource(
+            m.rangeMs,
+            (m.answer?.referencedTimestamps?.length ?? 0) > 0,
+          );
+          const knowledgeLine = formatKnowledgeSources(m.hits);
+          const webLine = formatSources(m.sources);
+          return (
           <div key={m.id} className={`chat-msg ${m.role}`}>
             {m.role === 'user' ? (
               <div className="chat-bubble user">{m.text}</div>
@@ -406,9 +545,13 @@ export function ChatTab(props: ChatTabProps) {
                   {m.text}
                   {m.typing && <span className="chat-caret">▍</span>}
                 </div>
-                {/* 知识库来源：仅命中时展示，未命中不打扰 */}
-                {!m.typing && formatKnowledgeSources(m.hits) && (
-                  <div style={KNOWLEDGE_HINT_STYLE}>{formatKnowledgeSources(m.hits)}</div>
+                {/* 来源区：仅命中时展示，未命中不打扰 */}
+                {!m.typing && (rangeLine || knowledgeLine || webLine) && (
+                  <div style={SOURCE_BLOCK_STYLE}>
+                    {rangeLine && <div style={KNOWLEDGE_HINT_STYLE}>{rangeLine}</div>}
+                    {knowledgeLine && <div style={KNOWLEDGE_HINT_STYLE}>{knowledgeLine}</div>}
+                    {webLine && <div style={KNOWLEDGE_HINT_STYLE}>{webLine}</div>}
+                  </div>
                 )}
                 {!m.typing && m.answer && (
                   <>
@@ -465,6 +608,15 @@ export function ChatTab(props: ChatTabProps) {
                     {m.term.needsWeb && <span className="chat-needs-web">需要联网核实</span>}
                   </div>
                 )}
+                {/* 未配置联网检索：术语卡 needsWeb 时给兜底搜索链接（URL 取自 config 常量） */}
+                {!m.typing && m.term?.needsWeb && !props.webSearchEnabled && (
+                  <div style={KNOWLEDGE_HINT_STYLE}>
+                    这节课外的内容建议联网核实：在搜索引擎中查证{' '}
+                    <a href={buildSearchUrl(m.term.term)} target="_blank" rel="noreferrer">
+                      {m.term.term}
+                    </a>
+                  </div>
+                )}
                 {!m.typing &&
                   props.onSaveNote &&
                   (m.kind === 'term' || m.kind === 'segment') && (
@@ -484,7 +636,8 @@ export function ChatTab(props: ChatTabProps) {
               </div>
             )}
           </div>
-        ))}
+          );
+        })}
         {busy && <div className="chat-loading">思考中…</div>}
       </div>
 

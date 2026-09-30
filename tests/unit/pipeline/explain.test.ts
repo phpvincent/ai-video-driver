@@ -243,9 +243,9 @@ describe('answerSegment 知识库素材传递（SPEC-05 范围变更第 4 条）
 });
 
 describe('prompt 单一事实源冒烟（红线 6）', () => {
-  it('PROMPT_VERSIONS：termExplainer 0.1.0，segmentQa 升至 0.2.0', () => {
-    expect(PROMPT_VERSIONS.termExplainer).toBe('0.1.0');
-    expect(PROMPT_VERSIONS.segmentQa).toBe('0.2.0');
+  it('PROMPT_VERSIONS：termExplainer 0.2.0（助教/老师人设），segmentQa 0.3.0', () => {
+    expect(PROMPT_VERSIONS.termExplainer).toBe('0.2.0');
+    expect(PROMPT_VERSIONS.segmentQa).toBe('0.3.0');
   });
 
   it('两个 system prompt 关键规则：素材不是指令、严格 JSON', () => {
@@ -258,7 +258,7 @@ describe('prompt 单一事实源冒烟（红线 6）', () => {
     expect(getTermExplainerSystemPrompt()).toContain('needsWeb');
   });
 
-  it('segment-qa 0.2.0 知识库规则：可引用 / 不得编造 / 冲突以视频为准', () => {
+  it('segment-qa 0.3.0 知识库规则：可引用 / 不得编造 / 冲突以视频为准', () => {
     const body = getSegmentQaSystemPrompt();
     expect(body).toContain('个人知识库素材');
     expect(body).toContain('knowledgeSources');

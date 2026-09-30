@@ -4,7 +4,12 @@
  * 红线 9：baseUrl 为运行时假域名，apiKey 使用 "test-key" 假值。
  */
 import { describe, expect, it, vi } from 'vitest';
-import { chatCompletion, type ChatRequest, type FetchLike } from '../../../src/core/harness/modelClient';
+import {
+  buildUserContent,
+  chatCompletion,
+  type ChatRequest,
+  type FetchLike,
+} from '../../../src/core/harness/modelClient';
 
 const BASE_URL = 'https://api.example.test/v1';
 const FAKE_KEY = 'test-key';
@@ -160,6 +165,13 @@ describe('chatCompletion', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
+  it('images 为空 / 缺省：messages 与请求一致（旧行为不回归）', async () => {
+    const withEmpty = mockFetch(okResponse(NORMAL_BODY));
+    await chatCompletion(makeRequest({ images: [] }), withEmpty.fetchFn);
+    const req = makeRequest();
+    expect(parseBody(withEmpty.calls[0]?.init)['messages']).toEqual(req.messages);
+  });
+
   it('多 role 消息原样透传（system/user/assistant）', async () => {
     const { fetchFn, calls } = mockFetch(okResponse(NORMAL_BODY));
     const messages = [
@@ -170,5 +182,69 @@ describe('chatCompletion', () => {
     ];
     await chatCompletion(makeRequest({ messages }), fetchFn);
     expect(parseBody(calls[0]?.init)['messages']).toEqual(messages);
+  });
+});
+
+/**
+ * 多模态扩展（关键帧视觉问答）：user 消息 content 由字符串升级为
+ * [text, ...image_url] 数组；无图时保持纯字符串。
+ * 注意：需模型支持图像输入（如 deepseek-chat 不支持视觉，需在设置中换多模态模型）。
+ */
+describe('buildUserContent（多模态 content 构造）', () => {
+  it('无图（undefined / 空数组）→ 纯字符串', () => {
+    expect(buildUserContent('你好')).toBe('你好');
+    expect(buildUserContent('你好', [])).toBe('你好');
+  });
+
+  it('有图 → [text, ...image_url]，顺序为文本在前', () => {
+    const content = buildUserContent('问题', [{ dataBase64: 'QUFB' }, { dataBase64: 'QkJC' }]);
+    expect(Array.isArray(content)).toBe(true);
+    const parts = content as Array<Record<string, unknown>>;
+    expect(parts).toHaveLength(3);
+    expect(parts[0]).toEqual({ type: 'text', text: '问题' });
+    expect(parts[1]).toEqual({ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,QUFB' } });
+    expect(parts[2]).toEqual({ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,QkJC' } });
+  });
+
+  it('mime 缺省 image/jpeg，自定义时按自定义拼 data URI', () => {
+    const parts = buildUserContent('问题', [{ dataBase64: 'Q0ND', mime: 'image/png' }]) as Array<
+      Record<string, unknown>
+    >;
+    expect(parts[1]).toEqual({ type: 'image_url', image_url: { url: 'data:image/png;base64,Q0ND' } });
+  });
+});
+
+describe('chatCompletion 图像传递', () => {
+  it('images 非空 → user content 变数组且含 data URI，system 保持字符串', async () => {
+    const { fetchFn, calls } = mockFetch(okResponse(NORMAL_BODY));
+    await chatCompletion(
+      makeRequest({ images: [{ dataBase64: 'QUFB' }, { dataBase64: 'QkJC' }] }),
+      fetchFn,
+    );
+    const messages = parseBody(calls[0]?.init)['messages'] as Array<{
+      role: string;
+      content: unknown;
+    }>;
+    expect(messages[0]?.content).toBe('you are a test');
+    const userContent = messages[1]?.content as Array<Record<string, unknown>>;
+    expect(userContent[0]).toEqual({ type: 'text', text: 'hello' });
+    expect(userContent).toHaveLength(3);
+    expect(
+      (userContent[1]?.['image_url'] as { url: string }).url.startsWith('data:image/jpeg;base64,'),
+    ).toBe(true);
+  });
+
+  it('只有 user 消息被改造（assistant 消息原样透传）', async () => {
+    const { fetchFn, calls } = mockFetch(okResponse(NORMAL_BODY));
+    const messages = [
+      { role: 'system' as const, content: 's' },
+      { role: 'user' as const, content: 'u' },
+      { role: 'assistant' as const, content: 'a' },
+    ];
+    await chatCompletion(makeRequest({ messages, images: [{ dataBase64: 'QUFB' }] }), fetchFn);
+    const sent = parseBody(calls[0]?.init)['messages'] as Array<{ role: string; content: unknown }>;
+    expect(sent[0]?.content).toBe('s');
+    expect(sent[2]?.content).toBe('a');
+    expect(Array.isArray(sent[1]?.content)).toBe(true);
   });
 });

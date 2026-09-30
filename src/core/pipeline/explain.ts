@@ -9,8 +9,14 @@
  * 公开知识补充"开头（展示侧由 ChatTab 加前缀条，pipeline 不管展示）。
  */
 import { z } from 'zod';
-import type { InteractionType, QaRecord } from '../../types';
-import { compileContext, findSectionAt, type CompileInput, type CompiledContext } from '../context/compiler';
+import type { Cue, InteractionType, QaRecord } from '../../types';
+import {
+  compileContext,
+  findSectionAt,
+  formatMmSs,
+  type CompileInput,
+  type CompiledContext,
+} from '../context/compiler';
 
 /** TECH-DESIGN §6.2 */
 export const TermSchema = z.object({
@@ -37,14 +43,34 @@ export const SegmentAnswerSchema = z.object({
 });
 export type SegmentAnswerPayload = z.infer<typeof SegmentAnswerSchema>;
 
-/** 注入式模型调用（与 OutlineModelFn 同形） */
+/** 传给模型客户端的图像（教学画面关键帧；caption 不进图像载荷） */
+export interface ExplainModelImage {
+  dataBase64: string;
+  mime?: string;
+}
+
+/** ExplainInput 里的图像：caption 用于提示词说明该帧对应时间点（如"第 12:30 的画面"） */
+export interface ExplainImage extends ExplainModelImage {
+  caption?: string;
+  /** 该帧对应的时间点（毫秒）；用于无 caption 时生成时间点标注 */
+  timeMs?: number;
+}
+
+/** 注入式模型调用（与 OutlineModelFn 同形；images 为可选增量，旧 stub 不传也能工作） */
 export type ExplainModelFn = (req: {
   systemPrompt: string;
   userPrompt: string;
+  images?: ExplainModelImage[];
 }) => Promise<{ content: string }>;
 
 /** explain pipeline 的上下文输入（question/term 由各入口自行组装） */
-export type ExplainInput = Omit<CompileInput, 'question' | 'term'>;
+export type ExplainInput = Omit<CompileInput, 'question' | 'term'> & {
+  /**
+   * 教学画面关键帧（视觉问答）。图像是独立模态，不占字幕文本预算（红线 3）；
+   * 帧数由 content 侧 maxFrames（默认 6）硬限制，提示词侧只追加一行说明。
+   */
+  images?: ExplainImage[];
+};
 
 // 占位 system prompt：接线层（loader）应注入 src/prompts 单一事实源的真实正文
 // （getTermExplainerSystemPrompt / getSegmentQaSystemPrompt，红线 6）。
@@ -77,6 +103,41 @@ export function buildSegmentPrompts(
   };
 }
 
+/** 帧时间点落在哪条字幕上（用于把画面标注吸附到字幕起点） */
+function snapToCueStart(ms: number, cues: Cue[]): number {
+  for (const cue of cues) {
+    if (cue.startMs <= ms && ms < cue.endMs) return cue.startMs;
+  }
+  return ms;
+}
+
+/** 单张图像的标注：caption 优先，其次时间点（可吸附字幕起点），最后按序号 */
+function describeImageLabel(image: ExplainImage, index: number, cues?: Cue[]): string {
+  const caption = image.caption?.trim();
+  if (caption) return caption;
+  if (typeof image.timeMs === 'number' && Number.isFinite(image.timeMs)) {
+    const at = cues && cues.length > 0 ? snapToCueStart(image.timeMs, cues) : image.timeMs;
+    return `第 ${formatMmSs(at)} 的画面`;
+  }
+  return `第 ${index + 1} 张`;
+}
+
+/**
+ * 生成"本次附带 N 张教学画面"的一行说明（红线 3：图像是独立模态，不占字幕文本预算，
+ * 提示词侧只追加一行）。无图 → ''。
+ */
+export function describeImages(images?: ExplainImage[] | null, cues?: Cue[]): string {
+  if (!images || images.length === 0) return '';
+  const labels = images.map((image, i) => describeImageLabel(image, i, cues));
+  return `以下附 ${images.length} 张教学画面（按顺序对应时间点：${labels.join('、')}）`;
+}
+
+/** userPrompt 追加图像说明行（无图时原样返回，旧行为不变） */
+function appendImageNote(userPrompt: string, images?: ExplainImage[] | null, cues?: Cue[]): string {
+  const note = describeImages(images, cues);
+  return note ? `${userPrompt}\n${note}` : userPrompt;
+}
+
 /** JSON.parse + Schema 校验（红线 4）；失败 throw，由重试逻辑捕获 */
 function parseJsonWithSchema<T>(content: string, schema: z.ZodType<T>, label: string): T {
   let raw: unknown;
@@ -107,7 +168,7 @@ export function parseSegmentAnswerPayload(content: string): SegmentAnswerPayload
  */
 async function callModelWithRetry<T>(
   modelFn: ExplainModelFn,
-  prompts: { systemPrompt: string; userPrompt: string },
+  prompts: { systemPrompt: string; userPrompt: string; images?: ExplainModelImage[] },
   parse: (content: string) => T,
 ): Promise<T> {
   let lastError = '';
@@ -116,7 +177,11 @@ async function callModelWithRetry<T>(
       attempt === 0
         ? prompts.userPrompt
         : `${prompts.userPrompt}\n\n[重试] 上一次输出未通过校验：${lastError}\n请重新输出严格符合要求的 JSON，不要包含任何其他文字。`;
-    const res = await modelFn({ systemPrompt: prompts.systemPrompt, userPrompt });
+    const res = await modelFn({
+      systemPrompt: prompts.systemPrompt,
+      userPrompt,
+      images: prompts.images,
+    });
     try {
       return parse(res.content);
     } catch (err) {
@@ -142,7 +207,12 @@ export async function explainTerm(args: ExplainTermArgs): Promise<TermPayload> {
     { ...args.input, question: `解释术语「${args.term}」`, term: args.term },
     { rangePadMs: args.rangePadMs, maxChars: args.maxChars },
   );
-  const prompts = buildTermPrompts(args.term, compiled, args.getSystemPrompt);
+  const base = buildTermPrompts(args.term, compiled, args.getSystemPrompt);
+  const prompts = {
+    ...base,
+    userPrompt: appendImageNote(base.userPrompt, args.input.images, args.input.cues),
+    images: args.input.images,
+  };
   return callModelWithRetry(args.modelFn, prompts, parseTermPayload);
 }
 
@@ -162,7 +232,12 @@ export async function answerSegment(args: AnswerSegmentArgs): Promise<SegmentAns
     { ...args.input, question: args.question },
     { rangePadMs: args.rangePadMs, maxChars: args.maxChars },
   );
-  const prompts = buildSegmentPrompts(args.question, compiled, args.getSystemPrompt);
+  const base = buildSegmentPrompts(args.question, compiled, args.getSystemPrompt);
+  const prompts = {
+    ...base,
+    userPrompt: appendImageNote(base.userPrompt, args.input.images, args.input.cues),
+    images: args.input.images,
+  };
   return callModelWithRetry(args.modelFn, prompts, parseSegmentAnswerPayload);
 }
 

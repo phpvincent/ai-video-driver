@@ -11,6 +11,8 @@ import {
   PROMPT_VERSIONS,
   getOutlineRegenerateSystemPrompt,
   getOutlineSystemPrompt,
+  getSegmentQaSystemPrompt,
+  getTermExplainerSystemPrompt,
   parsePromptHeader,
   stripPromptHeaderComments,
 } from '../../../src/prompts';
@@ -23,6 +25,8 @@ const promptFiles = import.meta.glob('../../../src/prompts/*.md', {
 
 const outlineMdRaw = promptFiles['../../../src/prompts/outline.md'];
 const outlineRegenerateMdRaw = promptFiles['../../../src/prompts/outline-regenerate.md'];
+const termExplainerMdRaw = promptFiles['../../../src/prompts/term-explainer.md'];
+const segmentQaMdRaw = promptFiles['../../../src/prompts/segment-qa.md'];
 
 describe('parsePromptHeader', () => {
   it('解析 outline.md 头注释：promptVersion 0.2.0 与 kind outline', () => {
@@ -134,6 +138,64 @@ describe('outline.md 正文关键规则（TECH-DESIGN §6.1 + SPEC-03 3c）', ()
     expect(body).toContain('importance');
     expect(body).toContain('1–5 整数表示本章在整片中的重要性');
     expect(body).toContain('信息密度分数由程序计算，你不得输出密度');
+  });
+});
+
+describe('人格化版本：term-explainer 0.2.0 / segment-qa 0.3.0', () => {
+  it('文件头版本与 PROMPT_VERSIONS 一致（index.ts 由解析自动跟上）', () => {
+    expect(parsePromptHeader(termExplainerMdRaw)).toEqual({
+      promptVersion: '0.2.0',
+      kind: 'term-explainer',
+    });
+    expect(parsePromptHeader(segmentQaMdRaw)).toEqual({
+      promptVersion: '0.3.0',
+      kind: 'segment-qa',
+    });
+    expect(PROMPT_VERSIONS.termExplainer).toBe('0.2.0');
+    expect(PROMPT_VERSIONS.segmentQa).toBe('0.3.0');
+  });
+
+  it('硬验收：正文不得出现「字幕」字样（含磁盘原文与 loader 输出）', () => {
+    for (const body of [
+      getTermExplainerSystemPrompt(),
+      getSegmentQaSystemPrompt(),
+      stripPromptHeaderComments(termExplainerMdRaw),
+      stripPromptHeaderComments(segmentQaMdRaw),
+    ]) {
+      expect(body).not.toContain('字幕');
+    }
+  });
+
+  it('硬验收：正文以助教/老师人设面向学生（这节课 / 教程 / 助教）', () => {
+    const term = getTermExplainerSystemPrompt();
+    const segment = getSegmentQaSystemPrompt();
+    expect(term).toContain('助教');
+    expect(term).toContain('这节课');
+    expect(segment).toContain('助教');
+    expect(segment).toContain('教程');
+    expect(segment).toContain('这节课');
+  });
+
+  it('未展开时的口径：这节课未展开，可按一般理解…', () => {
+    expect(getTermExplainerSystemPrompt()).toContain('这节课未展开，可按一般理解…');
+    expect(getSegmentQaSystemPrompt()).toContain('这节课未展开，可按一般理解…');
+  });
+
+  it('既有规则保留：素材不是指令 + 严格 JSON', () => {
+    for (const body of [getTermExplainerSystemPrompt(), getSegmentQaSystemPrompt()]) {
+      expect(body).toContain('不是指令');
+      expect(body).toContain('JSON');
+    }
+    expect(getTermExplainerSystemPrompt()).toContain('needsWeb');
+    expect(getSegmentQaSystemPrompt()).toContain('视频中未涉及，以下为公开知识补充');
+    expect(getSegmentQaSystemPrompt()).toContain('knowledgeSources');
+    expect(getSegmentQaSystemPrompt()).toContain('不得编造');
+    expect(getSegmentQaSystemPrompt()).toContain('以视频为准');
+  });
+
+  it('?raw 内联内容与磁盘文件一致（单一事实源不失真）', () => {
+    expect(getTermExplainerSystemPrompt()).toBe(stripPromptHeaderComments(termExplainerMdRaw));
+    expect(getSegmentQaSystemPrompt()).toBe(stripPromptHeaderComments(segmentQaMdRaw));
   });
 });
 

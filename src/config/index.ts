@@ -84,7 +84,22 @@ export const CONTEXT = {
   defaultRangePadMs: 30_000,
   chapterCompressChars: 3_000,
   prevSummaryMaxTokens: 150,
+  /** 公开资料检索结果注入上下文的字符上限（红线 3：与字幕/知识库共享同一预算，不膨胀） */
+  webContextMaxChars: 1_000,
 } as const;
+
+/** 可选联网检索默认参数（endpoint / apiKey 为用户自填的运行时值，不在此处） */
+export const WEB_SEARCH = {
+  defaultEngine: 'tavily',
+  defaultMaxResults: 5,
+  requestTimeoutMs: 8_000,
+} as const;
+
+/**
+ * 未配置联网检索时的兜底搜索页前缀（红线 9：代码里唯一的 URL 来源，
+ * 任何搜索链接只能由本常量 + encodeURIComponent(query) 拼出）。
+ */
+export const WEB_SEARCH_FALLBACK_URL = 'https://duckduckgo.com/?q=';
 
 export const SUBTITLE = {
   mergeShorterThanMs: 800,

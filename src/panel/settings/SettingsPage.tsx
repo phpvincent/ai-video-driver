@@ -7,13 +7,21 @@
  * Obsidian 区（SPEC-06）：接口地址 / API Key / 笔记根目录三字段，保存经
  * SET_SETTINGS 只合并 obsidian 段（不动 model），测试连接显示根目录条目数；
  * apiKey 用 password 输入，任何提示不输出明文。
+ * 公开资料检索区（问答增强，仅追加）：endpoint / API Key / 开关；未配置时明确提示
+ * 模型将依赖自身知识并标注未核实（检索执行在 src/core/knowledge/webSearch.ts）。
  */
 import { useEffect, useState } from 'react';
 import { chatCompletion } from '../../core/harness/modelClient';
 import { DEFAULT_MODEL, OBSIDIAN } from '../../config';
 import { MSG } from '../../messages';
 import { testObsidianConnection } from '../obsidianLoader';
+import type { WebSearchConfig } from '../../core/knowledge/webSearch';
 import type { ModelConfig, ObsidianConfig } from '../../types';
+
+/** 落盘的公开资料检索配置（开关与连接参数同段保存） */
+interface WebSearchSettings extends WebSearchConfig {
+  enabled: boolean;
+}
 
 interface ModelFormState {
   baseUrl: string;
@@ -45,6 +53,13 @@ const INITIAL_OBSIDIAN_FORM: ObsidianFormState = {
   baseUrl: OBSIDIAN.baseUrl,
   apiKey: '',
   rootDir: '',
+};
+
+/** 未配置时的初始表单：endpoint 留空（红线 9：地址只能由用户填写，代码不预置） */
+const INITIAL_WEB_SEARCH_FORM: WebSearchSettings = {
+  endpoint: '',
+  apiKey: '',
+  enabled: false,
 };
 
 type Feedback = { kind: 'ok' | 'error'; text: string } | null;
@@ -108,6 +123,10 @@ export function SettingsPage({
   const [obsidianFeedback, setObsidianFeedback] = useState<Feedback>(null);
   const [obsidianTesting, setObsidianTesting] = useState(false);
   const [obsidianSaving, setObsidianSaving] = useState(false);
+  /** 公开资料检索区（问答增强，仅追加；与以上各区状态独立） */
+  const [webSearch, setWebSearch] = useState<WebSearchSettings>(INITIAL_WEB_SEARCH_FORM);
+  const [webSearchFeedback, setWebSearchFeedback] = useState<Feedback>(null);
+  const [webSearchSaving, setWebSearchSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -118,6 +137,7 @@ export function SettingsPage({
           model?: Partial<ModelConfig>;
           obsidian?: Partial<ObsidianConfig>;
           knowledgeSearch?: boolean;
+          webSearch?: Partial<WebSearchSettings>;
         };
         const merged = { ...DEFAULT_MODEL, ...(stored.model ?? {}) } as Partial<ModelConfig>;
         const obs = (stored.obsidian ?? {}) as Partial<ObsidianConfig>;
@@ -128,6 +148,13 @@ export function SettingsPage({
         });
         // 未存过该项时视为开启（默认开启）
         setKnowledgeSearch(stored.knowledgeSearch !== false);
+        const web = (stored.webSearch ?? {}) as Partial<WebSearchSettings>;
+        setWebSearch({
+          endpoint: web.endpoint ?? '',
+          apiKey: web.apiKey ?? '',
+          engine: web.engine,
+          enabled: web.enabled === true,
+        });
         setForm({
           baseUrl: merged.baseUrl ?? '',
           apiKey: merged.apiKey ?? '',
@@ -253,6 +280,45 @@ export function SettingsPage({
         setObsidianFeedback({ kind: 'error', text: raw.split(cfg.apiKey).join('***') });
       })
       .finally(() => setObsidianTesting(false));
+  };
+
+  /** 公开资料检索字段更新（清空该区提示） */
+  const updateWebSearch = (field: keyof WebSearchSettings) => (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    setWebSearch((prev) => ({ ...prev, [field]: e.target.value }));
+    setWebSearchFeedback(null);
+  };
+
+  /** 保存公开资料检索配置（只合并 webSearch 段，不动 model / obsidian） */
+  const handleSaveWebSearch = () => {
+    if (webSearch.enabled && !webSearch.endpoint.trim()) {
+      setWebSearchFeedback({ kind: 'error', text: '开启检索时需要填写检索服务地址' });
+      return;
+    }
+    setWebSearchSaving(true);
+    setWebSearchFeedback(null);
+    const cfg: WebSearchSettings = {
+      endpoint: webSearch.endpoint.trim(),
+      apiKey: webSearch.apiKey.trim(),
+      engine: webSearch.engine,
+      enabled: webSearch.enabled,
+    };
+    sendRuntimeMessage({ type: MSG.GET_SETTINGS })
+      .then((stored: unknown) =>
+        sendRuntimeMessage({
+          type: MSG.SET_SETTINGS,
+          payload: { ...((stored ?? {}) as Record<string, unknown>), webSearch: cfg },
+        }),
+      )
+      .then(() => setWebSearchFeedback({ kind: 'ok', text: '已保存' }))
+      .catch((err: unknown) =>
+        setWebSearchFeedback({
+          kind: 'error',
+          text: `保存失败：${err instanceof Error ? err.message : String(err)}`,
+        }),
+      )
+      .finally(() => setWebSearchSaving(false));
   };
 
   const handleTestConnection = () => {
@@ -447,6 +513,62 @@ export function SettingsPage({
             }
           >
             {obsidianFeedback.text}
+          </p>
+        )}
+      </section>
+
+      {/* 公开资料检索（问答增强，仅追加）：未配置时明确提示依赖模型自身知识 */}
+      <section className="settings-section">
+        <h4>公开资料检索（可选）</h4>
+        <p className="settings-hint">
+          填写自建或第三方检索服务（Tavily / Serper 等）后，回答课程外的事实时会附带公开资料来源；未配置联网检索；涉及课程外事实时模型将依赖自身知识并标注未核实
+        </p>
+        <label className="field">
+          <span>检索服务地址</span>
+          <input
+            type="text"
+            placeholder="由你自行填写的检索服务地址"
+            value={webSearch.endpoint}
+            onChange={updateWebSearch('endpoint')}
+          />
+        </label>
+        <label className="field">
+          <span>API Key</span>
+          <input
+            type="password"
+            placeholder="粘贴检索服务的 API Key"
+            value={webSearch.apiKey}
+            onChange={updateWebSearch('apiKey')}
+          />
+        </label>
+        <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={webSearch.enabled}
+            onChange={(e) => {
+              setWebSearch((prev) => ({ ...prev, enabled: e.target.checked }));
+              setWebSearchFeedback(null);
+            }}
+          />
+          <span>问答时使用公开资料检索（默认关闭）</span>
+        </label>
+        <div className="field-row">
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={handleSaveWebSearch}
+            disabled={webSearchSaving}
+          >
+            {webSearchSaving ? '保存中…' : '保存'}
+          </button>
+        </div>
+        {webSearchFeedback && (
+          <p
+            className={
+              webSearchFeedback.kind === 'ok' ? 'settings-hint' : 'settings-hint settings-error'
+            }
+          >
+            {webSearchFeedback.text}
           </p>
         )}
       </section>

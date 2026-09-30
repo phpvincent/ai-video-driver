@@ -27,6 +27,10 @@ import { createSubtitleDb, getOutline, getSubtitle, saveQaRecord } from '../stor
 import type { Cue, KnowledgeHit, ModelConfig, QaRecord, Section } from '../types';
 import type { ExplainRequest, ExplainResponse } from './ChatTab';
 import { getObsidianConfig, readIndex } from './obsidianLoader';
+import { buildWebContext, searchWeb, trimSnippets } from '../core/knowledge/webSearch';
+import { CONTEXT, WEB_SEARCH } from '../config';
+import type { WebSnippet } from '../core/knowledge/webSearch';
+import type { CapturedFrame } from '../messages';
 
 const db = createSubtitleDb();
 
@@ -79,6 +83,59 @@ async function loadKnowledge(args: {
 }
 
 /** ChatTab explain props 的实现（App 接线传入） */
+/**
+ * 公开资料检索（可选）：仅当用户在设置里配置了检索服务并开启时才调用；
+ * 未配置 / 失败一律返回空，不阻断问答。结果走与字幕、知识库同一预算。
+ */
+async function loadWeb(args: {
+  enabled: boolean;
+  query: string;
+}): Promise<{ snippets: WebSnippet[]; context: string }> {
+  if (!args.enabled) return { snippets: [], context: '' };
+  const settings = await fetchSettings();
+  const cfg = settings.webSearch as { endpoint?: string; apiKey?: string; engine?: string } | undefined;
+  if (!cfg?.endpoint || !cfg?.apiKey) return { snippets: [], context: '' };
+  try {
+    const raw = await searchWeb(
+      { endpoint: cfg.endpoint, apiKey: cfg.apiKey, engine: cfg.engine },
+      ((url: string, init?: RequestInit) => fetch(url, init)) as never,
+      args.query,
+      { maxResults: WEB_SEARCH.defaultMaxResults },
+    );
+    const snippets = trimSnippets(raw, CONTEXT.webContextMaxChars);
+    return { snippets, context: buildWebContext(snippets, CONTEXT.webContextMaxChars) };
+  } catch {
+    return { snippets: [], context: '' };
+  }
+}
+
+/**
+ * 关键帧抽取（视觉问答）：向 content 请求区间内若干帧。
+ * 需要用户开启"结合画面回答"；content 未就绪 / videoId 不符 / 抽帧失败 → 空数组。
+ */
+async function loadFrames(args: {
+  enabled: boolean;
+  videoId: string;
+  rangeMs: [number, number] | null;
+  positionMs: number;
+}): Promise<CapturedFrame[]> {
+  if (!args.enabled) return [];
+  const [start, end] = args.rangeMs ?? [args.positionMs - 30_000, args.positionMs + 30_000];
+  const targets = [start, Math.round((start + end) / 2), args.positionMs]
+    .filter((t) => Number.isFinite(t) && t >= 0)
+    .slice(0, 3);
+  if (targets.length === 0) return [];
+  try {
+    const response = (await sendRuntimeMessage({
+      type: MSG.CAPTURE_FRAMES,
+      payload: { videoId: args.videoId, targetsMs: targets },
+    })) as { frames?: CapturedFrame[] } | null;
+    return Array.isArray(response?.frames) ? response!.frames! : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
   const settings = await fetchSettings();
   const model = (settings.model as ModelConfig | undefined) ?? null;
@@ -104,15 +161,34 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
     enabled: knowledgeSearch,
   });
 
+  // 公开资料检索（可选，与字幕/知识库共享预算）
+  const web = await loadWeb({
+    enabled: settings.webSearchEnabled !== false && settings.webSearch !== undefined,
+    query: args.term ?? args.question,
+  });
+  // 关键帧（可选：需多模态模型，deepseek-chat 不支持视觉）
+  const frames = await loadFrames({
+    enabled: settings.visionEnabled === true,
+    videoId,
+    rangeMs: args.rangeMs,
+    positionMs: args.positionMs,
+  });
+
   const input: ExplainInput = {
     sections,
     cues,
     rangeMs: args.rangeMs,
     positionMs: args.positionMs,
-    knowledgeContext: knowledge.context,
+    // 知识库与公开资料各自带独立分隔标记，合并进同一素材分区
+    knowledgeContext: [knowledge.context, web.context].filter(Boolean).join('\n\n'),
+    images: frames.map((f) => ({
+      dataBase64: f.dataBase64,
+      mime: 'image/jpeg',
+      timeMs: f.actualMs,
+    })),
   };
 
-  const modelFn: ExplainModelFn = ({ systemPrompt, userPrompt }) =>
+  const modelFn: ExplainModelFn = ({ systemPrompt, userPrompt, images }) =>
     chatCompletion({
       baseUrl: model.baseUrl,
       apiKey: model.apiKey,
@@ -124,6 +200,8 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
         { role: 'user', content: userPrompt },
       ],
       responseFormatJson: true,
+      // 多模态：图像由 explain 层透传（需模型支持，如未支持会返回错误由重试逻辑处理）
+      images: images?.map((i) => ({ dataBase64: i.dataBase64, mime: i.mime })),
     }).then((res) => ({ content: res.content }));
 
   if (args.term) {
@@ -142,7 +220,7 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
       payload: term,
     });
     await saveQaRecord(db, record).catch(() => {});
-    return { term, record, hits: knowledge.hits };
+    return { term, record, hits: knowledge.hits, sources: web.snippets };
   }
 
   const answer = await answerSegment({
@@ -160,5 +238,5 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
     payload: answer,
   });
   await saveQaRecord(db, record).catch(() => {});
-  return { answer, record, hits: knowledge.hits };
+  return { answer, record, sources: web.snippets, hits: knowledge.hits };
 }

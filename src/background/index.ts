@@ -19,6 +19,7 @@ export type Action =
   | { kind: 'forwardToPanel'; message: RuntimeMessage }
   | { kind: 'forwardToTab'; tabId: number; message: RuntimeMessage }
   | { kind: 'respond'; response: VideoInfoPayload | null }
+  | { kind: 'captureFrames'; tabId: number; message: RuntimeMessage }
   | { kind: 'readSettings' }
   | { kind: 'writeSettings'; settings: Record<string, unknown> }
   | { kind: 'ignore'; reason: string };
@@ -80,6 +81,14 @@ export function routeBackgroundMessage(msg: RuntimeMessage, ctx: RouteContext): 
         return [{ kind: 'ignore', reason: `videoId ${msg.payload.videoId} 无对应 tab` }];
       }
       return [{ kind: 'forwardToTab', tabId, message: msg }];
+    }
+    case MSG.CAPTURE_FRAMES: {
+      // 抽帧需回传结果：按 videoId 反查 tab，向 content 请求并把结果 respond 给 panel
+      const tabId = ctx.getTabIdByVideoId(msg.payload.videoId);
+      if (tabId === null) {
+        return [{ kind: 'respond', response: { frames: [] } as unknown as VideoInfoPayload }];
+      }
+      return [{ kind: 'captureFrames', tabId, message: msg }];
     }
     case MSG.CURRENT_VIDEO_GET: {
       // 全屏单视图（panel.html?view=xxx）自身是活跃 tab，映射里查不到；
@@ -168,6 +177,15 @@ async function executeActions(actions: Action[], sendResponse: (response?: unkno
         sendResponse(action.response);
         responded = true;
         break;
+      case 'captureFrames': {
+        // content 返回 { frames }；失败/超时按空帧降级，不阻断问答
+        const result = await chrome.tabs
+          .sendMessage(action.tabId, action.message)
+          .catch(() => ({ frames: [] }));
+        sendResponse(result ?? { frames: [] });
+        responded = true;
+        break;
+      }
       case 'readSettings': {
         const stored = await chrome.storage.local.get<Record<string, Record<string, unknown>>>(SETTINGS_KEY);
         sendResponse(stored[SETTINGS_KEY] ?? {});
