@@ -10,6 +10,7 @@ import outlineRegenerateMd from './outline-regenerate.md?raw';
 import conceptMapMd from './concept-map.md?raw';
 import segmentQaMd from './segment-qa.md?raw';
 import termExplainerMd from './term-explainer.md?raw';
+import knowledgeCaptureMd from './knowledge-capture.md?raw';
 
 export interface PromptHeader {
   promptVersion: string;
@@ -42,6 +43,7 @@ const OUTLINE_REGENERATE_HEADER = parsePromptHeader(outlineRegenerateMd);
 const CONCEPT_MAP_HEADER = parsePromptHeader(conceptMapMd);
 const TERM_EXPLAINER_HEADER = parsePromptHeader(termExplainerMd);
 const SEGMENT_QA_HEADER = parsePromptHeader(segmentQaMd);
+const KNOWLEDGE_CAPTURE_HEADER = parsePromptHeader(knowledgeCaptureMd);
 
 /** 各 prompt 当前版本（来自文件头注释，单一事实源） */
 export const PROMPT_VERSIONS = {
@@ -50,6 +52,7 @@ export const PROMPT_VERSIONS = {
   conceptMap: CONCEPT_MAP_HEADER.promptVersion,
   termExplainer: TERM_EXPLAINER_HEADER.promptVersion,
   segmentQa: SEGMENT_QA_HEADER.promptVersion,
+  knowledgeCapture: KNOWLEDGE_CAPTURE_HEADER.promptVersion,
 } as const;
 
 /** 大纲生成 system prompt 正文（单一事实源：src/prompts/outline.md） */

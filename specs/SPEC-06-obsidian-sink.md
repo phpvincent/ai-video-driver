@@ -31,6 +31,17 @@
 | 6.2 | 笔记与术语卡 | frontmatter 组装、正文模板、跳播链接（纯函数 + 单测） | `src/core/pipeline/capture.ts`、`src/core/note/`、单测 | 1d |
 | 6.3 | 去重与存库交互 | 重复度评分、合并确认 UI、prompt 与 skill | `src/prompts/`、`.agents/skills/knowledge-capture/`、`src/panel/` 存库按钮 | 1d |
 
+
+## 范围变更记录（2026-09-30，参考 ai-knowlage 的分层目录与双索引机制）
+
+采纳用户建议（参考 ai-knowlage 实现，支持后续知识二次检索并接入问答）：
+
+1. **分层目录**：`{root}/视频笔记/{课程}/{视频标题}.md`、`{root}/术语/{术语}.md`
+2. **双索引**：`{root}/_meta/index.json`（机器检索，KnowledgeIndexEntry 结构）+ `{root}/_索引.md`（人类可读 MOC，Obsidian `[[双链]]`）
+3. **摘要预览**：写入时生成 ≤200 字 summaryPreview，检索只喂预览（对应 ai-knowlage 的 ai_summary_preview 轻量化，契合红线 3 预算）
+4. **二次检索接入问答**（SPEC-05 范围变更）：问答时可检索个人知识库 top-K 注入"个人知识库素材"分区；命中引用来源（笔记名+链接），未命中明确说明；设置项可开关
+5. 检索打分与关键词匹配全部确定性（红线 1），无额外模型调用
+
 ## 4. 验收标准
 
 - [ ] A1 [自动] frontmatter 单测：字段齐全，YAML 可被解析回读，`video_id` / `url` 含分 P

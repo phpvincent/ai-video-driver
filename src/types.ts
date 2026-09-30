@@ -207,6 +207,39 @@ export interface ConceptStage {
 }
 
 /** 概念图完整数据（缓存于 outlines store，键 concept:: 前缀；阶段流结构，v3） */
+/**
+ * 知识库索引条目（借鉴 ai-knowlage 的分类目录 + 双索引机制）。
+ * 机器检索读 _meta/index.json；人在 Obsidian 看 _索引.md（双链）。
+ */
+export interface KnowledgeIndexEntry {
+  /** 相对 vault 根目录的笔记路径（POSIX） */
+  path: string;
+  title: string;
+  /** 分类：video-note | term */
+  category: 'video-note' | 'term' | 'note';
+  tags: string[];
+  /** 关键词/术语（检索命中源） */
+  terms: string[];
+  /** 摘要预览（≤200 字；检索只喂预览，红线 3 预算） */
+  summaryPreview: string;
+  /** 来源视频（视频笔记/术语卡归属） */
+  videoId?: string;
+  /** ISO 8601 */
+  updatedAt: string;
+}
+
+export interface KnowledgeIndexFile {
+  version: 1;
+  entries: KnowledgeIndexEntry[];
+}
+
+/** 检索命中结果（供 QA 注入上下文） */
+export interface KnowledgeHit {
+  entry: KnowledgeIndexEntry;
+  /** 命中打分（0~1，确定性计算） */
+  score: number;
+}
+
 export interface ConceptMapData {
   videoId: VideoId;
   promptVersion: string;
