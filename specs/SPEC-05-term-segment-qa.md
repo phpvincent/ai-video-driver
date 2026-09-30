@@ -58,6 +58,8 @@
 ## 6. 执行记录（append-only）
 
 | 日期 | 执行者 | 变更摘要 | 自测结果 | commit |
+| 2026-09-30 | 子 agent + 父 agent | 视觉模型支持：Settings 增 visionModel / visionEnabled / visionModules；MODEL_PRESETS（DeepSeek 文本 / Qwen 兼容模式多模态，端点唯一来源）；抽帧开关（全局 + 大纲/导图/问答三模块）；pipeline 侧 PipelineImage 注入（大纲每块 1 帧、概念图 4 帧、问答 3 帧）；**带图的请求走视觉模型、不带图仍走文本模型**，任何失败降级为纯文本不阻断 | tsc 零错误；808 例全绿；redlines PASS | b35038d（已验收） |
+
 | 2026-09-30 | 子 agent + 父 agent | 动态问答角色：persona pipeline（每视频一次判定，zod role/expertise/style，重试 1 次后确定性默认角色）+ prompts/persona.md 0.1.0 单一源 + personaLoader（缓存键 persona::videoId::version::model，prompt/模型变更自动失效）+ explain 注入 personaInstruction + UI 角色条与"重判角色"；父 agent 接线（App 角色状态/刷新、explainLoader 注入） | tsc 零错误；768 例全绿；check-prompts PASS | 56927bc（已验收） |
 
 | 2026-09-30 | 子 agent 全量 | compiler（红线 3：素材包裹/±30s/整章超长截断/≤4000 token 断言）+ explainTerm/answerSegment（Zod + 重试 1）+ buildQaRecord（A7b 聚合字段盖章）+ term-explainer.md/segment-qa.md 单一源 + 两个 SKILL.md + db qaHistory（getAll）+ ChatTab（区间选择器/打字机/时间戳跳播/追问可点/自动暂停/coveredByVideo 横幅）+ SubtitleTab 划词 sticky 条 + 60 例 | tsc 零错误；60 例全绿；check-prompts PASS | 8c14b4b（已验收） |
