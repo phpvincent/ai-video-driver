@@ -32,11 +32,15 @@ export { formatPercent, formatVerdictLabel };
 export interface ValidationReportData {
   usage: UsageRecord[];
   qa: QaRecord[];
+  /** LLM 交互日志（token 统计，SPEC-08 8.8；缺省为无日志） */
+  logs?: Array<{ ok: boolean; inputTokens?: number; outputTokens?: number }>;
 }
 
 export interface ValidationReportViewProps {
   /** 父 agent 接线：拉取本地使用记录与问答历史 */
   onLoad?: () => Promise<ValidationReportData>;
+  /** 手动补录问卷（写入当前视频的 usage 记录；SPEC-08 8.8 入库持久化） */
+  onSubjective?: (choice: 'fewer' | 'same' | 'more') => Promise<void>;
 }
 
 /** 主观回顾录入项：明显少 / 差不多 / 更多 */
@@ -121,7 +125,7 @@ export function ValidationStatsSummary({ stats }: { stats: ValidationStats }): J
   );
 }
 
-export function ValidationReportView({ onLoad }: ValidationReportViewProps) {
+export function ValidationReportView({ onLoad, onSubjective }: ValidationReportViewProps) {
   const [data, setData] = useState<ValidationReportData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -134,7 +138,7 @@ export function ValidationReportView({ onLoad }: ValidationReportViewProps) {
     setError(null);
     setHint(null);
     onLoad()
-      .then((d) => setData({ usage: d?.usage ?? [], qa: d?.qa ?? [] }))
+      .then((d) => setData({ usage: d?.usage ?? [], qa: d?.qa ?? [], logs: d?.logs ?? [] }))
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
   };
@@ -202,6 +206,7 @@ export function ValidationReportView({ onLoad }: ValidationReportViewProps) {
   const stats = computeStats(data);
   const subjective = toSubjectiveInput(tally);
   const verdicts = judge(stats, { subjective });
+  void subjective; // 入库问卷由 judge 内部优先使用；本地 tally 仅在无入库数据时作回退
   const conclusion = overallConclusion(verdicts);
   const total = tally.improved + tally.same + tally.more;
 
@@ -223,21 +228,37 @@ export function ValidationReportView({ onLoad }: ValidationReportViewProps) {
       </section>
 
       <section className="vr-section">
-        <h5>回顾问卷（可跳过）</h5>
-        <p className="vr-hint">这次看视频中，切出去搜索的次数比以往：{total > 0 ? `已回收 ${total} 份` : '尚未录入'}</p>
-        <div className="vr-row">
-          {SUBJECTIVE_OPTIONS.map((o) => (
-            <button
-              key={o.key}
-              type="button"
-              className="btn"
-              onClick={() => bump(o.key)}
-            >
-              {o.label}（{tally[o.key]}）
-            </button>
-          ))}
-        </div>
-        {total > 0 && <p className="vr-hint">"明显少"占比 {formatPercent(tally.improved / total)}</p>}
+        <h5>回顾问卷（已入库）</h5>
+        <p className="vr-hint">
+          视频播完会自动弹出一题回顾；这里显示入库结果，也可为当前视频补录。
+          已回收 {stats.subjective.answered} 份（明显少 {stats.subjective.fewer} / 差不多{' '}
+          {stats.subjective.same} / 更多 {stats.subjective.more}）
+        </p>
+        {stats.subjective.answered > 0 && (
+          <p className="vr-hint">
+            "明显少"占比{' '}
+            {formatPercent(stats.subjective.fewer / stats.subjective.answered)}
+          </p>
+        )}
+        {onSubjective && (
+          <div className="vr-row">
+            {SUBJECTIVE_OPTIONS.map((o) => (
+              <button
+                key={o.key}
+                type="button"
+                className="btn"
+                onClick={() => {
+                  const choice = o.key === 'improved' ? 'fewer' : o.key === 'same' ? 'same' : 'more';
+                  void onSubjective(choice as 'fewer' | 'same' | 'more')
+                    .then(() => handleLoad())
+                    .catch(() => undefined);
+                }}
+              >
+                为当前视频补录：{o.label}
+              </button>
+            ))}
+          </div>
+        )}
       </section>
 
       <div className="vr-row">

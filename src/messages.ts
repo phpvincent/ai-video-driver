@@ -53,6 +53,8 @@ export interface PlaybackPayload {
   videoId: VideoId;
   positionMs: number;
   playing: boolean;
+  /** 视频播放到结尾（content 的 ended 事件；触发回顾问卷，SPEC-08 8.8） */
+  ended?: boolean;
 }
 
 export interface SeekPayload {

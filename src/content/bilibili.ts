@@ -175,9 +175,26 @@ function bindVideo(video: HTMLVideoElement): void {
   if (currentVideo === video) return;
   if (currentVideo) {
     currentVideo.removeEventListener('timeupdate', onTimeUpdate);
+    currentVideo.removeEventListener('ended', onEnded);
   }
   currentVideo = video;
   video.addEventListener('timeupdate', onTimeUpdate);
+  // 播放到结尾：触发面板的回顾问卷（每视频一次；SPEC-07 7.2 / SPEC-08 8.8）
+  video.addEventListener('ended', onEnded);
+}
+
+function onEnded(): void {
+  const video = currentVideo;
+  if (!video || !currentVideoId) return;
+  post({
+    type: MSG.PLAYBACK_PROGRESS,
+    payload: {
+      videoId: currentVideoId,
+      positionMs: Math.round(video.currentTime * 1000),
+      playing: false,
+      ended: true,
+    },
+  });
 }
 
 function observeVideos(): void {

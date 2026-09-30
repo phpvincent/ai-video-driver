@@ -36,6 +36,24 @@ export interface ValidationStats {
   visionModelPlans: number;
   /** 抽帧诊断：平均模型自报覆盖率（0~1；无自检为 0） */
   visionCoverageAvg: number;
+  /** 存库次数（SPEC-08 8.8 补齐 SPEC-07 §1 的统计项） */
+  saves: number;
+  /** 回顾问卷回收情况（从 usage 记录汇总；未答不计） */
+  subjective: { fewer: number; same: number; more: number; answered: number };
+  /** LLM token 消耗（来自交互日志；日志被清空时为 0） */
+  tokens: { calls: number; input: number; output: number; failed: number };
+  /**
+   * 抽帧开/关对照（SPEC-07 观察项，不参与判定）：按"该视频是否送出过帧"分组，
+   * 对比两组的平均跳转与提问次数。样本小或某组为空时仅记录样本数。
+   */
+  visionObservation: {
+    visionVideos: number;
+    plainVideos: number;
+    seeksPerVisionVideo: number;
+    seeksPerPlainVideo: number;
+    qaPerVisionVideo: number;
+    qaPerPlainVideo: number;
+  };
 }
 
 export interface MetricVerdict {
@@ -88,7 +106,12 @@ function ratio(a: number, b: number): number {
 }
 
 /** 从使用记录与问答历史汇总统计（纯函数，空输入全 0 退化） */
-export function computeStats(args: { usage: UsageRecord[]; qa: QaRecord[] }): ValidationStats {
+export function computeStats(args: {
+  usage: UsageRecord[];
+  qa: QaRecord[];
+  /** LLM 交互日志（token 统计；缺省为无日志） */
+  logs?: Array<{ ok: boolean; inputTokens?: number; outputTokens?: number }>;
+}): ValidationStats {
   const usage = args.usage ?? [];
   const qa = args.qa ?? [];
   const videoCount = usage.length;
@@ -107,6 +130,28 @@ export function computeStats(args: { usage: UsageRecord[]; qa: QaRecord[] }): Va
     }
   }
   const qaTotal = qa.length;
+  // SPEC-08 8.8：存库次数、问卷汇总、token 消耗、抽帧对照
+  const saves = usage.reduce((sum, u) => sum + (u.saves ?? 0), 0);
+  const subjective = { fewer: 0, same: 0, more: 0, answered: 0 };
+  for (const u of usage) {
+    if (u.subjective === 'fewer' || u.subjective === 'same' || u.subjective === 'more') {
+      subjective[u.subjective] += 1;
+      subjective.answered += 1;
+    }
+  }
+  const tokens = { calls: 0, input: 0, output: 0, failed: 0 };
+  for (const e of args.logs ?? []) {
+    tokens.calls += 1;
+    tokens.input += e.inputTokens ?? 0;
+    tokens.output += e.outputTokens ?? 0;
+    if (!e.ok) tokens.failed += 1;
+  }
+  const qaByVideo = new Map<string, number>();
+  for (const r of qa) qaByVideo.set(r.videoId, (qaByVideo.get(r.videoId) ?? 0) + 1);
+  const visionVideos = usage.filter((u) => (u.vision?.frames ?? 0) > 0);
+  const plainVideos = usage.filter((u) => (u.vision?.frames ?? 0) === 0);
+  const avg = (list: UsageRecord[], pick: (u: UsageRecord) => number): number =>
+    list.length === 0 ? 0 : list.reduce((s, u) => s + pick(u), 0) / list.length;
   return {
     videoCount,
     subtitleHitCount,
@@ -121,6 +166,17 @@ export function computeStats(args: { usage: UsageRecord[]; qa: QaRecord[] }): Va
     visionFrames,
     visionModelPlans,
     visionCoverageAvg,
+    saves,
+    subjective,
+    tokens,
+    visionObservation: {
+      visionVideos: visionVideos.length,
+      plainVideos: plainVideos.length,
+      seeksPerVisionVideo: avg(visionVideos, (u) => u.seeks),
+      seeksPerPlainVideo: avg(plainVideos, (u) => u.seeks),
+      qaPerVisionVideo: avg(visionVideos, (u) => qaByVideo.get(u.videoId) ?? 0),
+      qaPerPlainVideo: avg(plainVideos, (u) => qaByVideo.get(u.videoId) ?? 0),
+    },
   };
 }
 
@@ -150,7 +206,12 @@ export interface SubjectiveInput {
  * （其 verdict 取中性 'adjust'，仅供展示，overallConclusion 会整行排除）。
  */
 export function judge(stats: ValidationStats, opts?: { subjective?: SubjectiveInput }): MetricVerdict[] {
-  const subjective = opts?.subjective;
+  // SPEC-08 8.8：问卷已入库时优先用入库数据；旧调用方手动传入的 tally 仅作回退
+  const persisted =
+    stats.subjective.answered > 0
+      ? { improved: stats.subjective.fewer, total: stats.subjective.answered }
+      : opts?.subjective;
+  const subjective = persisted;
   const hasSubjective = typeof subjective === 'object' && subjective !== null && subjective.total > 0;
   return [
     {
@@ -256,13 +317,25 @@ export function buildValidationReport(args: BuildReportArgs): string {
     `| 划词 / 区间 / 自由 | ${stats.qaByType.term} / ${stats.qaByType.segment} / ${stats.qaByType.free} |`,
   );
   lines.push(`| 平均每视频提问次数 | ${formatNumber(stats.qaPerVideo)} |`);
-  lines.push('');
-    lines.push('');
+  lines.push(`| 存入 Obsidian 次数 | ${stats.saves} |`);
   lines.push(
     `- 抽帧诊断：累计 ${stats.visionFrames} 帧，模型规划成功 ${stats.visionModelPlans} 次，` +
       `平均自报覆盖率 ${(stats.visionCoverageAvg * 100).toFixed(0)}%（仅观测，不参与判定）`,
   );
-lines.push('## 判定');
+  lines.push(
+    `- LLM 消耗（交互日志）：调用 ${stats.tokens.calls} 次，输入 ${stats.tokens.input} / 输出 ${stats.tokens.output} token，失败 ${stats.tokens.failed} 次`,
+  );
+  lines.push('');
+  lines.push('## 抽帧开/关对照（观察项，不参与判定）');
+  lines.push('');
+  const vo = stats.visionObservation;
+  lines.push(`- 送出过帧的视频：${vo.visionVideos} 个（平均跳转 ${formatNumber(vo.seeksPerVisionVideo)}，平均提问 ${formatNumber(vo.qaPerVisionVideo)}）`);
+  lines.push(`- 未送出帧的视频：${vo.plainVideos} 个（平均跳转 ${formatNumber(vo.seeksPerPlainVideo)}，平均提问 ${formatNumber(vo.qaPerPlainVideo)}）`);
+  if (vo.visionVideos < 3 || vo.plainVideos < 3) {
+    lines.push('- 样本不足（任一组 < 3 个视频），暂不解读；样本够后对比两组跳转/提问差异');
+  }
+  lines.push('');
+  lines.push('## 判定');
   lines.push('');
   lines.push('| 指标 | 数值 | 判定 | 阈值 |');
   lines.push('| --- | --- | --- | --- |');

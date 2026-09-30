@@ -994,3 +994,37 @@ body {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* ===== 一题回顾（视频播完触发，SPEC-08 8.8） ===== */
+.retro-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #eaf3e6;
+  border-bottom: 1px solid #d5e6cf;
+  font-size: 13px;
+  color: #1f2329;
+}
+.retro-banner .btn {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+/* ===== 一题回顾（视频播完触发，SPEC-08 8.8） ===== */
+.retro-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #eaf3e6;
+  border-bottom: 1px solid #d5e6cf;
+  font-size: 13px;
+  color: #1f2329;
+}
+.retro-banner .btn {
+  padding: 3px 10px;
+  font-size: 12px;
+}

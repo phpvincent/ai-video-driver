@@ -2,7 +2,7 @@
  * 侧边栏根组件：顶部视频信息栏 + 四 Tab（字幕 / 大纲 / 导图 / 问答）+ 设置入口。
  * 消息接线：挂载时发 CURRENT_VIDEO_GET；监听 VIDEO_CHANGED / PLAYBACK_CHANGED 更新状态。
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MSG, type PlaybackPayload, type RuntimeMessage, type VideoInfoPayload } from '../messages';
 import type { FetchResult, ModelConfig, VideoMeta } from '../types';
 import { ChatTab } from './ChatTab';
@@ -15,8 +15,9 @@ import { SubtitleTab } from './SubtitleTab';
 import { currentVideoIdRef, currentVideoMetaRef, explain as explainFn } from './explainLoader';
 import { getLastFramePlan } from './framesClient';
 import { saveTermCardToObsidian, saveVideoNoteToObsidian } from './obsidianLoader';
-import { applyUsageEvent, createEmptyUsage, type UsageRecord } from '../core/metrics/usage';
+import { applySubjective, applyUsageEvent, createEmptyUsage, type UsageRecord } from '../core/metrics/usage';
 import { createSubtitleDb, getSubtitle, getUsage, saveUsage, listAllUsage } from '../storage/db';
+import { loadLlmLogs } from './llmLogStore';
 import { DB } from '../config';
 import { ValidationReportView } from './ValidationReportView';
 import { LlmLogView } from './LlmLogView';
@@ -119,6 +120,10 @@ export function App() {
   const [sections, setSections] = useState<Section[]>([]);
   /** 当前视频字幕（SubtitleTab 上报 / 换视频读缓存；ChatTab 用它吸附回答时间戳） */
   const [cues, setCues] = useState<Cue[]>([]);
+  /** 回顾问卷（SPEC-08 8.8 / A10）：ended 触发，per-video 一次；null = 不显示 */
+  const [retroVideoId, setRetroVideoId] = useState<string | null>(null);
+  /** 已跳过问卷的视频（会话内不再弹） */
+  const retroSkippedRef = useRef<Set<string>>(new Set());
   /** 划词待解释术语（SubtitleTab → ChatTab 联动） */
   const [pendingTerm, setPendingTerm] = useState<{ term: string; consumed: () => void } | null>(null);
   /** 概念知识图（缓存/生成产物；null=未生成，组件会降级本地术语图） */
@@ -257,6 +262,20 @@ export function App() {
         setPlayback(null);
       } else if (message.type === MSG.PLAYBACK_CHANGED) {
         setPlayback(message.payload);
+        // 视频播完：弹一题回顾（每视频一次；未答且未跳过才弹）
+        if (
+          message.payload.ended === true &&
+          message.payload.videoId === video?.videoId &&
+          message.payload.videoId !== retroVideoId &&
+          !retroSkippedRef.current.has(message.payload.videoId)
+        ) {
+          const vid = message.payload.videoId;
+          getUsage(db, vid)
+            .then((rec) => {
+              if (!rec?.subjective) setRetroVideoId(vid);
+            })
+            .catch(() => undefined);
+        }
       }
     };
     chrome.runtime.onMessage.addListener(listener);
@@ -286,7 +305,7 @@ export function App() {
   };
 
   /** 验证期埋点：记录一次使用事件（seek/字幕/大纲/概念图） */
-  const trackUsage = async (kind: 'seek' | 'subtitle' | 'outline' | 'conceptMap') => {
+  const trackUsage = async (kind: 'seek' | 'subtitle' | 'outline' | 'conceptMap' | 'save') => {
     const vid = video?.videoId;
     if (!vid) return;
     try {
@@ -372,6 +391,7 @@ export function App() {
     if (!meta || !video || sections.length === 0) return '暂无可存的大纲';
     try {
       const { path } = await saveVideoNoteToObsidian({ videoId: video.videoId, meta, sections });
+      void trackUsage('save');
       return `已存入 ${path}`;
     } catch (err) {
       return `存库失败：${err instanceof Error ? err.message : String(err)}`;
@@ -393,6 +413,7 @@ export function App() {
           meta,
           existingTerms: [],
         });
+        void trackUsage('save');
         return `已存入 ${path}`;
       }
       const { path } = await saveVideoNoteToObsidian({
@@ -400,10 +421,39 @@ export function App() {
         meta,
         sections,
       });
+      void trackUsage('save');
       return `已存入 ${path}`;
     } catch (err) {
       return err instanceof Error ? err.message : `存库失败：${String(err)}`;
     }
+  };
+
+  /** 回顾问卷作答（入库；SPEC-07 7.2 / A9） */
+  const handleRetroAnswer = (choice: 'fewer' | 'same' | 'more') => {
+    const vid = retroVideoId;
+    if (!vid) return;
+    setRetroVideoId(null);
+    void (async () => {
+      try {
+        const current = (await getUsage(db, vid)) ?? createEmptyUsage(vid, Date.now);
+        await saveUsage(db, applySubjective(current, choice, Date.now));
+      } catch {
+        /* 入库失败不影响使用 */
+      }
+    })();
+  };
+
+  const handleRetroSkip = () => {
+    if (retroVideoId) retroSkippedRef.current.add(retroVideoId);
+    setRetroVideoId(null);
+  };
+
+  /** 报告页手动补录问卷（写入当前视频） */
+  const handleSubjectiveForReport = async (choice: 'fewer' | 'same' | 'more') => {
+    const vid = video?.videoId;
+    if (!vid) throw new Error('未检测到视频');
+    const current = (await getUsage(db, vid)) ?? createEmptyUsage(vid, Date.now);
+    await saveUsage(db, applySubjective(current, choice, Date.now));
   };
 
   /** 划词联动：字幕 Tab 选中术语 → 切问答 Tab 自动解释 */
@@ -467,6 +517,23 @@ export function App() {
         </button>
       </header>
 
+      {retroVideoId && (
+        <div className="retro-banner" role="dialog" aria-label="一题回顾">
+          <span>这节课看完了：切出去搜索的次数比以往？</span>
+          <button type="button" className="btn" onClick={() => handleRetroAnswer('fewer')}>
+            明显少
+          </button>
+          <button type="button" className="btn" onClick={() => handleRetroAnswer('same')}>
+            差不多
+          </button>
+          <button type="button" className="btn" onClick={() => handleRetroAnswer('more')}>
+            更多
+          </button>
+          <button type="button" className="btn" onClick={handleRetroSkip}>
+            跳过
+          </button>
+        </div>
+      )}
       {showSettings ? (
         <>
           {showReport ? (
@@ -478,7 +545,9 @@ export function App() {
               onLoad={async () => ({
                 usage: await listAllUsageFromDb(),
                 qa: await listAllQaFromDb(),
+                logs: await loadLlmLogs().catch(() => []),
               })}
+              onSubjective={handleSubjectiveForReport}
             />
             </div>
           ) : showLlmLog ? (

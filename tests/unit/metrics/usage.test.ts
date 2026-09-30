@@ -3,7 +3,7 @@
  * 时钟一律注入固定值，断言 ISO 字符串可精确比对。
  */
 import { describe, expect, it } from 'vitest';
-import { applyUsageEvent, createEmptyUsage } from '../../../src/core/metrics/usage';
+import { applySubjective, applyUsageEvent, createEmptyUsage, type UsageRecord } from '../../../src/core/metrics/usage';
 
 const T0 = 1_700_000_000_000;
 const T1 = 1_700_003_600_000;
@@ -14,6 +14,8 @@ describe('createEmptyUsage', () => {
     expect(rec).toEqual({
       videoId: 'BV1_p1',
       seeks: 0,
+      saves: 0,
+      subjective: undefined,
       subtitleLoaded: false,
       outlineGenerated: false,
       conceptMapGenerated: false,
@@ -88,5 +90,25 @@ describe('applyUsageEvent', () => {
     expect(rec.vision?.modelPlans).toBe(1);
     expect(rec.vision?.coverageSum).toBeCloseTo(0.8, 5);
     expect(rec.vision?.coverageCount).toBe(1);
+  });
+});
+
+
+describe('SPEC-08 8.8：save 事件与回顾问卷入库', () => {
+  it("applyUsageEvent('save') 累计存库次数；旧记录无 saves 字段可叠加", () => {
+    const rec = applyUsageEvent(createEmptyUsage("V", () => T0), { kind: 'save' }, () => T0);
+    expect(rec.saves).toBe(1);
+    const legacy = { ...createEmptyUsage("V", () => T0) } as UsageRecord;
+    delete (legacy as { saves?: number }).saves;
+    expect(applyUsageEvent(legacy, { kind: 'save' }, () => T0).saves).toBe(1);
+    expect(applyUsageEvent(rec, { kind: 'save' }, () => T0).saves).toBe(2);
+  });
+
+  it('applySubjective 写入答案且不改原对象；重复作答以最后一次为准', () => {
+    const base = createEmptyUsage("V", () => T0);
+    const a = applySubjective(base, 'fewer', () => T0);
+    expect(a.subjective).toBe('fewer');
+    expect(base.subjective).toBeUndefined();
+    expect(applySubjective(a, 'more', () => T0).subjective).toBe('more');
   });
 });
