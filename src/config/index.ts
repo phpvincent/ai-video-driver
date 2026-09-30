@@ -110,6 +110,42 @@ export const SUBTITLE = {
 
 export { PLAYBACK } from './shared';
 
+/**
+ * 模型预设（端点与默认模型的唯一来源，红线 9）。
+ * 走 OpenAI 兼容的 chat/completions：Qwen 官方兼容模式支持图文多模态，
+ * 用户也可换成自建网关地址。模型名由用户在设置里自填（成本与能力自选）。
+ */
+export const MODEL_PRESETS = {
+  deepseek: {
+    label: 'DeepSeek（文本/结构化，便宜）',
+    baseUrl: 'https://api.deepseek.com',
+    model: 'deepseek-chat',
+  },
+  qwen: {
+    label: '通义千问 Qwen（兼容模式，支持多模态）',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    // 便宜的多模态模型；更可选 qwen-vl-max / qwen2.5-vl-72b-instruct
+    model: 'qwen-vl-plus',
+  },
+} as const;
+
+/** 抽帧（视觉）默认参数：成本与延迟的护栏 */
+export const VISION = {
+  /** 单次请求最多携带的帧数 */
+  maxFramesPerRequest: 6,
+  /** 大纲：每个分块取几帧 */
+  outlineFramesPerChunk: 1,
+  /** 概念图：全片取几帧（按章节锚点均匀取） */
+  mindmapFrames: 4,
+  /** 问答：区间取几帧 */
+  qaFrames: 3,
+  /** 帧最长边像素与质量 */
+  maxSize: 512,
+  quality: 0.7,
+  /** 单帧抽取超时 */
+  timeoutMs: 3000,
+} as const;
+
 export const OBSIDIAN = {
   baseUrl: 'http://127.0.0.1:27123', // Local REST API 的 HTTP 模式端口（HTTPS 模式为 27124）
   requestTimeoutMs: 8_000,

@@ -240,6 +240,25 @@ export interface KnowledgeHit {
   score: number;
 }
 
+/** 面板设置（GET_SETTINGS / SET_SETTINGS 的形状） */
+export interface Settings {
+  /** 文本/结构化模型（大纲、概念图、术语与区间问答） */
+  model?: ModelConfig;
+  /** 视觉模型（多模态，处理抽帧图片；未配置则自动跳过抽帧） */
+  visionModel?: ModelConfig;
+  /** 全局抽帧开关（默认 false，避免不必要的成本与延迟） */
+  visionEnabled?: boolean;
+  /** 各模块是否结合画面（默认随全局开关；未配置视为开启） */
+  visionModules?: { outline?: boolean; mindmap?: boolean; qa?: boolean };
+  /** 联网检索（可选） */
+  webSearch?: { endpoint?: string; apiKey?: string; engine?: string };
+  webSearchEnabled?: boolean;
+  /** 问答时检索个人知识库（默认开启） */
+  knowledgeSearch?: boolean;
+  /** Obsidian 配置 */
+  obsidian?: { baseUrl?: string; apiKey?: string; rootDir?: string };
+}
+
 export interface ConceptMapData {
   videoId: VideoId;
   promptVersion: string;
