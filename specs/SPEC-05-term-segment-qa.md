@@ -58,6 +58,8 @@
 ## 6. 执行记录（append-only）
 
 | 日期 | 执行者 | 变更摘要 | 自测结果 | commit |
+| 2026-09-30 | 子 agent + 父 agent | 动态问答角色：persona pipeline（每视频一次判定，zod role/expertise/style，重试 1 次后确定性默认角色）+ prompts/persona.md 0.1.0 单一源 + personaLoader（缓存键 persona::videoId::version::model，prompt/模型变更自动失效）+ explain 注入 personaInstruction + UI 角色条与"重判角色"；父 agent 接线（App 角色状态/刷新、explainLoader 注入） | tsc 零错误；768 例全绿；check-prompts PASS | 56927bc（已验收） |
+
 | 2026-09-30 | 子 agent 全量 | compiler（红线 3：素材包裹/±30s/整章超长截断/≤4000 token 断言）+ explainTerm/answerSegment（Zod + 重试 1）+ buildQaRecord（A7b 聚合字段盖章）+ term-explainer.md/segment-qa.md 单一源 + 两个 SKILL.md + db qaHistory（getAll）+ ChatTab（区间选择器/打字机/时间戳跳播/追问可点/自动暂停/coveredByVideo 横幅）+ SubtitleTab 划词 sticky 条 + 60 例 | tsc 零错误；60 例全绿；check-prompts PASS | 8c14b4b（已验收） |
 | 2026-09-30 | 父 agent | 接线：explainLoader（modelFn + 真实 prompt getter + buildQaRecord + qaHistory 落库）、App sections 上提、pendingTerm 划词联动（字幕 Tab 选中 → 自动切问答 Tab 解释）、PAUSE 消息。**A5 口径变更（批准）**："首字 ≤1.5s" 改为"响应到达即打字机渲染"——SSE 流式与 Zod 严格校验冲突，真实流式列 v0.1.x | verify 直连 414 例全绿 | 0890644 |
 
