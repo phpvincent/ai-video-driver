@@ -30,7 +30,8 @@ import { resolveModel, visionActiveFor } from './settings/modelForm';
 import { setGenerationSource } from './generationTrace';
 import type { Settings } from '../types';
 import { createSubtitleDb, getOutline, getSubtitle, saveOutline } from '../storage/db';
-import type { Cue, ModelConfig, Section } from '../types';
+import { DB } from '../config';
+import type { Cue, ModelConfig, OutlineRecord, Section } from '../types';
 
 /** 模块级单例 DB（惰性 open 由 db 层内部保证幂等） */
 const db = createSubtitleDb();
@@ -199,7 +200,9 @@ async function fetchModelConfig(): Promise<ModelConfig | null> {
 
 /**
  * 只读大纲缓存（挂载自动加载用，SPEC-03 3c 范围变更）：
- * 未命中 / 模型未配置 / DB 异常一律 throw 'NO_CACHE'，由 UI 回到生成按钮态。
+ * 标准键未命中 → 回退读 imported 记录（SPEC-09 9.6 导入的大纲，键
+ * `videoId::imported::{model}`，不被本地 promptVersion 升级误失效）。
+ * 两处都未命中 / 模型未配置 / DB 异常一律 throw 'NO_CACHE'，由 UI 回到生成按钮态。
  */
 export async function loadOutlineCached(videoId: string): Promise<OutlineResult> {
   const model = await fetchModelConfig();
@@ -218,6 +221,25 @@ export async function loadOutlineCached(videoId: string): Promise<OutlineResult>
     } catch {
       /* 缓存读失败视作无缓存 */
     }
+  }
+  // SPEC-09：导入的大纲（outlines store 里该视频的非标准键记录，取最新）
+  try {
+    const all = await db.getAll<OutlineRecord>(DB.stores.outlines);
+    const imported = all
+      .filter((r) => r && typeof r === 'object' && r.videoId === videoId && Array.isArray(r.sections))
+      .filter((r) => r.sections.length > 0)
+      .sort((a, b) => ((a.createdAt ?? '') < (b.createdAt ?? '') ? 1 : -1));
+    if (imported.length > 0) {
+      return {
+        sections: imported[0]!.sections,
+        chunkState: imported[0]!.chunkState ?? [],
+        droppedBySnap: 0,
+        budgetHit: false,
+        failedChunks: 0,
+      };
+    }
+  } catch {
+    /* imported 回退读失败视作无缓存 */
   }
   throw new Error('NO_CACHE');
 }

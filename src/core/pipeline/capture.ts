@@ -13,6 +13,7 @@
 import type {
   KnowledgeIndexEntry,
   KnowledgeIndexFile,
+  OutlineNote,
   Section,
   VideoMeta,
 } from '../../types';
@@ -448,4 +449,139 @@ export function findDuplicateTerm(
     return { duplicate: bestTerm, similarity: Number(best.toFixed(4)) };
   }
   return { duplicate: null, similarity: Number(best.toFixed(4)) };
+}
+
+// ---------------------------------------------------------------------------
+// 大纲笔记区块（SPEC-09 9.7）：标记包裹的 Obsidian 可折叠 callout
+// ---------------------------------------------------------------------------
+
+/** 笔记区块标记（Obsidian 阅读视图不可见；重复导出只替换标记之间的内容） */
+export function notesMarkerStart(sectionId: string): string {
+  return `%% vsc:notes:start ${sectionId} %%`;
+}
+
+export const NOTES_MARKER_END = '%% vsc:notes:end %%';
+
+/** 未归位笔记区的 marker id（文末「未归位的笔记」标题下） */
+export const UNANCHORED_MARKER_ID = 'unanchored';
+
+/**
+ * 单条笔记 → callout 行（纯函数）：
+ * `> **[mm:ss](回链)** 正文`；回复串 `> - 我：…` / `> - 助教：…`；
+ * 导入的笔记追加「（导入）」标记。多行正文逐行 `> ` 前缀。
+ */
+export function noteToCalloutLines(meta: VideoMeta, note: OutlineNote): string[] {
+  const lines: string[] = [];
+  const imported = note.importedFrom ? '（导入）' : '';
+  const head = `> **${timestampLink(meta, note.anchor.tMs)}**${imported} `;
+  note.body.split('\n').forEach((line, i) => {
+    lines.push(i === 0 ? `${head}${line}` : `> ${line}`);
+  });
+  for (const r of note.replies) {
+    lines.push(`> - ${r.author === 'assistant' ? '助教' : '我'}：${r.body}`);
+  }
+  return lines;
+}
+
+/** 某章节的笔记区块（marker 包裹 + 可折叠 callout 头）；无笔记返回 null */
+export function buildNotesBlock(
+  meta: VideoMeta,
+  sectionId: string,
+  notes: readonly OutlineNote[],
+): string | null {
+  if (notes.length === 0) return null;
+  const lines = [
+    notesMarkerStart(sectionId),
+    `> [!note]- 我的笔记（${notes.length}）`,
+    ...notes.flatMap((n) => noteToCalloutLines(meta, n)),
+    NOTES_MARKER_END,
+  ];
+  return lines.join('\n');
+}
+
+/** 行是否为 vsc 笔记区块的起始标记 */
+function isNotesMarkerStartLine(line: string): boolean {
+  return /^\s*%%\s*vsc:notes:start\b/.test(line);
+}
+
+/** 行是否为 vsc 笔记区块的结束标记 */
+function isNotesMarkerEndLine(line: string): boolean {
+  return /^\s*%%\s*vsc:notes:end\s*%%\s*$/.test(line);
+}
+
+/** 章节标题行匹配：`## {mm:ss}-{mm:ss} {标题}`（时间前缀 + 标题包含） */
+function isSectionHeadingLine(line: string, section: Section): boolean {
+  if (!line.startsWith(`## ${formatMmSs(section.startMs)}`)) return false;
+  return line.includes(section.title);
+}
+
+/**
+ * 把笔记区块合并进已有笔记正文（纯函数，spec §3.2 / A9 的算法部分）：
+ * 1. 剥掉旧的全部 vsc:notes 区块（标记与内容整段移除）；
+ * 2. 每个有笔记的章节：区块插在章节标题行之后（找不到标题 → 视同未归位）；
+ * 3. 未归位 + 章节缺失的笔记 → 文末「## 未归位的笔记」区块；
+ * 4. **标记之外的任何内容（含用户手写）原样保留**——这是 A9 的核心保证。
+ * 无任何笔记时返回剥掉旧区块后的正文（区块被清除，其余不动）。
+ */
+export function applyNotesToMarkdown(
+  existing: string,
+  meta: VideoMeta,
+  sections: readonly Section[],
+  notes: readonly OutlineNote[],
+): string {
+  // ① 剥旧区块
+  const cleaned: string[] = [];
+  let inBlock = false;
+  for (const line of existing.split('\n')) {
+    if (isNotesMarkerStartLine(line)) {
+      inBlock = true;
+      continue;
+    }
+    if (inBlock) {
+      if (isNotesMarkerEndLine(line)) inBlock = false;
+      continue;
+    }
+    cleaned.push(line);
+  }
+
+  // ② 按章节分组；找不到章节的并入未归位
+  const bySectionId = new Map<string, OutlineNote[]>();
+  const unanchored: OutlineNote[] = [];
+  const sectionIds = new Set(sections.map((s) => s.id));
+  for (const n of notes) {
+    if (n.anchor.sectionId && sectionIds.has(n.anchor.sectionId)) {
+      const list = bySectionId.get(n.anchor.sectionId) ?? [];
+      list.push(n);
+      bySectionId.set(n.anchor.sectionId, list);
+    } else {
+      unanchored.push(n);
+    }
+  }
+
+  // ③ 逐行重建：章节标题行之后插入该章区块
+  const out: string[] = [];
+  for (const line of cleaned) {
+    out.push(line);
+    const section = sections.find((s) => isSectionHeadingLine(line, s));
+    if (section) {
+      const block = buildNotesBlock(meta, section.id, bySectionId.get(section.id) ?? []);
+      bySectionId.delete(section.id);
+      if (block) {
+        out.push('');
+        out.push(block);
+      }
+    }
+  }
+
+  // ④ 未归位（+ 章节标题缺失的）→ 文末
+  for (const [, list] of bySectionId) unanchored.push(...list);
+  if (unanchored.length > 0) {
+    const block = buildNotesBlock(meta, UNANCHORED_MARKER_ID, unanchored);
+    if (block) {
+      while (out.length > 0 && out[out.length - 1] === '') out.pop();
+      out.push('', '## 未归位的笔记', '', block, '');
+    }
+  }
+
+  return out.join('\n');
 }

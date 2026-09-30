@@ -1,6 +1,6 @@
 # SPEC-09 · 大纲笔记与大纲交换格式
 
-- 状态：进行中（2026-10-01 开工：地基子任务 9.1/9.2/9.5 先行——纯代码、可自动验收，不阻塞用户侧 SPEC-08 冒烟；UI 子任务 9.3/9.4/9.6/9.7 随后派发）
+- 状态：待验收（2026-10-01 七个子任务全部施工完成：9.1~9.7；[自动] 项过 G1/G3，[人工] 项 A4/A8/A9 待用户冒烟，见 reviews/PENDING-VERIFICATION.md）
 - 依赖：SPEC-08
 - 对应里程碑：v0.1.x
 - 验收 tag：`spec-09-accepted`
@@ -168,3 +168,7 @@
 | 10-01 | 父 agent | 9.1 数据模型与存储：`OutlineNote`/`NoteAnchor`/`NoteReply` 入 types.ts；DB.stores.notes + 版本 v3→v4（补建 store 幂等）；saveNote/deleteNote/listNotesByVideo。**范围说明**：设计稿"索引 videoId"简化为 getAll+过滤（沿用 qaHistory 先例，量级低），行为等价 | 单测 6 例过（排序/隔离/删除/透传/脏数据过滤） | 本提交 |
 | 10-01 | 父 agent | 9.2 重新归位：`core/notes/reanchor.ts` 纯函数（bullet 15s 窗口 + 字符 bigram Jaccard 相似度选优；section 待确认 = 标题完全不同且时长重叠 <50%；time 按 tMs 落章；越界未归位；**永不删除**）；常量入 config NOTES | 单测 17 例过（A3 全路径：命中/降级/选优/待确认/越界不减/可再归位） | 本提交 |
 | 10-01 | 父 agent | 9.5 交换格式：`core/exchange/vscOutline.ts`（buildOutlineExport / parseOutlineImport / computeChecksum / stableStringify / outlineExportFileName）+ `docs/EXCHANGE-FORMAT.md` 对外契约。校验顺序 = JSON→format/version→checksum→结构(zod 忽略未知字段)→视频身份→覆盖率警告；checksum = sha256(稳定序列化去 checksum 键)，computeChecksum 防御性剔除自带 checksum 键 | 单测 18 例过（A5 往返逐字段相等 / A6 五条拒绝路径+未知字段忽略 / A7 文档示例过校验器） | 本提交 |
+| 10-01 | 父 agent | 9.3 笔记 UI：`panel/notes/`（NotesUi + notesLoader + useNotes hook + notes.css）+ OutlineTab 集成。三种锚点入口（整章=SectionNotes「+笔记」/ 要点=bullet 行「记」/ 时间点=章节头「⏱」锚当前播放位置）；笔记卡=编辑/删除/回复/请助教回答；未归位区；重生成前确认（A4 的弹窗部分） | renderToString 无回归；数据路径由 9.2/9.1 单测覆盖 | 本提交 |
+| 10-01 | 父 agent | 9.4 请助教回答：askAssistantForNote = explain()（区间=锚点所在章节，positionMs=锚点 tMs，走知识库/公开资料/画面全链路+qaHistory）→ 回答以 author=assistant 追加进讨论串 | 链路复用 explain 单测覆盖的数据形状；A2 人工验收待冒烟 | 本提交 |
+| 10-01 | 父 agent | 9.6 导入导出 UI：导出=exportOutlineFile→platform/files.downloadTextFile；导入=readTextFileViaInput→parseOutlineImport→冲突三选一（替换[先自动备份下载]/只合并笔记/取消）；imported 大纲落 `videoId::imported::{model}` 键（**范围扩展**：outlineLoader.loadOutlineCached 标准键 miss 后回退读 imported 记录）；导入笔记 mapImportedNotes 纯函数（归位+importedFrom+id 防碰撞） | mapImportedNotes 单测 5 例（A8 数据部分）；A8 人工验收待冒烟 | 本提交 |
+| 10-01 | 父 agent | 9.7 Obsidian 笔记区块：capture.ts 新增 notesMarkerStart/NOTES_MARKER_END/buildNotesBlock/noteToCalloutLines/applyNotesToMarkdown（剥旧区块→章节标题后插新块→未归位文末→**标记外手写内容原样保留**）；obsidianLoader.saveVideoNoteToObsidian 自动携带该视频笔记，目标文件已存在时走标记合并路径。**行为说明**：已有笔记文件后续「存入」只刷新笔记区块，不重建章节内容（A9 的手写保留代价，记录在案） | capture-notes 单测 13 例（A9 算法：手写保留/区块替换/清除/未归位）；A9 人工验收待冒烟 | 本提交 |

@@ -59,7 +59,7 @@ export function textSimilarity(a: string, b: string): number {
  * tMs 落入的章节（确定性）：最后一个 startMs ≤ tMs 的章；早于首章返回 null。
  * 章节连续（endMs = 下章 startMs - 1），超出末章 endMs 由调用方用视频时长判定。
  */
-export function findSectionAt(sections: Section[], tMs: number): Section | null {
+export function findSectionAt(sections: readonly Section[], tMs: number): Section | null {
   let ans: Section | null = null;
   for (const s of sections) {
     if (s.startMs <= tMs) ans = s;
@@ -75,7 +75,7 @@ export function bulletIdOf(sectionId: string, bulletIndex: number): string {
 
 /** 旧锚点指向的要点文本（sectionId + bulletId 反查；解析不了返回 null） */
 function resolveOldBulletText(
-  oldSections: Section[],
+  oldSections: readonly Section[],
   sectionId: string | null,
   bulletId: string | null | undefined,
 ): string | null {
@@ -106,19 +106,21 @@ function titleDiffers(a: Section, b: Section): boolean {
 /** bullet 锚点匹配：窗口内相似度最高的新要点；无有效候选返回 null */
 function matchBullet(
   oldText: string | null,
-  newSections: Section[],
+  newSections: readonly Section[],
   tMs: number,
 ): { sectionId: string; bulletId: string } | null {
   if (oldText === null) return null;
   let best: { sectionId: string; bulletId: string; sim: number } | null = null;
+  // 普通 for 循环（非 forEach）：闭包内赋值会让 TS 的控制流分析失效
   for (const sec of newSections) {
-    sec.bullets.forEach((b, i) => {
-      if (Math.abs(b.startMs - tMs) > NOTES.reanchorBulletWindowMs) return;
+    for (let i = 0; i < sec.bullets.length; i += 1) {
+      const b = sec.bullets[i]!;
+      if (Math.abs(b.startMs - tMs) > NOTES.reanchorBulletWindowMs) continue;
       const sim = textSimilarity(oldText, b.text);
       if (sim > 0 && (best === null || sim > best.sim)) {
         best = { sectionId: sec.id, bulletId: bulletIdOf(sec.id, i), sim };
       }
-    });
+    }
   }
   return best ? { sectionId: best.sectionId, bulletId: best.bulletId } : null;
 }

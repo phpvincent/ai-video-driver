@@ -11,6 +11,7 @@
  */
 import { DB } from '../config';
 import {
+  applyNotesToMarkdown,
   buildIndexMarkdown,
   buildTermCardMarkdown,
   buildVideoNoteMarkdown,
@@ -25,7 +26,7 @@ import {
   vaultPathsFor,
 } from '../core/pipeline/capture';
 import { getNote, putNote, testConnection, type ObsidianFetch } from '../sinks/obsidian';
-import { createSubtitleDb } from '../storage/db';
+import { createSubtitleDb, listNotesByVideo } from '../storage/db';
 import type {
   KnowledgeIndexEntry,
   KnowledgeIndexFile,
@@ -138,7 +139,12 @@ async function requireConfig(): Promise<ObsidianConfig> {
   return cfg;
 }
 
-/** 视频笔记存库：落盘 + 双索引更新，返回笔记路径 */
+/** 视频笔记存库：落盘 + 双索引更新，返回笔记路径
+ *
+ * SPEC-09 9.7：目标笔记文件已存在时走**标记合并路径**——只增删/替换
+ * `%% vsc:notes:start … %%` 区块，标记外（含用户手写）原样保留（A9）；
+ * 文件不存在时按原行为全量生成，并把笔记区块直接内联。
+ */
 export async function saveVideoNoteToObsidian(args: {
   videoId: string;
   meta: VideoMeta;
@@ -154,7 +160,24 @@ export async function saveVideoNoteToObsidian(args: {
     sourceVideoId: args.videoId,
   });
 
-  await putNote(cfg, fetchFn, videoNote, note.markdown);
+  // 大纲笔记（SPEC-09 9.7）：自动携带该视频全部笔记
+  const notes = await listNotesByVideo(db, args.videoId).catch(() => []);
+
+  let markdown = note.markdown;
+  try {
+    const existing = await getNote(cfg, fetchFn, videoNote);
+    if (existing.trim().length > 0) {
+      // 已有文件：只动笔记区块，手写内容保留（A9）
+      markdown = applyNotesToMarkdown(existing, args.meta, args.sections, notes);
+    } else {
+      markdown = applyNotesToMarkdown(note.markdown, args.meta, args.sections, notes);
+    }
+  } catch {
+    // 读取失败（404 / 网络）→ 全量生成并内联笔记区块
+    markdown = applyNotesToMarkdown(note.markdown, args.meta, args.sections, notes);
+  }
+
+  await putNote(cfg, fetchFn, videoNote, markdown);
 
   const file = await readIndex(cfg, fetchFn);
   const entry: KnowledgeIndexEntry = {

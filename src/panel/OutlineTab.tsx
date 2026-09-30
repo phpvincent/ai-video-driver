@@ -12,11 +12,25 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import type { OutlineResult } from '../core/pipeline/outline';
+import { rescoreOutline } from '../core/pipeline/outline';
 import type { Density, Section, VideoMeta } from '../types';
 import { formatTimestamp } from './SubtitleTab';
 import { getInflightOutline } from './outlineLoader';
 import { ModelPicker } from './ModelPicker';
 import { GenerationBanner } from './GenerationBanner';
+import { bulletIdOf } from '../core/notes/reanchor';
+import { parseOutlineImport, type VscOutlineFile } from '../core/exchange/vscOutline';
+import { useNotes } from './notes/notesLoader';
+import {
+  buildLocalBackup,
+  exportOutlineFile,
+  mapImportedNotes,
+  saveImportedNotes,
+  saveImportedOutline,
+  type NotesState,
+} from './notes/notesLoader';
+import { NoteEditor, SectionNotes, UnanchoredNotes } from './notes/NotesUi';
+import { downloadTextFile, readTextFileViaInput } from '../platform/files';
 
 export interface OutlineTabProps {
   videoId: string | null;
@@ -111,7 +125,7 @@ export function badgeLabel(section: Section): string {
 export const OUTLINE_REGEN_PLACEHOLDER =
   "可选：想往哪个方向重新生成？如'更聚焦代码演示'";
 
-/** 章节卡片：时间范围 + 分数徽标 + 可点跳播的要点时间戳 + 单章重生成入口 */
+/** 章节卡片：时间范围 + 分数徽标 + 可点跳播的要点时间戳 + 单章重生成入口 + 笔记（SPEC-09） */
 function SectionCard({
   section,
   active,
@@ -119,6 +133,8 @@ function SectionCard({
   regenerating,
   errorText,
   onSubmitRegen,
+  positionMs,
+  notesState,
 }: {
   section: Section;
   active: boolean;
@@ -129,12 +145,19 @@ function SectionCard({
   errorText: string | null;
   /** 确认单章重生成（feedback 可空） */
   onSubmitRegen: (section: Section, feedback?: string) => void;
+  /** 当前播放位置（时间点笔记锚定用） */
+  positionMs: number;
+  /** 笔记状态（SPEC-09 9.3） */
+  notesState: NotesState;
 }) {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedback, setFeedback] = useState('');
   /** 最近一次提交的反馈（失败重试时复用） */
   const lastFeedbackRef = useRef<string | undefined>(undefined);
   const cardRef = useRef<HTMLDivElement | null>(null);
+  /** 要点笔记 / 时间点笔记的新建中锚点（SPEC-09 三种粒度入口） */
+  const [bulletDraft, setBulletDraft] = useState<number | null>(null);
+  const [timeDraft, setTimeDraft] = useState(false);
   /** 重生成开始：平滑滚动并保持本章为视觉焦点（选中效果切换到该模块） */
   useEffect(() => {
     if (regenerating) {
@@ -146,6 +169,8 @@ function SectionCard({
     lastFeedbackRef.current = fb;
     onSubmitRegen(section, fb);
   };
+
+  const sectionNotes = notesState.notesBySection(section.id);
 
   return (
     <div
@@ -163,6 +188,17 @@ function SectionCard({
         <span className={`outline-density ${section.density ?? 'none'}`}>
           {badgeLabel(section)}
         </span>
+        <button
+          type="button"
+          className="outline-regen-btn"
+          title="在当前播放位置记一条时间点笔记"
+          onClick={(e) => {
+            e.stopPropagation();
+            setTimeDraft((v) => !v);
+          }}
+        >
+          ⏱
+        </button>
         <button
           type="button"
           className="outline-regen-btn"
@@ -193,12 +229,69 @@ function SectionCard({
               {`[${formatTimestamp(bullet.startMs)}${bullet.approximate ? '~' : ''}]`}
             </button>
             <span className="outline-bullet-text">{bullet.text}</span>
+            {/* 要点笔记入口（SPEC-09：锚点粒度 = 某条要点） */}
+            <button
+              type="button"
+              className="outline-regen-btn"
+              title="给这条要点记笔记"
+              onClick={(e) => {
+                e.stopPropagation();
+                setBulletDraft(bulletDraft === i ? null : i);
+              }}
+            >
+              记
+            </button>
+            {bulletDraft === i && (
+              <NoteEditor
+                placeholder={`对要点「${bullet.text}」的笔记…`}
+                onSubmit={(body) => {
+                  void notesState.addNote(
+                    {
+                      kind: 'bullet',
+                      sectionId: section.id,
+                      bulletId: bulletIdOf(section.id, i),
+                      tMs: bullet.startMs,
+                    },
+                    body,
+                  );
+                  setBulletDraft(null);
+                }}
+                onCancel={() => setBulletDraft(null)}
+              />
+            )}
           </li>
         ))}
       </ul>
       {section.terms.length > 0 && (
         <div className="outline-terms">{section.terms.join(' · ')}</div>
       )}
+      {/* 时间点笔记（SPEC-09：锚点粒度 = 某个时间点；锚在当前播放位置） */}
+      {timeDraft && (
+        <NoteEditor
+          placeholder={`时间点笔记（锚在 ${formatTimestamp(positionMs)}）…`}
+          onSubmit={(body) => {
+            void notesState.addNote(
+              {
+                kind: 'time',
+                sectionId: section.id,
+                tMs: Math.max(section.startMs, Math.min(positionMs, section.endMs - 1)),
+              },
+              body,
+            );
+            setTimeDraft(false);
+          }}
+          onCancel={() => setTimeDraft(false)}
+        />
+      )}
+      {/* 章节笔记区块（整章锚点 + 已归位到本章的 bullet/time 笔记） */}
+      <SectionNotes
+        section={section}
+        notes={sectionNotes}
+        pendingIds={notesState.pendingIds}
+        busyId={notesState.busyId}
+        state={notesState}
+        onSeek={onSeek}
+      />
       {/* 反馈表单常驻渲染，grid 0fr/1fr 过渡实现丝滑展开收起（避免条件渲染的硬切） */}
       <div className={'outline-regen-collapse' + (feedbackOpen && !regenerating ? ' open' : '')}>
         <div className="outline-regen-form">
@@ -246,6 +339,8 @@ export function OutlineSectionList({
   regeneratingId,
   regenError,
   onSubmitRegen,
+  positionMs = 0,
+  notesState,
 }: {
   sections: Section[];
   /** 当前高亮章节 id；null 表示无 */
@@ -257,6 +352,10 @@ export function OutlineSectionList({
   regenError: { sectionId: string; text: string } | null;
   /** 单章重生成确认（SectionCard 内联表单触发） */
   onSubmitRegen: (section: Section, feedback?: string) => void;
+  /** 当前播放位置（时间点笔记锚定用） */
+  positionMs?: number;
+  /** 笔记状态（SPEC-09 9.3；不传时隐藏笔记 UI——单测向后兼容） */
+  notesState?: NotesState;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   /** 上一次滚动到的目标，防止每次 positionMs 更新都触发滚动抖动 */
@@ -283,6 +382,23 @@ export function OutlineSectionList({
             regenerating={section.id === regeneratingId}
             errorText={regenError?.sectionId === section.id ? regenError.text : null}
             onSubmitRegen={onSubmitRegen}
+            positionMs={positionMs}
+            notesState={
+              notesState ?? {
+                notes: [],
+                notesBySection: () => [],
+                unanchored: [],
+                pendingIds: null,
+                busyId: null,
+                reload: async () => {},
+                addNote: async () => {},
+                updateBody: async () => {},
+                remove: async () => {},
+                reply: async () => {},
+                askAssistant: async () => {},
+                reanchor: async () => {},
+              }
+            }
           />
         ))}
       </div>
@@ -351,6 +467,7 @@ export function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promis
 export function OutlineTab(props: OutlineTabProps) {
   const {
     videoId,
+    meta,
     positionMs,
     onRequestSeek,
     loadOutlineCached,
@@ -362,6 +479,9 @@ export function OutlineTab(props: OutlineTabProps) {
   } = props;
   const [phase, setPhase] = useState<Phase>('idle');
   const [result, setResult] = useState<OutlineResult | null>(null);
+  const sections = result?.sections ?? [];
+  /** 笔记状态（SPEC-09 9.3）：videoId 变化自动重载 */
+  const notesState = useNotes(videoId, sections);
 
   /** 大纲结果变化 → 通知 App（导图与问答 Tab 消费 sections） */
   useEffect(() => {
@@ -376,6 +496,9 @@ export function OutlineTab(props: OutlineTabProps) {
   /** 存库（存入 Obsidian）：进行中标记与行内结果文本（红线 8：失败不崩面板） */
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<{ ok: boolean; text: string } | null>(null);
+  /** 导入/导出（SPEC-09 9.6）：进行中 / 结果文案 / 待冲突三选一的导入文件 */
+  const [exchanging, setExchanging] = useState(false);
+  const [pendingImport, setPendingImport] = useState<VscOutlineFile | null>(null);
   /** 请求序号：videoId 切换 / 重新生成后，旧请求结果作废 */
   const reqIdRef = useRef(0);
   /** 已尝试自动加载的 videoId（同一挂载周期只试一次；手动生成后不被覆盖） */
@@ -433,6 +556,15 @@ export function OutlineTab(props: OutlineTabProps) {
 
   const handleGenerate = () => {
     if (!videoId) return;
+    // SPEC-09 9.3 A4：有笔记时重生成前先确认（笔记不删，但可能需要手动归位）
+    if (notesState.notes.length > 0) {
+      const ok = window.confirm(
+        `已有 ${notesState.notes.length} 条笔记。重新生成后笔记会按时间自动归位，` +
+          '对不上的进入「未归位」（不会删除），可能需要手动确认。继续？',
+      );
+      if (!ok) return;
+    }
+    const oldSections = sections;
     const reqId = ++reqIdRef.current;
     setPhase('loading');
     setResult(null);
@@ -443,6 +575,10 @@ export function OutlineTab(props: OutlineTabProps) {
         if (reqId !== reqIdRef.current) return;
         setResult(r);
         setPhase(pickPhase(r));
+        // 笔记重新归位（SPEC-09 9.2 接线；旧大纲 → 新大纲）
+        void notesState
+          .reanchor(oldSections, r.sections, meta?.durationMs ?? videoDurationOf(r.sections))
+          .catch((err: unknown) => console.error('[vsc] notes reanchor failed', err));
       })
       .catch((err: unknown) => {
         if (reqId !== reqIdRef.current) return;
@@ -463,6 +599,7 @@ export function OutlineTab(props: OutlineTabProps) {
   const handleRegenerateSection = (section: Section, feedback?: string) => {
     if (!videoId) return;
     const reqId = reqIdRef.current;
+    const oldSections = sections;
     setRegenError(null);
     setRegeneratingId(section.id);
     regenRef
@@ -476,6 +613,10 @@ export function OutlineTab(props: OutlineTabProps) {
         setRegeneratingId(null);
         setResult(r);
         if (r.sections.length > 0) setPhase('ready');
+        // 单章重生成同样归位（该章的笔记可能需要重新对上）
+        void notesState
+          .reanchor(oldSections, r.sections, meta?.durationMs ?? videoDurationOf(r.sections))
+          .catch((err: unknown) => console.error('[vsc] notes reanchor failed', err));
       })
       .catch((err: unknown) => {
         setRegeneratingId(null);
@@ -499,6 +640,112 @@ export function OutlineTab(props: OutlineTabProps) {
         setSaveResult({ ok: false, text: err instanceof Error ? err.message : String(err) }),
       )
       .finally(() => setSaving(false));
+  };
+
+  // -------------------------------------------------------------------------
+  // 导入 / 导出（SPEC-09 9.6）
+  // -------------------------------------------------------------------------
+
+  /** 导出：大纲 + 笔记 → vsc-outline 文件（平台层下载；失败行内提示） */
+  const handleExport = async () => {
+    if (!videoId || !meta || sections.length === 0) return;
+    setExchanging(true);
+    setSaveResult(null);
+    try {
+      const { json, filename } = await exportOutlineFile({
+        videoId,
+        meta,
+        sections,
+        includeNotes: true,
+      });
+      downloadTextFile(filename, json);
+      setSaveResult({ ok: true, text: `已导出：${filename}（含笔记 ${notesState.notes.length} 条）` });
+    } catch (err: unknown) {
+      console.error('[vsc] outline export failed', err);
+      setSaveResult({
+        ok: false,
+        text: `导出失败：${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setExchanging(false);
+    }
+  };
+
+  /** 导入入口：选文件 → 校验（9.5 校验器）→ 有本地大纲进冲突三选一，无则直接替换式导入 */
+  const handleImportPick = async () => {
+    if (!videoId || !meta) return;
+    setSaveResult(null);
+    let picked: { name: string; text: string } | null = null;
+    try {
+      picked = await readTextFileViaInput();
+    } catch (err: unknown) {
+      setSaveResult({
+        ok: false,
+        text: `读取文件失败：${err instanceof Error ? err.message : String(err)}`,
+      });
+      return;
+    }
+    if (!picked) return;
+    const verdict = await parseOutlineImport(picked.text, {
+      bvid: meta.bvid,
+      page: meta.page,
+      title: meta.title,
+    });
+    if (!verdict.ok) {
+      setSaveResult({ ok: false, text: `导入失败：${verdict.message}` });
+      return;
+    }
+    if (verdict.warnings.length > 0) {
+      setSaveResult({ ok: true, text: `注意：${verdict.warnings.join('；')}` });
+    }
+    if (sections.length > 0) {
+      // 本地已有大纲：冲突三选一（spec §3.4）
+      setPendingImport(verdict.file);
+    } else {
+      await applyImport(verdict.file, 'replace');
+    }
+  };
+
+  /** 执行导入：replace=替换本地大纲（先备份）+导入笔记；merge=只合并笔记 */
+  const applyImport = async (file: VscOutlineFile, mode: 'replace' | 'merge') => {
+    if (!videoId) return;
+    setPendingImport(null);
+    setExchanging(true);
+    try {
+      const durationMs = meta?.durationMs ?? file.video.durationMs;
+      if (mode === 'replace') {
+        // 替换前自动备份本地大纲（spec §3.4）
+        const backup = await buildLocalBackup({ videoId, meta: meta!, sections });
+        if (backup) downloadTextFile(backup.filename, backup.json);
+        const imported = await saveImportedOutline(videoId, file);
+        // 派生字段重算（score/density；cueRange 留空由后续字幕流程回填）
+        const rescored = rescoreOutline(imported);
+        setResult({ sections: rescored, chunkState: [], droppedBySnap: 0, budgetHit: false, failedChunks: 0 });
+        setPhase('ready');
+        const localIds = new Set(notesState.notes.map((n) => n.id));
+        const mapped = mapImportedNotes(file, rescored, durationMs, localIds);
+        await saveImportedNotes(mapped);
+        await notesState.reload();
+        setSaveResult({
+          ok: true,
+          text: `已导入大纲（${rescored.length} 章）与 ${mapped.length} 条笔记${backup ? '；本地原大纲已备份下载' : ''}`,
+        });
+      } else {
+        const localIds = new Set(notesState.notes.map((n) => n.id));
+        const mapped = mapImportedNotes(file, sections, durationMs, localIds);
+        await saveImportedNotes(mapped);
+        await notesState.reload();
+        setSaveResult({ ok: true, text: `已合并 ${mapped.length} 条笔记到本地大纲` });
+      }
+    } catch (err: unknown) {
+      console.error('[vsc] outline import failed', err);
+      setSaveResult({
+        ok: false,
+        text: `导入失败：${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setExchanging(false);
+    }
   };
 
   // 无视频 / 模型未配置：占位（与 SubtitleTab idle 同结构）
@@ -575,7 +822,6 @@ export function OutlineTab(props: OutlineTabProps) {
   }
 
   // ready：章节列表 + 头部统计与全局重新生成入口（单章重生成进行中禁用全局按钮）
-  const sections = result?.sections ?? [];
   const active = findActiveSection(sections, positionMs);
   return (
     <div className="outline-tab">
@@ -592,6 +838,24 @@ export function OutlineTab(props: OutlineTabProps) {
             {saving ? '存入中…' : '存入 Obsidian'}
           </button>
         )}
+        <button
+          type="button"
+          className="btn"
+          onClick={() => void handleExport()}
+          disabled={exchanging}
+          title="导出大纲与笔记为 vsc-outline 交换文件（可分享他人导入）"
+        >
+          {exchanging ? '处理中…' : '导出'}
+        </button>
+        <button
+          type="button"
+          className="btn"
+          onClick={() => void handleImportPick()}
+          disabled={exchanging}
+          title="导入他人分享的 vsc-outline 文件"
+        >
+          导入
+        </button>
         <button
           type="button"
           className="btn"
@@ -613,7 +877,41 @@ export function OutlineTab(props: OutlineTabProps) {
         regeneratingId={regeneratingId}
         regenError={regenError}
         onSubmitRegen={handleRegenerateSection}
+        positionMs={positionMs}
+        notesState={notesState}
       />
+      {/* 未归位笔记（重生成后对不上的集中展示，永不丢弃） */}
+      <UnanchoredNotes
+        notes={notesState.unanchored}
+        busyId={notesState.busyId}
+        state={notesState}
+        onSeek={onRequestSeek}
+      />
+      {/* 导入冲突三选一（spec §3.4：本地已有大纲时） */}
+      {pendingImport && (
+        <div className="vnote-import-dialog" role="dialog">
+          <p className="vnote-import-title">
+            本地已有大纲。导入《{pendingImport.video.title}》P{pendingImport.video.page} 的大纲
+            （{pendingImport.outline.sections.length} 章、{pendingImport.notes.length} 条笔记）：
+          </p>
+          <div className="vnote-import-btns">
+            <button type="button" className="btn btn-primary" onClick={() => void applyImport(pendingImport, 'replace')}>
+              替换本地大纲（先自动备份）
+            </button>
+            <button type="button" className="btn" onClick={() => void applyImport(pendingImport, 'merge')}>
+              只合并笔记
+            </button>
+            <button type="button" className="btn" onClick={() => setPendingImport(null)}>
+              取消
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+/** 视频时长兜底：meta 缺失时取末章 endMs（归位越界判定用） */
+function videoDurationOf(sections: Section[]): number {
+  return sections.length > 0 ? sections[sections.length - 1].endMs : 0;
 }

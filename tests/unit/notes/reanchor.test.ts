@@ -235,8 +235,8 @@ describe('reanchorNotes（spec §3.3）', () => {
     expect(r.unanchoredIds.has('n_out')).toBe(true);
     expect(r.unanchoredIds.has('n_neg')).toBe(true);
     expect(r.unanchoredIds.has('n_ok')).toBe(false);
-    expect(r.notes.find((n) => n.id === 'n_out').anchor.sectionId).toBeNull();
-    expect(r.notes.find((n) => n.id === 'n_out').anchor.tMs).toBe(DURATION + 5_000); // tMs 保留
+    expect(r.notes.find((n) => n.id === 'n_out')!.anchor.sectionId).toBeNull();
+    expect(r.notes.find((n) => n.id === 'n_out')!.anchor.tMs).toBe(DURATION + 5_000); // tMs 保留
   });
 
   it('空新大纲（极端边界）→ 全部未归位，仍不丢', () => {
