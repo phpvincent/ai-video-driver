@@ -1,35 +1,35 @@
 /**
- * 导图 Tab（SPEC-04 范围变更二次迭代：概念图改为 HTML 知识卡片流）：
- * - 概念图（默认视图）：props.conceptMap（缓存/生成）或本地术语关联图降级；
- *   纯 HTML/CSS 卡片流（窄边栏媒介适配，SVG/d3-flextree 已移除）：
- *   概念域卡（域名 + 概念数徽标）→ 概念行（名称粗体点击跳播第一个锚点、
- *   重要度文字徽标〔核心/重要/常用/了解，替换圆点〕、时间 chips [mm:ss]
- *   可点跳播、细节折叠 grid 0fr/1fr 过渡）；
+ * 导图 Tab（SPEC-04 四次迭代：概念图 v3 = 知识流程图，竖向阶段流）：
+ * - 概念图（默认视图）：props.conceptMap.stages（缓存/生成）或本地术语关联图降级；
+ *   竖向阶段流程（窄边栏唯一主轴，体现"概念属于阶段，阶段构成流程"）：
+ *   阶段块（阶段头 = 步骤圆徽 1/2/3… + 阶段名 + 概念数）→ 阶段间连接
+ *   （竖线 + 下箭头 kp-connector，最后阶段无）→ 阶段内概念行（rail 贯穿）；
+ * - 概念行：概念名粗体（点击跳 primaryAnchorTMs = 得分最高章节起点）+
+ *   重要度文字徽标（核心/重要/常用/了解）+ 主锚 chip 实心强调（cm-chip-primary，
+ *   anchors[0]）+ 次锚 chips 次级样式（其余锚按时间升序）+ details 折叠
+ *   （grid 0fr/1fr 过渡）；
  * - 降级横幅（degraded=true）：黄底"模型生成失败，当前为术语关联图（降级）"
  *   + 重试按钮（调 props.generateConceptMap），消除静默降级；
  * - 概念跟随：matchConcepts 精确匹配（概念 label 归一化后 ∈ 当前章节 terms，
- *  且该 section 覆盖 positionMs；不命中不亮，修复 substring 过松亮起多个）
- *   → .concept-active 高亮（过渡动画）+ 滚出可视区时平滑滚动；
- * - 三次迭代（知识路径）：域按最早时间锚排序（orderDomainsByEarliestAnchor）+
- *   序号徽标（01/02…，formatDomainIndex）+ 域间垂直连接线（kp-connector，首卡无）
- *   呈现"第一步 → 第二步"推进逻辑；卡内概念行左侧竖向 rail（节点圆点有语义：
- *   = 该概念第一个锚点时间，hover 显示）；播放命中的概念所在域卡边框加重（domain-current）；
+ *   且该 section 覆盖 positionMs；不命中不亮）→ .concept-active 高亮
+ *   （过渡动画）+ 滚出可视区时平滑滚动；命中概念所在阶段块 stage-current 加重；
  * - 章节时间轴（次要视图）：markmap 实现整体保留为 ChronoView。
  * 组件完全 props 驱动。降级判定双手段并存（types.ts 不得加字段）：
- * props.degraded（App 生成 catch 路径设置）+ 根 label/model 约定（isTermIndexData）。
- * markmap 仅由 ChronoView 的 effect 内动态 import（概念视图不加载引擎）。
+ * props.degraded（App 生成 catch 路径设置）+ model='term-index' 约定
+ * （isTermIndexData）。markmap 仅由 ChronoView 的 effect 内动态 import
+ * （概念视图不加载引擎）。
  */
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type { Markmap } from 'markmap-view';
-import type { ConceptMapData, ConceptNode, Section } from '../types';
-import { TERM_INDEX_ROOT_LABEL, buildTermIndexMap } from '../core/pipeline/conceptMap';
+import type { ConceptMapData, ConceptItem, ConceptStage, Section } from '../types';
+import { buildTermIndexMap } from '../core/pipeline/conceptMap';
 import { formatTimestamp } from './SubtitleTab';
 import './mindmap.css';
 
 export interface MindmapTabProps {
   /** 大纲章节（空数组 = 未生成，显示引导） */
   sections?: Section[];
-  /** 视频标题（概念图虚拟根 label 与生成入参） */
+  /** 视频标题（概念图生成入参） */
   videoTitle?: string;
   /** 当前播放位置（毫秒） */
   positionMs?: number;
@@ -41,11 +41,11 @@ export interface MindmapTabProps {
   onOpenSettings?: () => void;
   /** 生成概念图（注入 mindmapLoader.generateConceptMap 的包装；未接线时组件降级为本地术语图） */
   generateConceptMap?: (sections: Section[], videoTitle: string) => Promise<void>;
-  /** 缓存命中的概念图（App 注入） */
+  /** 缓存命中的概念图（App 注入，stages 阶段流） */
   conceptMap?: ConceptMapData | null;
   /** 生成中（骨架动画） */
   generating?: boolean;
-  /** conceptMap 为降级术语关联图（App 生成 catch 路径设置；与根 label 约定双手段并存） */
+  /** conceptMap 为降级术语关联图（App 生成 catch 路径设置；与 model 约定双手段并存） */
   degraded?: boolean;
   /** 无大纲时引导去大纲 Tab 生成（可选） */
   onGoOutline?: () => void;
@@ -140,7 +140,7 @@ export function findActiveSectionIndex(sections: Section[], positionMs: number):
 const normalizeTerm = (s: string): string => s.trim().toLowerCase();
 
 /**
- * 概念跟随命中（纯函数，导出供单测；二次迭代改精确匹配）：
+ * 概念跟随命中（纯函数，导出供单测；精确匹配）：
  * 当前章节（二分，覆盖 positionMs）的 terms 与概念 label 双侧归一化后
  * **精确相等**才命中（修复 substring 包含匹配过松导致"亮起好多个"）；
  * 章节标题不再参与匹配。返回命中的概念 label 列表（去重，遍历顺序稳定）。
@@ -148,23 +148,19 @@ const normalizeTerm = (s: string): string => s.trim().toLowerCase();
 export function matchConcepts(
   sections: Section[],
   positionMs: number,
-  root: ConceptNode,
+  stages: ConceptStage[],
 ): string[] {
   const idx = findActiveSectionIndex(sections, positionMs);
   if (idx < 0) return [];
   const termSet = new Set(sections[idx].terms.map(normalizeTerm));
   const out: string[] = [];
-  const walk = (n: ConceptNode) => {
-    if (
-      n.kind === 'concept' &&
-      termSet.has(normalizeTerm(n.label)) &&
-      !out.includes(n.label)
-    ) {
-      out.push(n.label);
+  for (const stage of stages) {
+    for (const c of stage.concepts) {
+      if (termSet.has(normalizeTerm(c.label)) && !out.includes(c.label)) {
+        out.push(c.label);
+      }
     }
-    for (const child of n.children) walk(child);
-  };
-  walk(root);
+  }
   return out;
 }
 
@@ -176,7 +172,7 @@ export function formatRange(startMs: number, endMs?: number): string {
 }
 
 /**
- * 重要度文字徽标（二次迭代：替换无语义圆点）：
+ * 重要度文字徽标（替换无语义圆点）：
  * >=5 核心 / >=4 重要 / >=3 常用 / 其他 了解。
  */
 export function importanceBadge(importance: number): string {
@@ -188,49 +184,16 @@ export function importanceBadge(importance: number): string {
 
 /**
  * 降级数据判定（ConceptMapData 无 degraded 字段的约定手段，导出供单测）：
- * termIndexFallback 产物 model='term-index' 且根 label='术语关联图'。
+ * termIndexFallback 产物 model='term-index'。
  */
 export function isTermIndexData(data: ConceptMapData): boolean {
-  return data.model === 'term-index' || data.root.label === TERM_INDEX_ROOT_LABEL;
+  return data.model === 'term-index';
 }
 
-/**
- * 域内最早时间锚（纯函数）：递归收集域下所有节点 anchors 的最小 tMs；
- * 无任何锚返回 null。
- */
-function earliestAnchorMs(domain: ConceptNode): number | null {
-  let earliest: number | null = null;
-  const walk = (n: ConceptNode): void => {
-    for (const a of n.anchors) {
-      if (earliest === null || a.tMs < earliest) earliest = a.tMs;
-    }
-    for (const child of n.children) walk(child);
-  };
-  walk(domain);
-  return earliest;
-}
-
-/**
- * 域排序（三次迭代：知识路径的流程感，导出供单测）：
- * root.children 中 kind='domain' 的域，按各域内所有概念 anchors 的最早 tMs 升序，
- * 呈现"先学什么 → 再学什么"的推进逻辑；无锚的域排最后并保持原相对顺序（稳定排序）。
- */
-export function orderDomainsByEarliestAnchor(root: ConceptNode): ConceptNode[] {
-  const keyed = root.children
-    .filter((n) => n.kind === 'domain')
-    .map((domain, i) => ({ domain, i, earliest: earliestAnchorMs(domain) }));
-  keyed.sort((a, b) => {
-    if (a.earliest === null && b.earliest === null) return a.i - b.i;
-    if (a.earliest === null) return 1;
-    if (b.earliest === null) return -1;
-    return a.earliest - b.earliest || a.i - b.i;
-  });
-  return keyed.map((k) => k.domain);
-}
-
-/** 域序号徽标（导出供单测）：排序后下标 + 1，两位数字符串（01/02/…，超过 99 自然进位） */
-export function formatDomainIndex(i: number): string {
-  return String(i + 1).padStart(2, '0');
+/** 概念最早出现时间（rail 圆点语义；无锚返回 null） */
+function earliestAnchorMs(concept: ConceptItem): number | null {
+  if (concept.anchors.length === 0) return null;
+  return Math.min(...concept.anchors.map((a) => a.tMs));
 }
 
 /** 空大纲引导（独立导出：不依赖 markmap/DOM，renderToString 可测） */
@@ -390,7 +353,7 @@ export function ChronoView({
 }
 
 // ---------------------------------------------------------------------------
-// 概念图视图（HTML 知识卡片流，二次迭代：SVG/d3-flextree 已移除）
+// 概念图视图（概念图 v3：竖向阶段流程，HTML/CSS，无 SVG）
 // ---------------------------------------------------------------------------
 
 /** 概念图标签与引导文案（导出供单测断言） */
@@ -409,10 +372,12 @@ export const CONCEPT_RETRY_TEXT = '重试';
 /** 细节折叠切换文案（▸ 收起态 / ▾ 展开态） */
 export const CONCEPT_DETAILS_TOGGLE_TEXT = '细节 ▸';
 export const CONCEPT_DETAILS_TOGGLE_OPEN_TEXT = '细节 ▾';
+/** 主锚 chip 的无障碍/测试语义标记 */
+export const PRIMARY_CHIP_CLASS = 'cm-chip-primary';
 
-/** 概念图视图（HTML 卡片流；root 由调用方决定来源：缓存、App 降级或本地降级） */
+/** 概念图视图（竖向阶段流程；stages 由调用方决定来源：缓存、App 降级或本地降级） */
 function ConceptView({
-  root,
+  stages,
   sections,
   positionMs,
   onRequestSeek,
@@ -420,7 +385,7 @@ function ConceptView({
   degradedText,
   onRetry,
 }: {
-  root: ConceptNode;
+  stages: ConceptStage[];
   sections: Section[];
   positionMs: number;
   onRequestSeek?: (ms: number) => void;
@@ -433,17 +398,17 @@ function ConceptView({
   /** 展开细节区的概念 id（默认全部收起） */
   const [openDetails, setOpenDetails] = useState<ReadonlySet<string>>(() => new Set());
   /** 首次挂载新图时重置折叠态 */
-  const rootKeyRef = useRef('');
-  const rootKey = `${root.id}:${root.children.map((c) => c.id).join(',')}`;
-  if (rootKeyRef.current !== rootKey) {
-    rootKeyRef.current = rootKey;
+  const stagesKeyRef = useRef('');
+  const stagesKey = stages.map((s) => s.id).join(',');
+  if (stagesKeyRef.current !== stagesKey) {
+    stagesKeyRef.current = stagesKey;
     if (openDetails.size > 0) setOpenDetails(new Set());
   }
 
   // 概念跟随：命中 label 集合（精确匹配，归一化后比较）
   const activeLabels = useMemo(
-    () => new Set(matchConcepts(sections, positionMs, root).map((l) => l.toLowerCase())),
-    [sections, positionMs, root],
+    () => new Set(matchConcepts(sections, positionMs, stages).map((l) => l.toLowerCase())),
+    [sections, positionMs, stages],
   );
   const lastActiveKeyRef = useRef('');
 
@@ -473,24 +438,21 @@ function ConceptView({
     });
   };
 
-  // 三次迭代（知识路径）：域按最早时间锚排序（无锚垫后，稳定），
-  // 卡片流呈现"第一步 → 第二步 → …"的学习推进逻辑
-  const domains = useMemo(() => orderDomainsByEarliestAnchor(root), [root]);
-
-  // 当前域高亮：播放位置命中的概念（matchConcepts 精确匹配）所在域卡边框加重
-  const activeDomainIds = useMemo(() => {
+  // 当前阶段高亮：播放位置命中的概念所在阶段块加重（stage-current）
+  const activeStageIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const domain of domains) {
-      for (const c of domain.children) {
-        if (c.kind === 'concept' && activeLabels.has(normalizeTerm(c.label))) {
-          ids.add(domain.id);
+    for (const stage of stages) {
+      for (const c of stage.concepts) {
+        if (activeLabels.has(normalizeTerm(c.label))) {
+          ids.add(stage.id);
           break;
         }
       }
     }
     return ids;
-  }, [domains, activeLabels]);
+  }, [stages, activeLabels]);
 
+  // 阶段顺序 = 模型输出的讲解推进顺序（确定性：不重排）
   return (
     <div className="cm-container" ref={containerRef}>
       {degraded && (
@@ -503,47 +465,46 @@ function ConceptView({
           )}
         </div>
       )}
-      {domains.map((domain, di) => (
-        <Fragment key={domain.id}>
-          {/* 域间连接线：卡与卡之间垂直竖线 + 向下箭头（首卡无），呈现推进感 */}
-          {di > 0 && <div className="kp-connector" aria-hidden="true" />}
+      {stages.map((stage, si) => (
+        <Fragment key={stage.id}>
+          {/* 阶段间连接：竖线 + 下箭头（首阶段无），体现推进 */}
+          {si > 0 && <div className="kp-connector" aria-hidden="true" />}
           <section
-            className={`cm-card${activeDomainIds.has(domain.id) ? ' domain-current' : ''}`}
+            className={`cm-stage${activeStageIds.has(stage.id) ? ' stage-current' : ''}`}
           >
-            <header className="cm-card-header">
-              <span className="cm-domain-index">{formatDomainIndex(di)}</span>
-              <span className="cm-card-title">{domain.label}</span>
-              <span className="cm-card-count">{`${domain.children.length} 概念`}</span>
+            <header className="cm-stage-header">
+              <span className="cm-stage-step">{si + 1}</span>
+              <span className="cm-stage-title">{stage.label}</span>
+              <span className="cm-stage-count">{`${stage.concepts.length} 概念`}</span>
             </header>
-            <div className="cm-card-body">
-              {domain.children
-                .filter((n) => n.kind === 'concept')
-                .map((concept) => {
-                  const active = activeLabels.has(normalizeTerm(concept.label));
-                  const open = openDetails.has(concept.id);
-                  return (
-                    <div key={concept.id} className={`cm-concept${active ? ' concept-active' : ''}`}>
-                      {/* rail 节点圆点：有语义——即该概念时间 chips 的第一个锚点时间，
-                          hover 显示（与已砍的"无语义圆点"不同；无锚概念不渲染圆点） */}
-                      {concept.anchors.length > 0 && (
-                        <span
-                          className="cm-rail-dot"
-                          title={`首次出现 ${formatTimestamp(concept.anchors[0].tMs)}`}
-                        />
-                      )}
-                      <div className="cm-concept-main">
+            <div className="cm-stage-body">
+              {stage.concepts.map((concept) => {
+                const active = activeLabels.has(normalizeTerm(concept.label));
+                const open = openDetails.has(concept.id);
+                const earliest = earliestAnchorMs(concept);
+                const [primary, ...rest] = concept.anchors;
+                return (
+                  <div key={concept.id} className={`cm-concept${active ? ' concept-active' : ''}`}>
+                    {/* rail 节点圆点：有语义——该概念最早锚点时间，hover 显示；无锚不渲染 */}
+                    {earliest !== null && (
+                      <span
+                        className="cm-rail-dot"
+                        title={`首次出现 ${formatTimestamp(earliest)}`}
+                      />
+                    )}
+                    <div className="cm-concept-main">
                       <button
                         type="button"
                         className="cm-concept-label"
                         disabled={concept.anchors.length === 0}
                         title={
-                          concept.anchors.length > 0
-                            ? `跳播到 ${formatRange(concept.anchors[0].tMs)}`
+                          primary
+                            ? `跳播到 ${formatRange(concept.primaryAnchorTMs)}（主锚）`
                             : undefined
                         }
                         onClick={() => {
                           if (concept.anchors.length > 0) {
-                            onRequestSeek?.(concept.anchors[0].tMs);
+                            onRequestSeek?.(concept.primaryAnchorTMs);
                           }
                         }}
                       >
@@ -558,7 +519,20 @@ function ConceptView({
                     </div>
                     {concept.anchors.length > 0 && (
                       <div className="cm-chips">
-                        {concept.anchors.map((a, i) => (
+                        {/* 主锚 chip：实心强调（anchors[0] = 得分最高章节） */}
+                        {primary && (
+                          <button
+                            key={`${concept.id}-primary`}
+                            type="button"
+                            className={`cm-chip ${PRIMARY_CHIP_CLASS}`}
+                            title={`主锚（重点章节）${formatRange(primary.tMs)}`}
+                            onClick={() => onRequestSeek?.(primary.tMs)}
+                          >
+                            {`[${formatTimestamp(primary.tMs)}]`}
+                          </button>
+                        )}
+                        {/* 次锚 chips：次级样式，按时间升序 */}
+                        {rest.map((a, i) => (
                           <button
                             key={`${concept.id}-a${i}`}
                             type="button"
@@ -571,7 +545,7 @@ function ConceptView({
                         ))}
                       </div>
                     )}
-                    {concept.children.length > 0 && (
+                    {concept.details.length > 0 && (
                       <>
                         <button
                           type="button"
@@ -584,8 +558,8 @@ function ConceptView({
                         {/* 细节折叠：常驻渲染 + grid 0fr/1fr 过渡（参考 outline-regen-collapse） */}
                         <div className={`cm-details-collapse${open ? ' open' : ''}`}>
                           <ul className="cm-details">
-                            {concept.children.map((d) => (
-                              <li key={d.id}>{d.label}</li>
+                            {concept.details.map((d, i) => (
+                              <li key={`${concept.id}-d${i}`}>{d}</li>
                             ))}
                           </ul>
                         </div>
@@ -594,8 +568,8 @@ function ConceptView({
                   </div>
                 );
               })}
-          </div>
-        </section>
+            </div>
+          </section>
         </Fragment>
       ))}
     </div>
@@ -659,7 +633,7 @@ export function MindmapTab(props: MindmapTabProps) {
   };
 
   // 降级判定双手段并存：props.degraded（App 生成 catch 路径设置）优先，
-  // 根 label 约定 / model='term-index' 兜底（types.ts 的 ConceptMapData 无字段）
+  // model='term-index' 约定兜底（types.ts 的 ConceptMapData 无字段）
   const mapDegraded = degraded || (conceptMap != null && isTermIndexData(conceptMap));
 
   const showEmptyGuide = view === 'concept' && sections.length === 0 && !conceptMap;
@@ -689,7 +663,7 @@ export function MindmapTab(props: MindmapTabProps) {
         <div className="mm-view-body">
           {conceptMap ? (
             <ConceptView
-              root={conceptMap.root}
+              stages={conceptMap.stages}
               sections={sections}
               positionMs={positionMs}
               onRequestSeek={onRequestSeek}
@@ -702,7 +676,7 @@ export function MindmapTab(props: MindmapTabProps) {
           ) : generateConceptMap ? (
             modelReady ? (
               <div className="tab-placeholder cm-gate">
-                <p>基于大纲重组为知识结构（概念域 → 概念 → 细节）</p>
+                <p>基于大纲重组为知识流程（阶段 → 概念 → 细节）</p>
                 <button
                   type="button"
                   className="btn btn-primary"
@@ -723,7 +697,7 @@ export function MindmapTab(props: MindmapTabProps) {
             )
           ) : fallbackMap ? (
             <ConceptView
-              root={fallbackMap.root}
+              stages={fallbackMap.stages}
               sections={sections}
               positionMs={positionMs}
               onRequestSeek={onRequestSeek}

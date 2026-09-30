@@ -45,20 +45,21 @@ export const DENSITY = {
   lowQuantile: 0.25,
 } as const;
 
-/** 概念知识图（SPEC-04 范围变更）：结构与阈值约束（pipeline zod 与 UI 共用） */
+/** 概念知识图（SPEC-04 四次迭代：阶段流）：结构与阈值约束（pipeline zod 与 UI 共用） */
 export const CONCEPT_MAP = {
-  /** 概念域数量下/上限（模型输出 zod 约束） */
-  domainsMin: 3,
-  domainsMax: 6,
-  /** 每域概念数量上限 */
-  conceptsPerDomainMax: 5,
-  /** 节点标签展示长度上限（代码截断目标，所有构树路径强制 shortenLabel） */
+  /** 阶段数量下/上限（模型输出 zod 约束） */
+  stagesMin: 3,
+  stagesMax: 5,
+  /** 阶段名长度上限（zod 硬上限，阶段名体现推进逻辑可稍长） */
+  stageLabelMax: 20,
+  /** 每阶段概念数量下/上限 */
+  conceptsPerStageMin: 2,
+  conceptsPerStageMax: 6,
+  /** 概念标签展示长度上限（代码截断目标，所有构树路径强制 shortenLabel） */
   labelMax: 12,
-  /** 节点标签 zod 硬上限（防注入式超长仍拒；labelMax~hardMax 之间由代码截断，
+  /** 概念标签 zod 硬上限（防注入式超长仍拒；labelMax~hardMax 之间由代码截断，
    *  二次迭代：模型输出 13~16 字常见，12 字硬拒是降级根因） */
   labelHardMax: 30,
-  /** 根节点（视频主题短语）长度上限 */
-  rootLabelMax: 16,
   /** 细节短语数量上限 / 展示长度上限（代码截断目标） */
   detailsMax: 4,
   detailLabelMax: 20,
@@ -66,8 +67,13 @@ export const CONCEPT_MAP = {
   detailHardMax: 40,
   /** 术语关联图（降级）最多展示的术语数 */
   termsTop: 12,
-  /** 降级 domain 名称 */
-  fallbackDomainLabel: '核心术语',
+  /** 降级阶段名称 */
+  fallbackStageLabel: '核心术语',
+  /** 预告章节识别：只检查前 N 个章节（index < N，P8 洞察：预告章在开头） */
+  overviewSectionMaxIndex: 2,
+  /** 预告章节识别：章节文本命中全部概念 label 的比例阈值（≥ 则视为预告章，
+   *  其 startMs 不进入任何 anchor，修复 00:01 开场锚点 bug） */
+  overviewHitRatio: 0.5,
   /** 解析失败重试次数（附错误信息重试） */
   maxRetries: 1,
 } as const;

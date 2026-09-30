@@ -171,7 +171,7 @@ export interface ObsidianConfig {
 }
 
 // ---------------------------------------------------------------------------
-// 概念知识图（SPEC-04 范围变更：导图 = 知识导航，非时间导航）
+// 概念知识图（SPEC-04 四次迭代：知识流程图，导图 = 知识导航）
 // ---------------------------------------------------------------------------
 
 /** 概念时间锚：tMs 为该概念出现章节的 startMs（吸附产物，红线 2） */
@@ -180,27 +180,39 @@ export interface ConceptAnchor {
   sectionId: string;
 }
 
-/** 概念图节点：根为 kind='domain' 的虚拟根，其下为概念域 → 概念 → 细节 */
-export interface ConceptNode {
-  /** cm_0001...（根为 cm_root） */
+/** 概念（阶段内）：anchors[0] 为主锚（得分最高章节，实心强调），其余次锚按时间升序 */
+export interface ConceptItem {
+  /** cm_0001... */
   id: string;
-  /** ≤12 字短语（根 ≤16 字） */
+  /** ≤12 字短语 */
   label: string;
-  kind: 'domain' | 'concept' | 'detail';
-  /** 1-5（domain = 子概念 importance 最大值） */
+  /** 1-5 */
   importance: number;
-  /** 时间锚（detail 无锚；concept 跨章节合并出现点） */
+  /** 主锚在前；主锚 = 实质讲解该概念且 score 最高的章节（排除预告章节） */
   anchors: ConceptAnchor[];
-  children: ConceptNode[];
+  /** 主锚时间（该概念得分最高章节的 startMs；无锚为 -1） */
+  primaryAnchorTMs: number;
+  /** 补充短语（≤4 条，每条 ≤20 字） */
+  details: string[];
 }
 
-/** 概念图完整数据（缓存于 outlines store，键 concept:: 前缀） */
+/** 阶段（讲解推进逻辑的最小单位：概念属于阶段，阶段构成流程） */
+export interface ConceptStage {
+  /** st_01... */
+  id: string;
+  /** 阶段名（如"核心机制"，≤20 字） */
+  label: string;
+  /** 阶段内概念（模型输出顺序 = 讲解顺序，保留不重排） */
+  concepts: ConceptItem[];
+}
+
+/** 概念图完整数据（缓存于 outlines store，键 concept:: 前缀；阶段流结构，v3） */
 export interface ConceptMapData {
   videoId: VideoId;
   promptVersion: string;
   model: string;
-  /** kind='domain' 的虚拟根，label = 视频主题短语（≤16 字） */
-  root: ConceptNode;
+  /** 3~5 个阶段（模型按内容逻辑划分，顺序 = 讲解推进顺序） */
+  stages: ConceptStage[];
   generatedAt: string;
 }
 

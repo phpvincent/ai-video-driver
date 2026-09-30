@@ -90,12 +90,12 @@ export interface RunOutlineOptions {
 }
 
 // ---------------------------------------------------------------------------
-// 概念知识图（SPEC-04 范围变更）：模型输出原始结构（zod Schema 定义在
+// 概念知识图（SPEC-04 四次迭代：阶段流）：模型输出原始结构（zod Schema 定义在
 // conceptMap.ts，此处只放与 OutlineModelFn 同构的注入接口与原始形状）。
 // ---------------------------------------------------------------------------
 
 /**
- * 概念图模型调用注入接口：content 应为 ConceptTree JSON 字符串。
+ * 概念图模型调用注入接口：content 应为阶段流 JSON 字符串。
  * 与 OutlineModelFn 同构，由调用方适配到 core/harness/modelClient。
  */
 export type ConceptModelFn = (req: {
@@ -111,13 +111,13 @@ export interface ConceptRaw {
   details: string[];
 }
 
-/** 模型输出的单个概念域（原始形状，Schema 校验后） */
-export interface ConceptDomainRaw {
+/** 模型输出的单个阶段（原始形状，Schema 校验后） */
+export interface ConceptStageRaw {
   label: string;
   concepts: ConceptRaw[];
 }
 
-/** 模型输出整体（原始形状，Schema 校验后） */
-export interface ConceptTreeRaw {
-  domains: ConceptDomainRaw[];
+/** 模型输出整体（原始形状，Schema 校验后）：阶段流 */
+export interface ConceptStagesRaw {
+  stages: ConceptStageRaw[];
 }

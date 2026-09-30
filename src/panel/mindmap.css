@@ -1,4 +1,4 @@
-/* 导图 Tab（SPEC-04 二次迭代）：概念知识图（HTML 知识卡片流）+ 章节时间轴（markmap） */
+/* 导图 Tab（SPEC-04 四次迭代）：概念图 v3 = 竖向阶段流程（HTML/CSS）+ 章节时间轴（markmap） */
 
 .mindmap-tab {
   display: flex;
@@ -38,12 +38,13 @@
   flex-direction: column;
 }
 
-/* ---------------- 概念图视图：HTML 知识卡片流（浅色主题） ---------------- */
+/* ---------------- 概念图视图：竖向阶段流程（四次迭代，浅色主题） ---------------- */
 
 .cm-container {
   flex: 1;
   min-height: 320px;
   overflow: auto;
+  padding: 8px 0;
   background: #fff;
   border: 1px solid #e5e6eb;
   border-radius: 8px;
@@ -80,33 +81,49 @@
   background: #fdf3d6;
 }
 
-/* 概念域卡片 */
-.cm-card {
-  margin: 8px;
+/* 阶段块（竖向流程的最小单位） */
+.cm-stage {
+  margin: 0 8px;
   background: #fff;
   border: 1px solid #e5e6eb;
   border-radius: 8px;
   overflow: hidden;
 }
 
-.cm-card-header {
+.cm-stage-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   padding: 8px 10px;
   background: #f0f5ff;
   border-bottom: 1px solid #e5e6eb;
 }
 
-.cm-card-title {
+/* 步骤圆徽（1/2/3…，实心圆，体现流程步骤） */
+.cm-stage-step {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: #165dff;
+  border-radius: 50%;
+}
+
+.cm-stage-title {
+  flex: 1 1 auto;
   font-size: 13px;
   font-weight: 600;
   color: #0e42d2;
 }
 
 /* 概念数徽标 */
-.cm-card-count {
+.cm-stage-count {
   flex: 0 0 auto;
   padding: 1px 8px;
   font-size: 11px;
@@ -116,8 +133,11 @@
   border-radius: 999px;
 }
 
-.cm-card-body {
-  padding: 2px 0;
+/* 阶段内概念行容器：rail 竖线贯穿（左侧） */
+.cm-stage-body {
+  margin-left: 18px;
+  border-left: 2px solid #dde3ee;
+  padding: 2px 0 2px 6px;
 }
 
 /* 概念行块（淡入 + 高亮过渡；relative 供 rail 节点圆点定位） */
@@ -148,7 +168,7 @@
   gap: 6px;
 }
 
-/* 概念名（粗体，点击跳播第一个锚点） */
+/* 概念名（粗体，点击跳主锚 primaryAnchorTMs） */
 .cm-concept-label {
   flex: 1 1 auto;
   padding: 0;
@@ -170,7 +190,7 @@
   color: #165dff;
 }
 
-/* 重要度文字徽标（data-importance 分级着色，替换无语义圆点） */
+/* 重要度文字徽标（data-importance 分级着色） */
 .cm-importance-badge {
   flex: 0 0 auto;
   padding: 1px 6px;
@@ -203,13 +223,26 @@
   margin-top: 4px;
 }
 
+/* 主锚 chip：实心强调（anchors[0] = 得分最高章节） */
+.cm-chip.cm-chip-primary {
+  color: #fff;
+  background: #165dff;
+  border-color: #165dff;
+  font-weight: 600;
+}
+
+.cm-chip.cm-chip-primary:hover {
+  background: #0e42d2;
+}
+
+/* 次锚 chip：次级样式（浅底描边，弱于主锚） */
 .cm-chip {
   padding: 1px 6px;
   font-size: 10px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: #165dff;
-  background: #f0f5ff;
-  border: 1px solid #d5e3ff;
+  color: #4e5969;
+  background: #f7f8fa;
+  border: 1px solid #e5e6eb;
   border-radius: 4px;
   cursor: pointer;
 }
@@ -282,26 +315,9 @@
   }
 }
 
-/* ---------------- 三次迭代：知识路径（流程感/逻辑感） ---------------- */
+/* ---------------- 四次迭代：阶段间连接（流程推进感） ---------------- */
 
-/* 域序号徽标（01/02…，排序后下标 + 1） */
-.cm-domain-index {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 22px;
-  height: 18px;
-  padding: 0 4px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  font-weight: 600;
-  color: #165dff;
-  background: #e0eaff;
-  border-radius: 5px;
-}
-
-/* 域间连接线：卡与卡之间垂直竖线 + 向下箭头（约 20px 高，首卡无），
+/* 阶段间连接线：阶段块之间垂直竖线 + 向下箭头（约 20px 高，首阶段无），
    呈现"第一步 → 第二步 → …"的推进感（纯 CSS border 实现） */
 .kp-connector {
   position: relative;
@@ -312,7 +328,7 @@
 .kp-connector::before {
   content: '';
   position: absolute;
-  left: 21px;
+  left: 24px;
   top: 0;
   bottom: 5px;
   width: 2px;
@@ -323,7 +339,7 @@
 .kp-connector::after {
   content: '';
   position: absolute;
-  left: 16px;
+  left: 19px;
   bottom: 0;
   width: 0;
   height: 0;
@@ -332,20 +348,13 @@
   border-bottom: none;
 }
 
-/* 当前域高亮：播放位置命中的概念所在域卡边框加重 */
-.cm-card.domain-current {
+/* 当前阶段高亮：播放位置命中的概念所在阶段块边框加重 */
+.cm-stage.stage-current {
   border-color: #165dff;
   box-shadow: 0 0 0 1px #165dff;
 }
 
-/* 卡内概念行 rail：左侧竖向贯穿线（概念行的学习次序轴） */
-.cm-card-body {
-  margin-left: 14px;
-  border-left: 2px solid #dde3ee;
-  padding: 2px 0 2px 6px;
-}
-
-/* rail 节点圆点：有语义——该概念时间 chips 的第一个锚点时间（hover title 显示），
+/* rail 节点圆点：有语义——该概念最早锚点时间（hover title 显示），
    区别于二次迭代砍掉的"无语义圆点" */
 .cm-rail-dot {
   position: absolute;

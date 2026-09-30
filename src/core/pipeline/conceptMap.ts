@@ -1,21 +1,24 @@
 /**
- * 概念知识图 pipeline（SPEC-04 范围变更：导图 = 知识导航）。
+ * 概念知识图 pipeline（SPEC-04 四次迭代：知识流程图，阶段流）。
  *
- * 输入为已生成的章节大纲（Section[]，时间结构），输出为知识结构
- * （虚拟根 → 概念域 → 概念 → 细节）：
+ * 输入为已生成的章节大纲（Section[]，时间结构），输出为阶段流知识结构
+ * （stages: [{label, concepts:[{label, importance, anchors, details}]}]）：
  * - buildConceptMap：单次结构化模型调用 + zod 校验（红线 1：确定性单调用，
  *   非 agent loop）+ 失败附错误重试 1 次，两次失败 throw 由调用方降级；
- * - buildTermIndexMap：零模型确定性降级（术语按出现章节聚合，红线 1）；
+ * - 预告章节过滤（确定性，P8 洞察）：前两章中章节文本命中全部概念 ≥50%
+ *   → 视为预告章，其 startMs 不进入任何 anchor（修复 00:01 开场锚点 bug）；
+ * - 主锚：anchors 中 score 最高的章节排首位（primaryAnchorTMs），其余按
+ *   startMs 升序；阶段顺序 = 模型输出推进顺序，阶段内概念保留模型顺序；
+ * - buildTermIndexMap：零模型确定性降级（术语按出现章节聚合，stages 形状）；
  * - 概念时间锚 = 出现章节的 startMs（大纲管线吸附产物，红线 2）。
  * 纯函数 + 注入式模型调用（ConceptModelFn），无 chrome.* 依赖。
  */
 import { CONCEPT_MAP } from '../../config';
-import type { ConceptNode, Section } from '../../types';
+import type { ConceptAnchor, ConceptItem, ConceptStage, Section } from '../../types';
 import type {
-  ConceptDomainRaw,
   ConceptModelFn,
   ConceptRaw,
-  ConceptTreeRaw,
+  ConceptStagesRaw,
 } from './types';
 import { z } from 'zod';
 
@@ -23,15 +26,14 @@ import { z } from 'zod';
 // Schema 与解析（红线 4 同款：JSON.parse + zod，失败 throw 由重试捕获）
 // ---------------------------------------------------------------------------
 
-/** 模型输出整体 Schema：{domains:[{label, concepts:[...]}]}
- * （二次迭代：label/detail 用硬上限（30/40）防注入式超长；超 labelMax 的
- * 常见输出（13~16 字）不再硬拒，由 buildTreeFromRaw 的 shortenLabel 截断，
- * 消除"12 字硬拒 → 重试再败 → 静默降级"的根因） */
-export const ConceptTreeSchema = z.object({
-  domains: z
+/** 模型输出整体 Schema：{stages:[{label, concepts:[...]}]}
+ * （沿用二次迭代策略：label/detail 用硬上限（30/40）防注入式超长；超
+ *  labelMax 的常见输出（13~16 字）不再硬拒，由构树代码 shortenLabel 截断） */
+export const ConceptStagesSchema = z.object({
+  stages: z
     .array(
       z.object({
-        label: z.string().min(1).max(CONCEPT_MAP.labelHardMax),
+        label: z.string().min(1).max(CONCEPT_MAP.stageLabelMax),
         concepts: z
           .array(
             z.object({
@@ -43,26 +45,26 @@ export const ConceptTreeSchema = z.object({
                 .max(CONCEPT_MAP.detailsMax),
             }),
           )
-          .min(1)
-          .max(CONCEPT_MAP.conceptsPerDomainMax),
+          .min(CONCEPT_MAP.conceptsPerStageMin)
+          .max(CONCEPT_MAP.conceptsPerStageMax),
       }),
     )
-    .min(CONCEPT_MAP.domainsMin)
-    .max(CONCEPT_MAP.domainsMax),
+    .min(CONCEPT_MAP.stagesMin)
+    .max(CONCEPT_MAP.stagesMax),
 });
 
 /**
- * 解析并校验模型输出：JSON.parse + ConceptTreeSchema。
+ * 解析并校验模型输出：JSON.parse + ConceptStagesSchema。
  * 解析/校验失败 throw，由 buildConceptMap 的重试逻辑捕获。
  */
-export function parseConceptTree(content: string): ConceptTreeRaw {
+export function parseConceptStages(content: string): ConceptStagesRaw {
   let raw: unknown;
   try {
     raw = JSON.parse(content);
   } catch (err) {
     throw new Error(`模型输出不是合法 JSON：${err instanceof Error ? err.message : String(err)}`);
   }
-  const parsed = ConceptTreeSchema.safeParse(raw);
+  const parsed = ConceptStagesSchema.safeParse(raw);
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((i) => `${i.path.join('.')}: ${i.message}`)
@@ -92,6 +94,11 @@ function clampImportance(n: number): number {
   return Math.max(1, Math.min(5, Math.round(n)));
 }
 
+/** 章节得分（score 缺省视为 -1：任何有分数的章节主锚优先级更高） */
+function sectionScore(s: Section): number {
+  return s.score != null ? s.score : -1;
+}
+
 /**
  * 组装模型 user prompt（纯函数）：章节编号 + 标题 + 分数 + 重要性 + 摘要 + 术语。
  * 编号从 1 开始，模型输出的 anchorSections 引用这些编号。
@@ -105,79 +112,119 @@ export function buildConceptMapUserPrompt(sections: Section[], videoTitle: strin
       `[${i + 1}] ${s.title} | ${score} | 重要性${s.importance} | ${s.summary} | 术语：${terms}`,
     );
   });
-  lines.push('请将上述章节重组为概念知识图，输出严格 JSON。');
+  lines.push('请将上述章节重组为知识流程（阶段 → 概念），输出严格 JSON。');
   return lines.join('\n');
 }
 
 // ---------------------------------------------------------------------------
-// 构树（zod 校验后的 raw → ConceptNode 树）
+// 预告章节识别与锚点构造（确定性，红线 1）
 // ---------------------------------------------------------------------------
 
 /**
- * 原始输出 → ConceptNode 树（纯函数）：
- * 虚拟根（label=视频主题短语 ≤16 字）→ domain → concept → detail；
- * anchorSections 编号（1-based）映射到章节 startMs（吸附产物，红线 2）；
- * domain.importance = 子概念最大值；所有 label 代码强制截断。
+ * 预告章节识别（确定性，导出供单测）：对每个章节（仅前
+ * CONCEPT_MAP.overviewSectionMaxIndex 个）统计其 title+summary+terms 归一化
+ * 拼接命中的概念 label 数，命中比例 ≥ overviewHitRatio（50%）→ 预告章。
+ * 返回被标记章节的下标集合（0-based）；其 startMs 不进入任何 anchor。
  */
-export function buildTreeFromRaw(
-  raw: ConceptTreeRaw,
+export function findOverviewSectionIndices(
+  raw: ConceptStagesRaw,
   sections: Section[],
-  videoTitle: string,
-): ConceptNode {
-  let seq = 0;
-  const nextId = () => `cm_${String((seq += 1)).padStart(4, '0')}`;
-
-  const root: ConceptNode = {
-    id: 'cm_root',
-    label: shortenLabel(videoTitle.trim() || '视频主题', CONCEPT_MAP.rootLabelMax),
-    kind: 'domain',
-    importance: 1,
-    anchors: [],
-    children: [],
-  };
-
-  for (const domain of raw.domains) {
-    const concepts: ConceptNode[] = domain.concepts.map((c: ConceptRaw) => {
-      const concept: ConceptNode = {
-        id: nextId(),
-        label: shortenLabel(c.label, CONCEPT_MAP.labelMax),
-        kind: 'concept',
-        importance: clampImportance(c.importance),
-        anchors: buildAnchors(c.anchorSections, sections),
-        children: c.details.map((detail) => ({
-          id: nextId(),
-          label: shortenLabel(detail, CONCEPT_MAP.detailLabelMax),
-          kind: 'detail' as const,
-          importance: clampImportance(c.importance),
-          anchors: [],
-          children: [],
-        })),
-      };
-      return concept;
-    });
-    root.children.push({
-      id: nextId(),
-      label: shortenLabel(domain.label, CONCEPT_MAP.labelMax),
-      kind: 'domain',
-      importance: concepts.length
-        ? Math.max(...concepts.map((c) => c.importance))
-        : 1,
-      anchors: [],
-      children: concepts,
-    });
+): ReadonlySet<number> {
+  const labels = new Set<string>();
+  for (const stage of raw.stages) {
+    for (const c of stage.concepts) {
+      const label = c.label.trim().toLowerCase();
+      if (label) labels.add(label);
+    }
   }
-  return root;
+  const overview = new Set<number>();
+  if (labels.size === 0) return overview;
+  sections.forEach((sec, idx) => {
+    if (idx >= CONCEPT_MAP.overviewSectionMaxIndex) return;
+    const text = `${sec.title} ${sec.summary} ${sec.terms.join(' ')}`
+      .trim()
+      .toLowerCase();
+    if (!text) return;
+    let hits = 0;
+    for (const label of labels) {
+      if (text.includes(label)) hits += 1;
+    }
+    if (hits / labels.size >= CONCEPT_MAP.overviewHitRatio) {
+      overview.add(idx);
+    }
+  });
+  return overview;
 }
 
-/** anchorSections（1-based 章节编号）→ 时间锚；去重、越界编号丢弃 */
-function buildAnchors(anchorSections: number[], sections: Section[]) {
-  const valid = [...new Set(anchorSections)]
-    .filter((n) => Number.isInteger(n) && n >= 1 && n <= sections.length)
-    .sort((a, b) => a - b);
-  return valid.map((n) => ({
-    tMs: sections[n - 1].startMs,
-    sectionId: sections[n - 1].id,
-  }));
+/**
+ * anchorSections（1-based 章节编号）→ 时间锚（纯函数，确定性）：
+ * - 越界 / 非整数编号丢弃（模型幻觉防御）；预告章节排除（不贡献锚点）；
+ * - 主锚 = 剩余章节中 score 最高者（并列取时间最早，确定性），排 anchors[0]；
+ * - 其余锚按 startMs 升序跟随；无有效锚返回空数组。
+ */
+export function buildConceptAnchors(
+  anchorSections: number[],
+  sections: Section[],
+  overview: ReadonlySet<number>,
+): ConceptAnchor[] {
+  const seen = new Set<string>();
+  const valid: Section[] = [];
+  for (const n of new Set(anchorSections)) {
+    if (!Number.isInteger(n) || n < 1 || n > sections.length) continue;
+    if (overview.has(n - 1)) continue;
+    const sec = sections[n - 1];
+    if (!seen.has(sec.id)) {
+      seen.add(sec.id);
+      valid.push(sec);
+    }
+  }
+  valid.sort((a, b) => a.startMs - b.startMs);
+  if (valid.length === 0) return [];
+  let primary = valid[0];
+  for (const sec of valid) {
+    if (sectionScore(sec) > sectionScore(primary)) primary = sec;
+  }
+  const rest = valid.filter((s) => s !== primary);
+  return [primary, ...rest].map((s) => ({ tMs: s.startMs, sectionId: s.id }));
+}
+
+// ---------------------------------------------------------------------------
+// 构阶段流（zod 校验后的 raw → ConceptStage[]）
+// ---------------------------------------------------------------------------
+
+/**
+ * 原始输出 → 阶段流（纯函数）：
+ * - 阶段顺序 = 模型输出顺序（讲解推进顺序）；阶段内概念保留模型顺序
+ *   （模型顺序即讲解顺序，不重排）；
+ * - 阶段 / 概念 id 重编（st_01 / cm_0001）；
+ * - anchors：预告章节过滤 + 主锚（score 最高）排首位；
+ * - 所有 label 代码强制截断（阶段 ≤20、概念 ≤12、细节 ≤20）。
+ */
+export function buildStagesFromRaw(
+  raw: ConceptStagesRaw,
+  sections: Section[],
+): ConceptStage[] {
+  const overview = findOverviewSectionIndices(raw, sections);
+  let cmSeq = 0;
+  return raw.stages.map((stage, si) => {
+    const concepts: ConceptItem[] = stage.concepts.map((c: ConceptRaw) => {
+      const anchors = buildConceptAnchors(c.anchorSections, sections, overview);
+      cmSeq += 1;
+      return {
+        id: `cm_${String(cmSeq).padStart(4, '0')}`,
+        label: shortenLabel(c.label, CONCEPT_MAP.labelMax),
+        importance: clampImportance(c.importance),
+        anchors,
+        primaryAnchorTMs: anchors.length > 0 ? anchors[0].tMs : -1,
+        details: c.details.map((d) => shortenLabel(d, CONCEPT_MAP.detailLabelMax)),
+      };
+    });
+    return {
+      id: `st_${String(si + 1).padStart(2, '0')}`,
+      label: shortenLabel(stage.label, CONCEPT_MAP.stageLabelMax),
+      concepts,
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -196,12 +243,12 @@ export interface BuildConceptMapArgs {
 
 /** 生成成功结果（降级图用 degraded: true 区分，见 buildTermIndexMap） */
 export interface ConceptMapBuildResult {
-  root: ConceptNode;
+  stages: ConceptStage[];
   degraded: false;
 }
 
 /**
- * 概念图生成主入口：单次结构化模型调用 → zod 校验 → 构树。
+ * 概念图生成主入口：单次结构化模型调用 → zod 校验 → 构阶段流。
  * 失败附错误重试 1 次；两次失败 throw（由调用方降级到术语关联图）。
  */
 export async function buildConceptMap(
@@ -224,9 +271,9 @@ export async function buildConceptMap(
         systemPrompt: args.getSystemPrompt(),
         userPrompt,
       });
-      const raw = parseConceptTree(res.content);
+      const raw = parseConceptStages(res.content);
       return {
-        root: buildTreeFromRaw(raw, args.sections, args.videoTitle),
+        stages: buildStagesFromRaw(raw, args.sections),
         degraded: false,
       };
     } catch (err) {
@@ -236,21 +283,17 @@ export async function buildConceptMap(
   throw new Error(`概念图生成失败（重试 ${maxRetries} 次后仍失败）：${lastError}`);
 }
 
-/** 术语关联图降级结果 */
+/** 术语关联图降级结果（stages 形状，与模型路径同构） */
 export interface TermIndexResult {
-  root: ConceptNode;
+  stages: ConceptStage[];
   degraded: true;
 }
 
-/** 降级图根节点 label 约定（types.ts 的 ConceptMapData 无 degraded 字段，
- *  UI 以此 + model='term-index' 判定降级，SPEC-04 二次迭代） */
-export const TERM_INDEX_ROOT_LABEL = '术语关联图';
-
 /**
  * 确定性降级（零模型，红线 1）：全片术语去重（大小写不敏感）后
- * 按出现章节数降序取前 N，单 domain「核心术语」，每术语一个 concept
- * （importance = min(5, 出现章节数)，anchors = 出现章节起点），无 details。
- * 排序并列时按首次出现顺序（确定性）。
+ * 按出现章节数降序取前 N，单阶段「核心术语」，每术语一个概念
+ * （importance = min(5, 出现章节数)，anchors = 出现章节起点，主锚 = 首个），
+ * 无 details。排序并列时按首次出现顺序（确定性）。
  */
 export function buildTermIndexMap(sections: Section[]): TermIndexResult {
   interface TermEntry {
@@ -280,38 +323,31 @@ export function buildTermIndexMap(sections: Section[]): TermIndexResult {
     )
     .slice(0, CONCEPT_MAP.termsTop);
 
-  const concepts: ConceptNode[] = top.map((entry, i) => ({
-    id: `cm_${String(i + 2).padStart(4, '0')}`,
-    label: shortenLabel(entry.label, CONCEPT_MAP.labelMax),
-    kind: 'concept',
-    importance: Math.min(5, entry.sections.length),
-    anchors: entry.sections.map((s) => ({ tMs: s.startMs, sectionId: s.id })),
-    children: [],
-  }));
+  const concepts: ConceptItem[] = top.map((entry, i) => {
+    const anchors: ConceptAnchor[] = entry.sections
+      .map((s) => ({ tMs: s.startMs, sectionId: s.id }))
+      .sort((a, b) => a.tMs - b.tMs);
+    return {
+      id: `cm_${String(i + 1).padStart(4, '0')}`,
+      label: shortenLabel(entry.label, CONCEPT_MAP.labelMax),
+      importance: Math.min(5, entry.sections.length),
+      anchors,
+      primaryAnchorTMs: anchors.length > 0 ? anchors[0].tMs : -1,
+      details: [],
+    };
+  });
 
-  const root: ConceptNode = {
-    id: 'cm_root',
-    label: TERM_INDEX_ROOT_LABEL,
-    kind: 'domain',
-    importance: concepts.length
-      ? Math.max(...concepts.map((c) => c.importance))
-      : 1,
-    anchors: [],
-    children:
-      concepts.length > 0
-        ? [
-            {
-              id: 'cm_0001',
-              label: CONCEPT_MAP.fallbackDomainLabel,
-              kind: 'domain' as const,
-              importance: Math.max(...concepts.map((c) => c.importance)),
-              anchors: [],
-              children: concepts,
-            },
-          ]
-        : [],
-  };
-  return { root, degraded: true };
+  const stages: ConceptStage[] =
+    concepts.length > 0
+      ? [
+          {
+            id: 'st_01',
+            label: CONCEPT_MAP.fallbackStageLabel,
+            concepts,
+          },
+        ]
+      : [];
+  return { stages, degraded: true };
 }
 
-export type { ConceptDomainRaw, ConceptRaw, ConceptTreeRaw } from './types';
+export type { ConceptRaw, ConceptStagesRaw, ConceptStageRaw } from './types';

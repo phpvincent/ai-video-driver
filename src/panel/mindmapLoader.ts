@@ -1,8 +1,9 @@
 /**
- * 概念图接线层（SPEC-04 范围变更）：
+ * 概念图接线层（SPEC-04 四次迭代：阶段流）：
  * 缓存（outlines store，键 `concept::{videoId}::{promptVersion}::{model}`，
- * 红线 7 定向失效）+ 生成（buildConceptMap，system prompt 用
- * src/prompts/concept-map.md 单一事实源，红线 6）+ 本地术语降级包装。
+ * 红线 7 定向失效——promptVersion 升 0.2.0 自动失效旧域树缓存）+ 生成
+ * （buildConceptMap，system prompt 用 src/prompts/concept-map.md 单一事实源，
+ * 红线 6）+ 本地术语降级包装。
  * 红线 2 消费侧：锚点只来自章节 startMs（大纲管线吸附产物）。
  */
 import { chatCompletion } from '../core/harness/modelClient';
@@ -92,7 +93,7 @@ export async function generateConceptMap(
       responseFormatJson: true,
     }).then((res) => ({ content: res.content }));
 
-  const { root } = await buildConceptMap({
+  const { stages } = await buildConceptMap({
     sections,
     videoTitle,
     modelFn,
@@ -104,7 +105,7 @@ export async function generateConceptMap(
     videoId,
     promptVersion: PROMPT_VERSIONS.conceptMap,
     model: model.model,
-    root,
+    stages,
     generatedAt: new Date().toISOString(),
   };
 
@@ -120,18 +121,17 @@ export async function generateConceptMap(
 
 /**
  * 本地术语关联图（零模型确定性降级，红线 1）：
- * 供组件在未接线模型路径时直接计算。
+ * 供组件在未接线模型路径时直接计算（stages 形状，与模型路径同构）。
  * 降级标记约定（types.ts 的 ConceptMapData 无 degraded 字段）：
- * model='term-index' + root.label='术语关联图'（TERM_INDEX_ROOT_LABEL），
- * MindmapTab 以 isTermIndexData 识别并渲染降级横幅（二次迭代）。
+ * model='term-index'，MindmapTab 以 isTermIndexData 识别并渲染降级横幅。
  */
 export function termIndexFallback(sections: Section[]): ConceptMapData {
-  const { root } = buildTermIndexMap(sections);
+  const { stages } = buildTermIndexMap(sections);
   return {
     videoId: '',
     promptVersion: PROMPT_VERSIONS.conceptMap,
     model: 'term-index',
-    root,
+    stages,
     generatedAt: '',
   };
 }

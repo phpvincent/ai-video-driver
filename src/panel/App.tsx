@@ -229,7 +229,7 @@ export function App() {
 
   return (
     <div className="app">
-      <header className="info-bar">
+      <header className="info-bar info-bar-rel">
         {video ? (
           <>
             <div className="info-title" title={video.title}>
@@ -237,14 +237,6 @@ export function App() {
             </div>
             <div className="info-meta">
               <span className="info-video-id">{video.videoId}</span>
-              <button
-                type="button"
-                className="btn fullscreen-btn"
-                title={standaloneView ? '关闭全屏标签页' : '全屏打开当前视图'}
-                onClick={standaloneView ? () => window.close() : handleOpenFullscreen}
-              >
-                {standaloneView ? '退出全屏' : '全屏'}
-              </button>
               <span>时长 {formatDuration(video.durationMs)}</span>
               {playback && (
                 <span>
@@ -256,6 +248,14 @@ export function App() {
         ) : (
           <div className="info-empty">未检测到 B 站视频</div>
         )}
+        <button
+          type="button"
+          className="fullscreen-corner"
+          title={standaloneView ? '关闭全屏标签页' : '全屏打开当前视图'}
+          onClick={standaloneView ? () => window.close() : handleOpenFullscreen}
+        >
+          {standaloneView ? '退出全屏' : '⛶'}
+        </button>
       </header>
 
       {showSettings ? (

@@ -1,16 +1,16 @@
 /**
- * 导图 Tab 单元测试（SPEC-04 二次迭代：HTML 知识卡片流）。
+ * 导图 Tab 单元测试（SPEC-04 四次迭代：概念图 v3 = 竖向阶段流程）。
  * 环境为 node 且无 DOM：纯函数（buildMindmapMarkdown / parseNodeTimestamp /
  * findActiveSectionIndex / matchConcepts〔精确匹配〕/ importanceBadge /
  * isTermIndexData / formatRange / shortenLabel）直接断言；
  * 组件渲染只覆盖无 effect 分支（markmap / 滚动聚焦均为 effect 内动态行为，
- * renderToString 不触发；概念卡片流为纯 HTML，渲染期可跑）。
+ * renderToString 不触发；阶段流程为纯 HTML，渲染期可跑）。
  */
 import { createElement } from 'react';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { shortenLabel } from '../../../src/core/pipeline/conceptMap';
-import type { ConceptMapData, ConceptNode, Section } from '../../../src/types';
+import type { ConceptItem, ConceptMapData, ConceptStage, Section } from '../../../src/types';
 import {
   CHRONO_VIEW_LABEL,
   CONCEPT_DEGRADED_TEXT,
@@ -26,12 +26,10 @@ import {
   MindmapTab,
   buildMindmapMarkdown,
   findActiveSectionIndex,
-  formatDomainIndex,
   formatRange,
   importanceBadge,
   isTermIndexData,
   matchConcepts,
-  orderDomainsByEarliestAnchor,
   parseNodeTimestamp,
   sectionHeadingText,
 } from '../../../src/panel/MindmapTab';
@@ -65,60 +63,70 @@ const sections = [
   section('sec_0003', 180_000, 300_000, '实战演示', { terms: ['注意力机制'] }),
 ];
 
-/** 概念图测试树：根 → 域（基础概念）→ 概念（上下文窗口〔带细节〕/ Token） */
-const conceptRoot = (): ConceptNode => ({
-  id: 'cm_root',
-  label: '大模型入门',
-  kind: 'domain',
-  importance: 5,
+/** 概念工厂 */
+const concept = (id: string, label: string, extra: Partial<ConceptItem> = {}): ConceptItem => ({
+  id,
+  label,
+  importance: 3,
   anchors: [],
-  children: [
-    {
-      id: 'cm_0001',
-      label: '基础概念',
-      kind: 'domain',
-      importance: 5,
-      anchors: [],
-      children: [
-        {
-          id: 'cm_0002',
-          label: '上下文窗口',
-          kind: 'concept',
-          importance: 5,
-          anchors: [
-            { tMs: 0, sectionId: 'sec_0001' },
-            { tMs: 60_000, sectionId: 'sec_0002' },
-          ],
-          children: [
-            {
-              id: 'cm_0004',
-              label: '决定单次可见文本量',
-              kind: 'detail',
-              importance: 5,
-              anchors: [],
-              children: [],
-            },
-          ],
-        },
-        {
-          id: 'cm_0003',
-          label: 'Token',
-          kind: 'concept',
-          importance: 4,
-          anchors: [{ tMs: 0, sectionId: 'sec_0001' }],
-          children: [],
-        },
-      ],
-    },
-  ],
+  primaryAnchorTMs: -1,
+  details: [],
+  ...extra,
 });
 
+/** 阶段流程测试数据：三阶段（背景回顾 → 核心机制 → 总结展望） */
+const stageFlow = (): ConceptStage[] => [
+  {
+    id: 'st_01',
+    label: '背景回顾',
+    concepts: [
+      concept('cm_0001', '上下文窗口', {
+        importance: 5,
+        // 主锚（score 60 的 sec_0002）在前，次锚（sec_0001）按时间跟随
+        anchors: [
+          { tMs: 60_000, sectionId: 'sec_0002' },
+          { tMs: 0, sectionId: 'sec_0001' },
+        ],
+        primaryAnchorTMs: 60_000,
+        details: ['决定单次可见文本量'],
+      }),
+      concept('cm_0002', 'Token', {
+        importance: 4,
+        anchors: [{ tMs: 0, sectionId: 'sec_0001' }],
+        primaryAnchorTMs: 0,
+      }),
+    ],
+  },
+  {
+    id: 'st_02',
+    label: '核心机制',
+    concepts: [
+      concept('cm_0003', '注意力机制', {
+        importance: 5,
+        anchors: [{ tMs: 60_000, sectionId: 'sec_0002' }],
+        primaryAnchorTMs: 60_000,
+      }),
+    ],
+  },
+  {
+    id: 'st_03',
+    label: '总结展望',
+    concepts: [
+      concept('cm_0004', '模型选型', {
+        anchors: [{ tMs: 180_000, sectionId: 'sec_0003' }],
+        primaryAnchorTMs: 180_000,
+      }),
+      concept('cm_0005', '无锚概念'), // 无锚：primaryAnchorTMs = -1
+    ],
+  },
+];
+
 /** 缓存注入用的 ConceptMapData 包装 */
-const mapData = (root: ConceptNode, model = 'test-model'): ConceptMapData => ({
+const mapData = (stages: ConceptStage[], model = 'test-model'): ConceptMapData => ({
   videoId: 'bv1x_p1',
-  promptVersion: '0.1.0',
+  promptVersion: '0.2.0',
   model,
-  root,
+  stages,
   generatedAt: '2026-09-30T00:00:00.000Z',
 });
 
@@ -231,98 +239,58 @@ describe('findActiveSectionIndex', () => {
   });
 });
 
-describe('matchConcepts（概念跟随命中，二次迭代：精确匹配）', () => {
-  it('当前章节 terms 与概念 label 归一化后相等才命中', () => {
-    expect(matchConcepts(sections, 0, conceptRoot())).toEqual(['上下文窗口', 'Token']);
+describe('matchConcepts（概念跟随命中，精确匹配，stages 遍历）', () => {
+  it('当前章节 terms 与概念 label 归一化后相等才命中（跨阶段去重，顺序稳定）', () => {
+    expect(matchConcepts(sections, 0, stageFlow())).toEqual(['上下文窗口', 'Token']);
   });
 
-  it('跨章合并：第一章只命中该章出现的概念', () => {
-    expect(matchConcepts(sections, 60_000, conceptRoot())).toEqual(['上下文窗口']);
-    expect(matchConcepts(sections, 200_000, conceptRoot())).toEqual([]);
+  it('跨章合并：中间章命中的概念按阶段遍历顺序返回', () => {
+    expect(matchConcepts(sections, 60_000, stageFlow())).toEqual(['上下文窗口', '注意力机制']);
+    expect(matchConcepts(sections, 200_000, stageFlow())).toEqual(['注意力机制']);
   });
 
   it('大小写不敏感：术语与 label 大小写不同仍精确命中', () => {
-    const root: ConceptNode = {
-      ...conceptRoot(),
-      children: [
-        {
-          ...conceptRoot().children[0],
-          children: [
-            { id: 'cm_x', label: 'Context Window', kind: 'concept', importance: 3, anchors: [], children: [] },
-          ],
-        },
-      ],
-    };
+    const stages: ConceptStage[] = [
+      { id: 'st_01', label: '阶段', concepts: [concept('cm_x', 'Context Window')] },
+    ];
     const secs = [section('s1', 0, 1000, '开场', { terms: ['CONTEXT window'] })];
-    expect(matchConcepts(secs, 0, root)).toEqual(['Context Window']);
-  });
-
-  it('精确匹配（正向）：term="token" 命中 label="token"', () => {
-    const root: ConceptNode = {
-      ...conceptRoot(),
-      children: [
-        {
-          ...conceptRoot().children[0],
-          children: [
-            { id: 'cm_x', label: 'token', kind: 'concept', importance: 3, anchors: [], children: [] },
-          ],
-        },
-      ],
-    };
-    const secs = [section('s1', 0, 1000, '开场', { terms: ['token'] })];
-    expect(matchConcepts(secs, 0, root)).toEqual(['token']);
+    expect(matchConcepts(secs, 0, stages)).toEqual(['Context Window']);
   });
 
   it('精确匹配（反向，必须）：term="token" 不命中 label="token 长度"（substring 过松已修复）', () => {
-    const root: ConceptNode = {
-      ...conceptRoot(),
-      children: [
-        {
-          ...conceptRoot().children[0],
-          children: [
-            { id: 'cm_x', label: 'token 长度', kind: 'concept', importance: 3, anchors: [], children: [] },
-          ],
-        },
-      ],
-    };
+    const stages: ConceptStage[] = [
+      { id: 'st_01', label: '阶段', concepts: [concept('cm_x', 'token 长度')] },
+    ];
     const secs = [section('s1', 0, 1000, '开场', { terms: ['token'] })];
-    expect(matchConcepts(secs, 0, root)).toEqual([]);
+    expect(matchConcepts(secs, 0, stages)).toEqual([]);
   });
 
-  it('精确匹配（反向）：term 比概念 label 长也不命中（如 term="上下文窗口详解" ≠ label="上下文窗口"）', () => {
+  it('精确匹配（反向）：term 比概念 label 长也不命中', () => {
     const secs = [section('s1', 0, 1000, '任意标题', { terms: ['上下文窗口详解'] })];
-    expect(matchConcepts(secs, 0, conceptRoot())).toEqual([]);
+    expect(matchConcepts(secs, 0, stageFlow())).toEqual([]);
   });
 
-  it('精确匹配（反向）：章节标题含概念 label 但 terms 不含 → 不命中（标题不再参与）', () => {
+  it('精确匹配（反向）：章节标题含概念 label 但 terms 不含 → 不命中（标题不参与）', () => {
     const secs = [section('s1', 0, 1000, '上下文窗口详解')];
-    expect(matchConcepts(secs, 0, conceptRoot())).toEqual([]);
+    expect(matchConcepts(secs, 0, stageFlow())).toEqual([]);
   });
 
   it('label 两侧空白不参与比较（trim 归一化）', () => {
-    const root: ConceptNode = {
-      ...conceptRoot(),
-      children: [
-        {
-          ...conceptRoot().children[0],
-          children: [
-            { id: 'cm_x', label: '  Token  ', kind: 'concept', importance: 3, anchors: [], children: [] },
-          ],
-        },
-      ],
-    };
+    const stages: ConceptStage[] = [
+      { id: 'st_01', label: '阶段', concepts: [concept('cm_x', '  Token  ')] },
+    ];
     const secs = [section('s1', 0, 1000, '开场', { terms: ['Token'] })];
-    expect(matchConcepts(secs, 0, root)).toEqual(['  Token  ']);
+    expect(matchConcepts(secs, 0, stages)).toEqual(['  Token  ']);
   });
 
   it('positionMs 早于首章或空 sections 返回空数组', () => {
-    expect(matchConcepts([], 0, conceptRoot())).toEqual([]);
+    expect(matchConcepts([], 0, stageFlow())).toEqual([]);
     const late = [section('s1', 5_000, 10_000, '晚开始')];
-    expect(matchConcepts(late, 4_999, conceptRoot())).toEqual([]);
+    expect(matchConcepts(late, 4_999, stageFlow())).toEqual([]);
   });
 });
 
-describe('importanceBadge（重要度文字徽标，替换圆点）', () => {
+describe('importanceBadge（重要度文字徽标）', () => {
   it('5 → 核心；4 → 重要', () => {
     expect(importanceBadge(5)).toBe('核心');
     expect(importanceBadge(4)).toBe('重要');
@@ -336,14 +304,12 @@ describe('importanceBadge（重要度文字徽标，替换圆点）', () => {
 });
 
 describe('isTermIndexData（降级数据判定约定）', () => {
-  it('model="term-index" 或根 label="术语关联图" 判为降级', () => {
-    expect(isTermIndexData(mapData(conceptRoot(), 'term-index'))).toBe(true);
-    const termRoot: ConceptNode = { ...conceptRoot(), label: '术语关联图' };
-    expect(isTermIndexData(mapData(termRoot))).toBe(true);
+  it('model="term-index" 判为降级', () => {
+    expect(isTermIndexData(mapData(stageFlow(), 'term-index'))).toBe(true);
   });
 
   it('模型生成的正常图不误判', () => {
-    expect(isTermIndexData(mapData(conceptRoot()))).toBe(false);
+    expect(isTermIndexData(mapData(stageFlow()))).toBe(false);
   });
 });
 
@@ -359,202 +325,121 @@ describe('formatRange', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 三次迭代：知识路径（流程感）
+// 四次迭代：竖向阶段流程渲染
 // ---------------------------------------------------------------------------
 
-/** 多域测试树：进阶主题（最早锚 60s）/ 基础概念（最早锚 0s，含无锚域的后续域）/ 附录域（无锚） */
-const multiDomainRoot = (): ConceptNode => ({
-  id: 'cm_root',
-  label: '大模型入门',
-  kind: 'domain',
-  importance: 5,
-  anchors: [],
-  children: [
-    {
-      id: 'd_adv',
-      label: '进阶主题',
-      kind: 'domain',
-      importance: 4,
-      anchors: [],
-      children: [
-        {
-          id: 'c_attn',
-          label: '注意力机制',
-          kind: 'concept',
-          importance: 5,
-          anchors: [{ tMs: 60_000, sectionId: 'sec_0002' }],
-          children: [],
-        },
-      ],
-    },
-    {
-      id: 'd_base',
-      label: '基础概念',
-      kind: 'domain',
-      importance: 5,
-      anchors: [],
-      children: [
-        {
-          id: 'c_ctx',
-          label: '上下文窗口',
-          kind: 'concept',
-          importance: 5,
-          anchors: [
-            { tMs: 0, sectionId: 'sec_0001' },
-            { tMs: 120_000, sectionId: 'sec_0002' },
-          ],
-          children: [],
-        },
-        {
-          id: 'c_tok',
-          label: 'Token',
-          kind: 'concept',
-          importance: 4,
-          anchors: [{ tMs: 30_000, sectionId: 'sec_0001' }],
-          children: [],
-        },
-      ],
-    },
-    {
-      id: 'd_none',
-      label: '附录域',
-      kind: 'domain',
-      importance: 2,
-      anchors: [],
-      children: [
-        { id: 'c_x', label: '无锚概念', kind: 'concept', importance: 2, anchors: [], children: [] },
-      ],
-    },
-  ],
-});
-
-describe('orderDomainsByEarliestAnchor（三次迭代：域按最早锚排序）', () => {
-  it('按各域内所有概念 anchors 的最早 tMs 升序排序，无锚域垫后', () => {
-    const ordered = orderDomainsByEarliestAnchor(multiDomainRoot());
-    expect(ordered.map((d) => d.label)).toEqual(['基础概念', '进阶主题', '附录域']);
-  });
-
-  it('概念多锚时取域内最早（d_base 最早锚 = 上下文窗口的 0，而非 Token 的 30s）', () => {
-    const ordered = orderDomainsByEarliestAnchor(multiDomainRoot());
-    expect(ordered[0].id).toBe('d_base');
-  });
-
-  it('无锚域排最后并保持原相对顺序（稳定排序）', () => {
-    const noAnchor = (id: string, label: string): ConceptNode => ({
-      id,
-      label,
-      kind: 'domain',
-      importance: 2,
-      anchors: [],
-      children: [],
-    });
-    const anchored: ConceptNode = {
-      id: 'd_late',
-      label: '晚出现',
-      kind: 'domain',
-      importance: 3,
-      anchors: [],
-      children: [
-        { id: 'c_l', label: '晚概念', kind: 'concept', importance: 3, anchors: [{ tMs: 500_000, sectionId: 's' }], children: [] },
-      ],
-    };
-    const root: ConceptNode = {
-      id: 'cm_root',
-      label: '根',
-      kind: 'domain',
-      importance: 3,
-      anchors: [],
-      children: [noAnchor('d_a', '甲'), anchored, noAnchor('d_b', '乙'), noAnchor('d_c', '丙')],
-    };
-    expect(orderDomainsByEarliestAnchor(root).map((d) => d.id)).toEqual([
-      'd_late',
-      'd_a',
-      'd_b',
-      'd_c',
-    ]);
-  });
-
-  it('只取 kind=domain 的 children（根的虚拟属性不参与）', () => {
-    const ordered = orderDomainsByEarliestAnchor(multiDomainRoot());
-    expect(ordered.every((d) => d.kind === 'domain')).toBe(true);
-    expect(ordered).toHaveLength(3);
-  });
-});
-
-describe('formatDomainIndex（域序号徽标）', () => {
-  it("0 → '01'；9 → '10'；10 → '11'（两位数字符串）", () => {
-    expect(formatDomainIndex(0)).toBe('01');
-    expect(formatDomainIndex(9)).toBe('10');
-    expect(formatDomainIndex(10)).toBe('11');
-  });
-});
-
-describe('知识路径渲染（renderToString：序号徽标 / 连接线 / rail / 当前域）', () => {
+describe('阶段流程渲染（renderToString：步骤圆徽 / 阶段名 / 连接箭头 / 主锚 chip）', () => {
   const noop = () => {};
 
-  it('多域卡片按排序渲染序号徽标 01/02/03，域间连接线 kp-connector 为 N-1 个（首卡无）', () => {
+  it('阶段头：步骤圆徽 1/2/3 + 阶段名 + 概念数徽标', () => {
     const html = renderToString(
       createElement(MindmapTab, {
         sections,
         positionMs: 0,
         onRequestSeek: noop,
-        conceptMap: mapData(multiDomainRoot()),
+        conceptMap: mapData(stageFlow()),
       }),
     );
-    expect(html).toContain('cm-domain-index');
-    expect(html).toContain('>01<');
-    expect(html).toContain('>02<');
-    expect(html).toContain('>03<');
-    // 3 张卡 → 2 条连接线（首卡上方无）
+    expect(html).toContain('cm-stage-step');
+    expect(html).toContain('>1<');
+    expect(html).toContain('>2<');
+    expect(html).toContain('>3<');
+    expect(html).toContain('cm-stage-title');
+    expect(html).toContain('背景回顾');
+    expect(html).toContain('核心机制');
+    expect(html).toContain('总结展望');
+    expect(html).toContain('2 概念');
+    expect(html).toContain('1 概念');
+  });
+
+  it('阶段间连接：3 个阶段 → 2 个 kp-connector（首阶段无），体现推进', () => {
+    const html = renderToString(
+      createElement(MindmapTab, {
+        sections,
+        positionMs: 0,
+        onRequestSeek: noop,
+        conceptMap: mapData(stageFlow()),
+      }),
+    );
     expect((html.match(/kp-connector/g) ?? []).length).toBe(2);
   });
 
-  it('rail：有锚概念行渲染 cm-rail-dot，title 为第一个锚点时间（语义圆点，hover 显示）', () => {
+  it('主锚 chip 实心强调（cm-chip-primary，anchors[0]），次锚次级样式（无该类）', () => {
     const html = renderToString(
       createElement(MindmapTab, {
         sections,
         positionMs: 0,
         onRequestSeek: noop,
-        conceptMap: mapData(multiDomainRoot()),
+        conceptMap: mapData(stageFlow()),
+      }),
+    );
+    // 上下文窗口：主锚 [01:00]（score 60 章，anchors[0]）+ 次锚 [00:00]
+    expect(html).toContain('cm-chip-primary');
+    expect(html).toContain('[01:00]');
+    expect(html).toContain('[00:00]');
+    // 每个有锚概念恰 1 个实心主锚 chip（4 个有锚概念）；
+    // 上下文窗口的次锚 [00:00] 不带主锚类（Token 的唯一锚 [00:00] 才实心）
+    expect((html.match(/cm-chip-primary/g) ?? []).length).toBe(4);
+  });
+
+  it('rail：有锚概念行渲染 cm-rail-dot，title 为最早锚点时间（语义圆点）', () => {
+    const html = renderToString(
+      createElement(MindmapTab, {
+        sections,
+        positionMs: 0,
+        onRequestSeek: noop,
+        conceptMap: mapData(stageFlow()),
       }),
     );
     expect(html).toContain('cm-rail-dot');
-    // 上下文窗口（第一个锚点 tMs=0）与 Token（tMs=30s）与 注意力机制（tMs=60s）
     expect(html).toContain('首次出现 00:00');
-    expect(html).toContain('首次出现 00:30');
     expect(html).toContain('首次出现 01:00');
+    expect(html).toContain('首次出现 03:00');
     // 无锚概念不渲染语义圆点的 title
     expect(html).not.toContain('首次出现 undefined');
   });
 
-  it('当前域高亮：positionMs 命中的概念所在域卡带 domain-current', () => {
-    const secs = [section('s1', 60_000, 120_000, '进阶章', { terms: ['注意力机制'] })];
+  it('概念跟随：positionMs 命中的概念行带 concept-active', () => {
+    // sec_0001（0-60s）terms 含 上下文窗口 / Token → 两行高亮
     const html = renderToString(
       createElement(MindmapTab, {
-        sections: secs,
-        positionMs: 60_000,
+        sections,
+        positionMs: 0,
         onRequestSeek: noop,
-        conceptMap: mapData(multiDomainRoot()),
+        conceptMap: mapData(stageFlow()),
       }),
     );
-    expect((html.match(/domain-current/g) ?? []).length).toBe(1);
-    // 高亮卡 = 注意力机制所在的"进阶主题"卡
-    const idx = html.indexOf('cm-card domain-current');
-    expect(idx).toBeGreaterThan(-1);
-    expect(html.slice(idx).indexOf('进阶主题')).toBeLessThan(html.slice(idx).indexOf('</header>'));
+    expect((html.match(/concept-active/g) ?? []).length).toBe(2);
   });
 
-  it('无概念命中时无 domain-current（不命中不亮）', () => {
+  it('当前阶段高亮：命中概念所在阶段块带 stage-current', () => {
+    const html = renderToString(
+      createElement(MindmapTab, {
+        sections,
+        positionMs: 0,
+        onRequestSeek: noop,
+        conceptMap: mapData(stageFlow()),
+      }),
+    );
+    expect((html.match(/stage-current/g) ?? []).length).toBe(1);
+    // 高亮块 = 上下文窗口所在的"背景回顾"阶段
+    const idx = html.indexOf('cm-stage stage-current');
+    expect(idx).toBeGreaterThan(-1);
+    expect(html.slice(idx).indexOf('背景回顾')).toBeLessThan(html.slice(idx).indexOf('</header>'));
+  });
+
+  it('无概念命中时无 stage-current / concept-active（不命中不亮）', () => {
     const secs = [section('s1', 60_000, 120_000, '无关章', { terms: ['完全无关的术语'] })];
     const html = renderToString(
       createElement(MindmapTab, {
         sections: secs,
         positionMs: 60_000,
         onRequestSeek: noop,
-        conceptMap: mapData(multiDomainRoot()),
+        conceptMap: mapData(stageFlow()),
       }),
     );
-    expect(html).not.toContain('domain-current');
+    expect(html).not.toContain('stage-current');
+    expect(html).not.toContain('concept-active');
   });
 });
 
@@ -584,21 +469,20 @@ describe('MindmapTab 渲染冒烟（renderToString，仅无 effect 分支）', (
     expect(html).toContain('<button');
   });
 
-  it('无 generateConceptMap 接线且有 sections：降级渲染本地术语关联图（卡片流 + 降级横幅，无 SVG）', () => {
+  it('无 generateConceptMap 接线且有 sections：降级渲染本地术语关联图（阶段流 + 降级横幅，无 SVG）', () => {
     const html = renderToString(
       createElement(MindmapTab, {
         sections,
         positionMs: 0,
         onRequestSeek: noop,
-      }),
-    );
-    // 二次迭代：卡片流为纯 HTML，概念视图不含 SVG
+      }));
+    // 阶段流程为纯 HTML，概念视图不含 SVG
     expect(html).not.toContain('<svg');
     // 降级横幅（未接线文案，无重试按钮）
     expect(html).toContain('cm-degraded-banner');
     expect(html).toContain(CONCEPT_FALLBACK_HINT);
     expect(html).not.toContain(CONCEPT_RETRY_TEXT);
-    // 概念卡：域名 + 概念名 + 概念数徽标（卡片流默认展开显示概念）
+    // 降级图：单阶段"核心术语" + 术语概念（卡片流默认展开显示概念）
     expect(html).toContain('核心术语');
     expect(html).toContain('上下文窗口');
     expect(html).toContain('3 概念');
@@ -618,24 +502,24 @@ describe('MindmapTab 渲染冒烟（renderToString，仅无 effect 分支）', (
     expect(html).not.toContain('<svg');
   });
 
-  it('缓存命中（conceptMap 注入）：渲染概念卡（域名 + 概念名 + 徽标），无降级横幅', () => {
+  it('缓存命中（conceptMap 注入）：渲染阶段与概念（阶段名 + 概念名 + 徽标），无降级横幅', () => {
     const html = renderToString(
       createElement(MindmapTab, {
         sections,
         positionMs: 0,
         onRequestSeek: noop,
-        conceptMap: mapData(conceptRoot()),
+        conceptMap: mapData(stageFlow()),
       }),
     );
-    // 概念卡渲染域名与概念名（卡片流默认全部可见）
-    expect(html).toContain('基础概念');
+    // 阶段与概念渲染（默认全部可见）
+    expect(html).toContain('背景回顾');
     expect(html).toContain('上下文窗口');
     expect(html).toContain('Token');
-    expect(html).toContain('2 概念');
+    expect(html).toContain('注意力机制');
     // 正常图无降级横幅
     expect(html).not.toContain('cm-degraded-banner');
     expect(html).not.toContain(CONCEPT_DEGRADED_TEXT);
-    // 重要度文字徽标（替换圆点）：5 → 核心、4 → 重要
+    // 重要度文字徽标：5 → 核心、4 → 重要
     expect(html).toContain('核心');
     expect(html).toContain('重要');
     expect(html).not.toContain('<svg');
@@ -649,7 +533,7 @@ describe('MindmapTab 渲染冒烟（renderToString，仅无 effect 分支）', (
         onRequestSeek: noop,
         generateConceptMap: async () => {},
         modelReady: true,
-        conceptMap: mapData(conceptRoot(), 'term-index'),
+        conceptMap: mapData(stageFlow(), 'term-index'),
       }),
     );
     expect(html).toContain('cm-degraded-banner');
@@ -666,7 +550,7 @@ describe('MindmapTab 渲染冒烟（renderToString，仅无 effect 分支）', (
         onRequestSeek: noop,
         generateConceptMap: async () => {},
         modelReady: true,
-        conceptMap: mapData(conceptRoot()),
+        conceptMap: mapData(stageFlow()),
         degraded: true,
       }),
     );
@@ -680,26 +564,29 @@ describe('MindmapTab 渲染冒烟（renderToString，仅无 effect 分支）', (
         sections,
         positionMs: 0,
         onRequestSeek: noop,
-        conceptMap: mapData(conceptRoot()),
+        conceptMap: mapData(stageFlow()),
       }),
     );
     expect(html).toContain(CONCEPT_DETAILS_TOGGLE_TEXT);
     expect(html).toContain('cm-details-collapse');
     expect(html).not.toContain('cm-details-collapse open');
+    // 细节文本常驻渲染（折叠由 grid 控制）
+    expect(html).toContain('决定单次可见文本量');
   });
 
-  it('时间 chips：概念锚点渲染 [mm:ss] 小按钮', () => {
+  it('时间 chips：概念锚点渲染 [mm:ss] 小按钮（主锚 + 次锚）', () => {
     const html = renderToString(
       createElement(MindmapTab, {
         sections,
         positionMs: 0,
         onRequestSeek: noop,
-        conceptMap: mapData(conceptRoot()),
+        conceptMap: mapData(stageFlow()),
       }),
     );
     expect(html).toContain('cm-chip');
     expect(html).toContain('[00:00]');
     expect(html).toContain('[01:00]');
+    expect(html).toContain('[03:00]');
   });
 
   it('shortenLabel 复用（panel 与 pipeline 共用同一实现）', () => {

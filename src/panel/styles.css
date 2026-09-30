@@ -659,3 +659,29 @@ body {
     animation: none;
   }
 }
+
+/* ===== header 全屏角标（右缘图标按钮） ===== */
+.info-bar-rel {
+  position: relative;
+  padding-right: 44px;
+}
+.fullscreen-corner {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 1px solid #d0d5dd;
+  background: #fff;
+  color: #475467;
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+.fullscreen-corner:hover {
+  background: #f2f4f7;
+  color: #1d2939;
+  border-color: #98a2b3;
+}

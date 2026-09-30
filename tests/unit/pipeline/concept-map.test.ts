@@ -1,15 +1,19 @@
 /**
- * 概念知识图 pipeline 单测（SPEC-04 范围变更）。
- * 覆盖：parseConceptTree（合法/非法 JSON、结构越界与超长、缺字段）、
- * buildConceptMap（树结构、锚点映射、label 截断、重试、两次失败）、
- * buildTermIndexMap（多章聚合、排序、importance、空输入）、shortenLabel。
+ * 概念知识图 pipeline 单测（SPEC-04 四次迭代：阶段流）。
+ * 覆盖：parseConceptStages（合法/非法 JSON、阶段数与结构越界、超长、缺字段）、
+ * buildConceptMap（阶段流结构、预告章节过滤、主锚、模型顺序保留、label 截断、
+ * 重试、两次失败）、findOverviewSectionIndices、buildConceptAnchors、
+ * buildTermIndexMap（stages 形状、多章聚合、排序、importance、空输入）、shortenLabel。
  */
 import { describe, expect, it } from 'vitest';
 import {
+  buildConceptAnchors,
   buildConceptMap,
   buildConceptMapUserPrompt,
+  buildStagesFromRaw,
   buildTermIndexMap,
-  parseConceptTree,
+  findOverviewSectionIndices,
+  parseConceptStages,
   shortenLabel,
 } from '../../../src/core/pipeline/conceptMap';
 import type { ConceptModelFn } from '../../../src/core/pipeline/types';
@@ -40,79 +44,187 @@ const sections = [
   section('sec_0003', 180_000, '实战演示', { terms: ['注意力机制', 'Token'] }),
 ];
 
-/** 合法的两域模型输出（覆盖跨章合并锚点） */
+/** 合法的三阶段模型输出（覆盖跨章合并锚点；6 个概念保证前两章命中比例 <50%，不触发预告过滤） */
 const validJson = JSON.stringify({
-  domains: [
+  stages: [
     {
-      label: '基础概念',
+      label: '背景回顾',
       concepts: [
         { label: '上下文窗口', importance: 5, anchorSections: [1, 2], details: ['决定单次可见文本量'] },
         { label: 'Token', importance: 4, anchorSections: [1, 3], details: [] },
       ],
     },
     {
-      label: '进阶机制',
+      label: '核心机制',
       concepts: [
         { label: '注意力机制', importance: 5, anchorSections: [2, 3], details: ['并行计算相关性'] },
+        { label: '向量表示', importance: 3, anchorSections: [2], details: [] },
       ],
     },
     {
-      label: '其他补充',
+      label: '总结展望',
       concepts: [
         { label: '模型选型', importance: 2, anchorSections: [3, 99], details: [] },
+        { label: '局限性', importance: 2, anchorSections: [3], details: [] },
       ],
     },
   ],
 });
 
-describe('parseConceptTree', () => {
-  it('合法 JSON 解析为 ConceptTreeRaw', () => {
-    const raw = parseConceptTree(validJson);
-    expect(raw.domains).toHaveLength(3);
-    expect(raw.domains[0].concepts[0].label).toBe('上下文窗口');
-    expect(raw.domains[0].concepts[0].anchorSections).toEqual([1, 2]);
+describe('parseConceptStages', () => {
+  it('合法 JSON 解析为 ConceptStagesRaw', () => {
+    const raw = parseConceptStages(validJson);
+    expect(raw.stages).toHaveLength(3);
+    expect(raw.stages[0].label).toBe('背景回顾');
+    expect(raw.stages[0].concepts[0].label).toBe('上下文窗口');
+    expect(raw.stages[0].concepts[0].anchorSections).toEqual([1, 2]);
   });
 
   it('非法 JSON throw（错误信息含"不是合法 JSON"）', () => {
-    expect(() => parseConceptTree('这不是JSON')).toThrow('不是合法 JSON');
+    expect(() => parseConceptStages('这不是JSON')).toThrow('不是合法 JSON');
   });
 
-  it('domain 数量越界（2 个 / 7 个）均被 zod 拒', () => {
-    const two = JSON.parse(validJson) as { domains: unknown[] };
-    expect(() => parseConceptTree(JSON.stringify({ domains: two.domains.slice(0, 2) }))).toThrow();
-    const seven = { domains: Array.from({ length: 7 }, (_, i) => ({ label: `域${i}`, concepts: [{ label: `概念${i}`, importance: 3, anchorSections: [1], details: [] }] })) };
-    expect(() => parseConceptTree(JSON.stringify(seven))).toThrow('Schema 校验');
+  it('阶段数越界（2 个 / 6 个）均被 zod 拒', () => {
+    const two = JSON.parse(validJson) as { stages: unknown[] };
+    expect(() => parseConceptStages(JSON.stringify({ stages: two.stages.slice(0, 2) }))).toThrow();
+    const six = { stages: Array.from({ length: 6 }, (_, i) => ({ label: `阶段${i}`, concepts: [{ label: `概念${i}`, importance: 3, anchorSections: [1], details: [] }] })) };
+    expect(() => parseConceptStages(JSON.stringify(six))).toThrow('Schema 校验');
   });
 
-  it('label 13~16 字（二次迭代：模型常见输出）通过 zod，不再硬拒', () => {
-    const long = JSON.parse(validJson) as { domains: Array<{ concepts: Array<{ label: string }> }> };
-    long.domains[0].concepts[0].label = '一二三四五六七八九十一二三四五'; // 15 字
-    expect(() => parseConceptTree(JSON.stringify(long))).not.toThrow();
-    const raw = parseConceptTree(JSON.stringify(long));
-    // zod 收原始值，截断由构树代码负责（shortenLabel）
-    expect(raw.domains[0].concepts[0].label).toBe('一二三四五六七八九十一二三四五');
+  it('阶段 label 超 20 字被拒（阶段名体现推进逻辑的上限）', () => {
+    const parsed = JSON.parse(validJson) as { stages: Array<{ label: string }> };
+    parsed.stages[0].label = '一'.repeat(21);
+    expect(() => parseConceptStages(JSON.stringify(parsed))).toThrow('Schema 校验');
+    parsed.stages[0].label = '一'.repeat(20);
+    expect(() => parseConceptStages(JSON.stringify(parsed))).not.toThrow();
   });
 
-  it('label 超 zod 硬上限（31 字 > labelHardMax 30）仍被拒（防注入式超长）', () => {
-    const long = JSON.parse(validJson) as { domains: Array<{ concepts: Array<{ label: string }> }> };
-    long.domains[0].concepts[0].label = '一二三四五六七八九十'.repeat(3) + '一'; // 31 字
-    expect(() => parseConceptTree(JSON.stringify(long))).toThrow('Schema 校验');
+  it('每阶段概念数越界（1 个 / 7 个）被 zod 拒', () => {
+    const one = JSON.parse(validJson) as { stages: Array<{ concepts: unknown[] }> };
+    const backup = one.stages[0].concepts;
+    one.stages[0].concepts = [backup[0]];
+    expect(() => parseConceptStages(JSON.stringify(one))).toThrow();
+    one.stages[0].concepts = [
+      ...backup,
+      ...Array.from({ length: 5 }, (_, i) => ({ label: `补充概念${i}`, importance: 3, anchorSections: [1], details: [] })),
+    ];
+    expect(() => parseConceptStages(JSON.stringify(one))).toThrow('Schema 校验');
+  });
+
+  it('概念 label 13~16 字（模型常见输出）通过 zod，不再硬拒', () => {
+    const long = JSON.parse(validJson) as { stages: Array<{ concepts: Array<{ label: string }> }> };
+    long.stages[0].concepts[0].label = '一二三四五六七八九十一二三四五'; // 15 字
+    expect(() => parseConceptStages(JSON.stringify(long))).not.toThrow();
+    const raw = parseConceptStages(JSON.stringify(long));
+    // zod 收原始值，截断由构阶段流代码负责（shortenLabel）
+    expect(raw.stages[0].concepts[0].label).toBe('一二三四五六七八九十一二三四五');
+  });
+
+  it('概念 label 超 zod 硬上限（31 字 > labelHardMax 30）仍被拒（防注入式超长）', () => {
+    const long = JSON.parse(validJson) as { stages: Array<{ concepts: Array<{ label: string }> }> };
+    long.stages[0].concepts[0].label = '一二三四五六七八九十'.repeat(3) + '一'; // 31 字
+    expect(() => parseConceptStages(JSON.stringify(long))).toThrow('Schema 校验');
   });
 
   it('detail 超 zod 硬上限（41 字 > detailHardMax 40）被拒；30 字通过', () => {
     const parsed = JSON.parse(validJson) as {
-      domains: Array<{ concepts: Array<{ details: string[] }> }>,
+      stages: Array<{ concepts: Array<{ details: string[] }> }>,
     };
-    parsed.domains[0].concepts[0].details = ['x'.repeat(41)];
-    expect(() => parseConceptTree(JSON.stringify(parsed))).toThrow('Schema 校验');
-    parsed.domains[0].concepts[0].details = ['y'.repeat(30)];
-    expect(() => parseConceptTree(JSON.stringify(parsed))).not.toThrow();
+    parsed.stages[0].concepts[0].details = ['x'.repeat(41)];
+    expect(() => parseConceptStages(JSON.stringify(parsed))).toThrow('Schema 校验');
+    parsed.stages[0].concepts[0].details = ['y'.repeat(30)];
+    expect(() => parseConceptStages(JSON.stringify(parsed))).not.toThrow();
   });
 
   it('缺字段（concept 缺 importance）被 zod 拒', () => {
-    const broken = JSON.parse(validJson) as { domains: Array<{ concepts: Array<Record<string, unknown>> }> };
-    delete broken.domains[0].concepts[0].importance;
-    expect(() => parseConceptTree(JSON.stringify(broken))).toThrow('Schema 校验');
+    const broken = JSON.parse(validJson) as { stages: Array<{ concepts: Array<Record<string, unknown>> }> };
+    delete broken.stages[0].concepts[0].importance;
+    expect(() => parseConceptStages(JSON.stringify(broken))).toThrow('Schema 校验');
+  });
+});
+
+describe('findOverviewSectionIndices（预告章节识别，确定性）', () => {
+  it('前两章命中 ≥50% 概念 → 标记为预告章；后续章节命中再多也不标记', () => {
+    // 5 章 + 4 个概念；第 1 章文本（terms）覆盖全部 4 个概念（100% ≥ 50%）
+    const raw = parseConceptStages(JSON.stringify({
+      stages: [
+        { label: '阶段一', concepts: [
+          { label: '概念甲', importance: 3, anchorSections: [1], details: [] },
+          { label: '概念乙', importance: 3, anchorSections: [1], details: [] },
+        ]},
+        { label: '阶段二', concepts: [
+          { label: '概念丙', importance: 3, anchorSections: [2], details: [] },
+          { label: '概念丁', importance: 3, anchorSections: [2], details: [] },
+        ]},
+        { label: '阶段三', concepts: [
+          { label: '概念甲', importance: 3, anchorSections: [3], details: [] },
+          { label: '概念乙', importance: 3, anchorSections: [3], details: [] },
+        ]},
+      ],
+    }));
+    const secs = [
+      section('s1', 0, '开场预告', { terms: ['概念甲', '概念乙', '概念丙', '概念丁'] }),
+      section('s2', 60_000, '第二章', { terms: [] }),
+      section('s3', 120_000, '第三章', { terms: [] }),
+      section('s4', 180_000, '第四章', { terms: [] }),
+      section('s5', 240_000, '第五章', { terms: [] }),
+    ];
+    const overview = findOverviewSectionIndices(raw, secs);
+    expect(overview.has(0)).toBe(true);
+    expect(overview.size).toBe(1);
+  });
+
+  it('命中比例 <50% 不标记（预告识别不误伤正常章节）', () => {
+    const raw = parseConceptStages(validJson); // 4 个概念
+    // 第 1 章只命中 1/4（上下文窗口 via terms）
+    const secs = [
+      section('s1', 0, '环境准备', { terms: ['上下文窗口'] }),
+      ...sections.slice(1),
+    ];
+    const overview = findOverviewSectionIndices(raw, secs);
+    expect(overview.size).toBe(0);
+  });
+});
+
+describe('buildConceptAnchors（锚点构造：预告过滤 + 主锚，确定性）', () => {
+  const secs = [
+    section('s1', 0, '第一章'),
+    section('s2', 60_000, '第二章'),
+    section('s3', 120_000, '第三章'),
+    section('s4', 180_000, '第四章'),
+    section('s5', 240_000, '第五章'),
+  ];
+
+  it('主锚 = score 最高章节，排 anchors[0]；其余按时间升序', () => {
+    const mixed = [
+      section('s2', 60_000, '低分章', { score: 3 }),
+      section('s3', 120_000, '高分章', { score: 8 }),
+      section('s4', 180_000, '中分章', { score: 5 }),
+    ];
+    const anchors = buildConceptAnchors([1, 2, 3], mixed, new Set());
+    expect(anchors[0]).toEqual({ tMs: 120_000, sectionId: 's3' }); // score 8 的主锚
+    expect(anchors).toHaveLength(3);
+    expect(anchors[1]).toEqual({ tMs: 60_000, sectionId: 's2' }); // 次锚按时间升序
+    expect(anchors[2]).toEqual({ tMs: 180_000, sectionId: 's4' });
+  });
+
+  it('score 缺省视为最低：无分数章节不抢主锚（有分数者在先）', () => {
+    const mixed = [
+      section('s1', 0, '无分章'),
+      section('s2', 60_000, '有分章', { score: 1 }),
+    ];
+    const anchors = buildConceptAnchors([1, 2], mixed, new Set());
+    expect(anchors[0]).toEqual({ tMs: 60_000, sectionId: 's2' });
+  });
+
+  it('预告章节不贡献锚点；越界 / 非法编号丢弃；全被过滤则无锚', () => {
+    const anchors = buildConceptAnchors([1, 2, 99, 3], secs, new Set([0]));
+    // 编号 1（预告章）被过滤，99 越界丢弃
+    expect(anchors).toEqual([
+      { tMs: 60_000, sectionId: 's2' },
+      { tMs: 120_000, sectionId: 's3' },
+    ]);
+    expect(buildConceptAnchors([1, 2], secs, new Set([0, 1]))).toEqual([]);
   });
 });
 
@@ -131,92 +243,160 @@ describe('buildConceptMap', () => {
     return { fn, calls };
   };
 
-  it('stub modelFn → 树结构正确（虚拟根 → domain → concept → detail，id 前缀 cm_）', async () => {
+  it('stub modelFn → 阶段流结构正确（st_01/cm_0001 id、阶段与概念保留模型顺序）', async () => {
     const { fn } = stubModelFn([validJson]);
-    const { root, degraded } = await buildConceptMap({
+    const { stages, degraded } = await buildConceptMap({
       sections,
       videoTitle: '大模型入门',
       modelFn: fn,
       getSystemPrompt,
     });
     expect(degraded).toBe(false);
-    expect(root.kind).toBe('domain');
-    expect(root.label).toBe('大模型入门');
-    expect(root.children).toHaveLength(3);
-    expect(root.children[0].kind).toBe('domain');
-    expect(root.children[0].label).toBe('基础概念');
-    const concept = root.children[0].children[0];
-    expect(concept.kind).toBe('concept');
-    expect(concept.label).toBe('上下文窗口');
-    expect(concept.children).toHaveLength(1);
-    expect(concept.children[0].kind).toBe('detail');
-    expect(concept.id).toMatch(/^cm_\d{4}$/);
-    // domain importance = 子概念最大值
-    expect(root.children[0].importance).toBe(5);
+    expect(stages.map((s) => s.id)).toEqual(['st_01', 'st_02', 'st_03']);
+    expect(stages.map((s) => s.label)).toEqual(['背景回顾', '核心机制', '总结展望']);
+    expect(stages[0].concepts[0].id).toBe('cm_0001');
+    expect(stages[0].concepts[0].label).toBe('上下文窗口');
+    expect(stages[0].concepts[0].details).toEqual(['决定单次可见文本量']);
+    // 概念顺序 = 模型输出顺序（讲解顺序，不重排）
+    expect(stages[0].concepts.map((c) => c.label)).toEqual(['上下文窗口', 'Token']);
+    // id 全局连续重编（st_01 阶段下 cm_0001/cm_0002，st_03 阶段从 cm_0005 起）
+    expect(stages[2].concepts[0].id).toBe('cm_0005');
   });
 
-  it('anchors 映射到对应章节 startMs 与 sectionId（跨章合并）', async () => {
+  it('anchors 映射到对应章节 startMs 与 sectionId（跨章合并、越界编号丢弃）', async () => {
     const { fn } = stubModelFn([validJson]);
-    const { root } = await buildConceptMap({
+    const { stages } = await buildConceptMap({
       sections,
       videoTitle: '大模型入门',
       modelFn: fn,
       getSystemPrompt,
     });
-    const concept = root.children[0].children[0]; // 上下文窗口：章节 1、2
+    const concept = stages[0].concepts[0]; // 上下文窗口：章节 1、2
     expect(concept.anchors).toEqual([
       { tMs: 0, sectionId: 'sec_0001' },
       { tMs: 60_000, sectionId: 'sec_0002' },
     ]);
+    expect(concept.primaryAnchorTMs).toBe(0);
     // 越界编号被丢弃（模型幻觉防御）
-    expect(root.children[2].children[0].anchors).toEqual([{ tMs: 180_000, sectionId: 'sec_0003' }]);
+    expect(stages[2].concepts[0].anchors).toEqual([{ tMs: 180_000, sectionId: 'sec_0003' }]);
   });
 
-  it('label 超长截断：根 label（videoTitle）截到 ≤16 字并加省略号', async () => {
-    const { fn } = stubModelFn([validJson]);
-    const longTitle = '这是一个特别特别特别特别特别特别长的视频标题';
-    const { root } = await buildConceptMap({
-      sections,
-      videoTitle: longTitle,
+  it('四次迭代：预告章节过滤——第一章命中 ≥50% 概念时其 startMs 不出现在任何 anchor', async () => {
+    // 5 章 + 4 概念；第 1 章（预告）覆盖全部概念，模型把第 1 章记入大量 anchorSections
+    const raw = {
+      stages: [
+        { label: '背景回顾', concepts: [
+          { label: '推理引擎', importance: 5, anchorSections: [1, 3], details: [] },
+          { label: '行动模块', importance: 5, anchorSections: [1, 3], details: [] },
+        ]},
+        { label: '核心机制', concepts: [
+          { label: '观察反馈', importance: 4, anchorSections: [1, 4], details: [] },
+          { label: '循环执行', importance: 4, anchorSections: [1, 4], details: [] },
+        ]},
+        { label: '总结', concepts: [
+          { label: '推理引擎', importance: 3, anchorSections: [1, 5], details: [] },
+          { label: '观察反馈', importance: 3, anchorSections: [1, 5], details: [] },
+        ]},
+      ],
+    };
+    const fiveSections = [
+      section('sec_0001', 0, '全片预告', {
+        summary: '本视频将介绍推理引擎、行动模块、观察反馈与循环执行',
+        terms: ['推理引擎', '行动模块', '观察反馈', '循环执行'],
+      }),
+      section('sec_0002', 60_000, '理论回顾'),
+      section('sec_0003', 120_000, '核心机制', { score: 70 }),
+      section('sec_0004', 180_000, '代码实现'),
+      section('sec_0005', 240_000, '总结'),
+    ];
+    const { fn } = stubModelFn([JSON.stringify(raw)]);
+    const { stages } = await buildConceptMap({
+      sections: fiveSections,
+      videoTitle: 'Agent 入门',
       modelFn: fn,
       getSystemPrompt,
     });
-    expect(Array.from(root.label)).toHaveLength(16);
-    expect(root.label.endsWith('…')).toBe(true);
+    for (const stage of stages) {
+      for (const c of stage.concepts) {
+        expect(c.anchors).not.toContainEqual({ tMs: 0, sectionId: 'sec_0001' });
+        expect(c.anchors.length).toBeGreaterThan(0);
+      }
+    }
+    // 第 3 章锚点正常保留（未被误伤）
+    expect(stages[0].concepts[0].anchors).toContainEqual({ tMs: 120_000, sectionId: 'sec_0003' });
   });
 
-  it('二次迭代：16 字概念 label 通过 zod 且构树强制截断为 12（降级根因修复）', async () => {
-    const parsed = JSON.parse(validJson) as {
-      domains: Array<{ concepts: Array<{ label: string; details: string[] }> }>,
+  it('四次迭代：主锚 = score 最高章节——概念在 score 3 与 score 8 两章出现', async () => {
+    const raw = {
+      stages: [
+        { label: '阶段一', concepts: [
+          { label: '概念甲', importance: 3, anchorSections: [1], details: [] },
+          { label: '概念乙', importance: 3, anchorSections: [1], details: [] },
+        ]},
+        { label: '阶段二', concepts: [
+          { label: '概念丙', importance: 3, anchorSections: [1], details: [] },
+          { label: '目标概念', importance: 5, anchorSections: [3, 5], details: [] },
+        ]},
+        { label: '阶段三', concepts: [
+          { label: '概念丁', importance: 3, anchorSections: [1], details: [] },
+          { label: '概念戊', importance: 3, anchorSections: [1], details: [] },
+        ]},
+      ],
     };
-    parsed.domains[0].concepts[0].label = '一二三四五六七八九十一二三四五六'; // 16 字
-    parsed.domains[0].concepts[0].details = ['z'.repeat(30)]; // detail 30 字（< hardMax 40）
+    const sixSections = [
+      section('sec_0001', 0, '第一章'),
+      section('sec_0002', 60_000, '第二章'),
+      section('sec_0003', 120_000, '低分章', { score: 3 }),
+      section('sec_0004', 180_000, '第四章'),
+      section('sec_0005', 240_000, '高分章', { score: 8 }),
+      section('sec_0006', 300_000, '第六章'),
+    ];
+    const { fn } = stubModelFn([JSON.stringify(raw)]);
+    const { stages } = await buildConceptMap({
+      sections: sixSections,
+      videoTitle: '测试',
+      modelFn: fn,
+      getSystemPrompt,
+    });
+    const concept = stages[1].concepts[1];
+    expect(concept.anchors).toHaveLength(2);
+    expect(concept.primaryAnchorTMs).toBe(240_000); // score 8 章的 startMs
+    expect(concept.anchors[0]).toEqual({ tMs: 240_000, sectionId: 'sec_0005' });
+    expect(concept.anchors[1]).toEqual({ tMs: 120_000, sectionId: 'sec_0003' }); // 次锚按时间升序
+  });
+
+  it('概念 label 超长截断为 12；details 截断为 20（代码强制，防降级根因回归）', async () => {
+    const parsed = JSON.parse(validJson) as {
+      stages: Array<{ concepts: Array<{ label: string; details: string[] }> }>,
+    };
+    parsed.stages[0].concepts[0].label = '一二三四五六七八九十一二三四五六'; // 16 字
+    parsed.stages[0].concepts[0].details = ['z'.repeat(30)]; // 30 字（< hardMax 40）
     const { fn } = stubModelFn([JSON.stringify(parsed)]);
-    const { root, degraded } = await buildConceptMap({
+    const { stages, degraded } = await buildConceptMap({
       sections,
       videoTitle: '大模型入门',
       modelFn: fn,
       getSystemPrompt,
     });
     expect(degraded).toBe(false);
-    const concept = root.children[0].children[0];
+    const concept = stages[0].concepts[0];
     // 代码截断：label → 12（11 字 + 省略号），detail → 20（19 字 + 省略号）
     expect(Array.from(concept.label)).toHaveLength(12);
     expect(concept.label).toBe('一二三四五六七八九十一…');
-    expect(Array.from(concept.children[0].label)).toHaveLength(20);
-    expect(concept.children[0].label.endsWith('…')).toBe(true);
+    expect(Array.from(concept.details[0])).toHaveLength(20);
+    expect(concept.details[0].endsWith('…')).toBe(true);
   });
 
   it('重试后成功：第一次非法 JSON，第二次合法，重试 prompt 附带错误信息', async () => {
     const { fn, calls } = stubModelFn(['oops{', validJson]);
-    const { root, degraded } = await buildConceptMap({
+    const { stages, degraded } = await buildConceptMap({
       sections,
       videoTitle: '大模型入门',
       modelFn: fn,
       getSystemPrompt,
     });
     expect(degraded).toBe(false);
-    expect(root.children).toHaveLength(3);
+    expect(stages).toHaveLength(3);
     expect(calls).toHaveLength(2);
     expect(calls[1].userPrompt).toContain('[重试]');
     expect(calls[1].userPrompt).toContain('不是合法 JSON');
@@ -246,25 +426,41 @@ describe('buildConceptMap', () => {
     expect(prompt).toContain('[1] 环境准备 | 85分 | 重要性3');
     expect(prompt).toContain('[2] 核心原理 | 无分数 | 重要性5');
     expect(prompt).toContain('术语：上下文窗口、Token');
+    expect(prompt).toContain('知识流程');
   });
 });
 
-describe('buildTermIndexMap', () => {
-  it('多章术语聚合：同一术语跨章合并为单 concept，anchors = 出现章节', () => {
-    const { root, degraded } = buildTermIndexMap(sections);
+describe('buildStagesFromRaw（构阶段流纯函数）', () => {
+  it('无锚概念（anchorSections 全被过滤/越界）primaryAnchorTMs = -1', () => {
+    const raw = parseConceptStages(validJson);
+    const stages = buildStagesFromRaw(raw, sections.slice(0, 0)); // 空章节 → 全部越界
+    // 空章节下所有编号越界，概念无锚
+    for (const stage of stages) {
+      for (const c of stage.concepts) {
+        expect(c.anchors).toEqual([]);
+        expect(c.primaryAnchorTMs).toBe(-1);
+      }
+    }
+  });
+});
+
+describe('buildTermIndexMap（降级，stages 形状）', () => {
+  it('多章术语聚合：单阶段"核心术语"，术语跨章合并为单概念（主锚 = 首个）', () => {
+    const { stages, degraded } = buildTermIndexMap(sections);
     expect(degraded).toBe(true);
-    expect(root.kind).toBe('domain');
-    expect(root.children).toHaveLength(1);
-    const domain = root.children[0];
-    expect(domain.label).toBe('核心术语');
-    const labels = domain.children.map((c) => c.label);
+    expect(stages).toHaveLength(1);
+    expect(stages[0].id).toBe('st_01');
+    expect(stages[0].label).toBe('核心术语');
+    const labels = stages[0].concepts.map((c) => c.label);
     expect(labels).toContain('上下文窗口');
-    const ctx = domain.children.find((c) => c.label === '上下文窗口')!;
+    const ctx = stages[0].concepts.find((c) => c.label === '上下文窗口')!;
     expect(ctx.anchors).toEqual([
       { tMs: 0, sectionId: 'sec_0001' },
       { tMs: 60_000, sectionId: 'sec_0002' },
     ]);
-    expect(ctx.children).toEqual([]);
+    expect(ctx.primaryAnchorTMs).toBe(0);
+    expect(ctx.details).toEqual([]);
+    expect(ctx.id).toMatch(/^cm_\d{4}$/);
   });
 
   it('按出现章节数降序排序（并列时按首次出现顺序，确定性）', () => {
@@ -273,8 +469,8 @@ describe('buildTermIndexMap', () => {
       section('s2', 60_000, '第二章', { terms: ['甲', '乙'] }),
       section('s3', 120_000, '第三章', { terms: ['甲'] }),
     ];
-    const { root } = buildTermIndexMap(ordered);
-    const labels = root.children[0].children.map((c) => c.label);
+    const { stages } = buildTermIndexMap(ordered);
+    const labels = stages[0].concepts.map((c) => c.label);
     // 甲出现 3 章、乙 2 章、丙 1 章
     expect(labels).toEqual(['甲', '乙', '丙']);
   });
@@ -283,18 +479,17 @@ describe('buildTermIndexMap', () => {
     const manySections = Array.from({ length: 7 }, (_, i) =>
       section(`sec_${i + 1}`, i * 60_000, `章节${i}`, { terms: ['跨章术语'] }),
     );
-    const { root } = buildTermIndexMap(manySections);
-    const term = root.children[0].children[0];
+    const { stages } = buildTermIndexMap(manySections);
+    const term = stages[0].concepts[0];
     expect(term.importance).toBe(5);
-    const two = buildTermIndexMap(sections).root.children[0].children[0];
+    const two = buildTermIndexMap(sections).stages[0].concepts[0];
     expect(two.importance).toBe(2);
   });
 
-  it('空 sections：根无子节点（degraded: true）', () => {
-    const { root, degraded } = buildTermIndexMap([]);
+  it('空 sections：stages 为空数组（degraded: true）', () => {
+    const { stages, degraded } = buildTermIndexMap([]);
     expect(degraded).toBe(true);
-    expect(root.children).toEqual([]);
-    expect(root.kind).toBe('domain');
+    expect(stages).toEqual([]);
   });
 });
 
