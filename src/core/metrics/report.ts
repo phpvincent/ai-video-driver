@@ -30,6 +30,12 @@ export interface ValidationStats {
   qaByType: { term: number; segment: number; free: number };
   /** （划词 + 区间 + 自由）/ 视频 */
   qaPerVideo: number;
+  /** 抽帧诊断：累计送出帧数 */
+  visionFrames: number;
+  /** 抽帧诊断：模型规划成功次数（其余为公式回退） */
+  visionModelPlans: number;
+  /** 抽帧诊断：平均模型自报覆盖率（0~1；无自检为 0） */
+  visionCoverageAvg: number;
 }
 
 export interface MetricVerdict {
@@ -88,6 +94,12 @@ export function computeStats(args: { usage: UsageRecord[]; qa: QaRecord[] }): Va
   const videoCount = usage.length;
   const subtitleHitCount = usage.filter((u) => u.subtitleLoaded).length;
   const totalSeeks = usage.reduce((sum, u) => sum + (Number.isFinite(u.seeks) ? u.seeks : 0), 0);
+  // 抽帧诊断累计（验证结构推断命中率；不参与继续/调整/放弃判定）
+  const visionFrames = usage.reduce((sum, u) => sum + (u.vision?.frames ?? 0), 0);
+  const visionModelPlans = usage.reduce((sum, u) => sum + (u.vision?.modelPlans ?? 0), 0);
+  const visionCoverageSum = usage.reduce((sum, u) => sum + (u.vision?.coverageSum ?? 0), 0);
+  const visionCoverageCount = usage.reduce((sum, u) => sum + (u.vision?.coverageCount ?? 0), 0);
+  const visionCoverageAvg = visionCoverageCount > 0 ? visionCoverageSum / visionCoverageCount : 0;
   const qaByType = { term: 0, segment: 0, free: 0 };
   for (const r of qa) {
     if (r.interactionType === 'term' || r.interactionType === 'segment' || r.interactionType === 'free') {
@@ -106,6 +118,9 @@ export function computeStats(args: { usage: UsageRecord[]; qa: QaRecord[] }): Va
     qaTotal,
     qaByType,
     qaPerVideo: ratio(qaTotal, videoCount),
+    visionFrames,
+    visionModelPlans,
+    visionCoverageAvg,
   };
 }
 
@@ -242,7 +257,12 @@ export function buildValidationReport(args: BuildReportArgs): string {
   );
   lines.push(`| 平均每视频提问次数 | ${formatNumber(stats.qaPerVideo)} |`);
   lines.push('');
-  lines.push('## 判定');
+    lines.push('');
+  lines.push(
+    `- 抽帧诊断：累计 ${stats.visionFrames} 帧，模型规划成功 ${stats.visionModelPlans} 次，` +
+      `平均自报覆盖率 ${(stats.visionCoverageAvg * 100).toFixed(0)}%（仅观测，不参与判定）`,
+  );
+lines.push('## 判定');
   lines.push('');
   lines.push('| 指标 | 数值 | 判定 | 阈值 |');
   lines.push('| --- | --- | --- | --- |');

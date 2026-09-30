@@ -13,6 +13,7 @@ import { generateOutline, loadOutlineCached, regenerateOne } from './outlineLoad
 import { SettingsPage } from './settings/SettingsPage';
 import { SubtitleTab } from './SubtitleTab';
 import { currentVideoIdRef, currentVideoMetaRef, explain as explainFn } from './explainLoader';
+import { getLastFramePlan } from './framesClient';
 import { saveTermCardToObsidian, saveVideoNoteToObsidian } from './obsidianLoader';
 import { applyUsageEvent, createEmptyUsage, type UsageRecord } from '../core/metrics/usage';
 import { createSubtitleDb, getUsage, saveUsage, listAllUsage } from '../storage/db';
@@ -221,6 +222,27 @@ export function App() {
   }, []);
 
   /** 字幕 Tab 点句跳播：panel -> background -> content */
+  /** 抽帧诊断埋点：在生成/问答之后记录本次规划来源、帧数与自报覆盖率 */
+  const trackVision = async () => {
+    const diag = getLastFramePlan();
+    if (!diag || diag.frames === 0) return;
+    const vid = video?.videoId;
+    if (!vid) return;
+    try {
+      const current = (await getUsage(db, vid)) ?? createEmptyUsage(vid, Date.now);
+      await saveUsage(
+        db,
+        applyUsageEvent(
+          current,
+          { kind: 'vision', vision: { frames: diag.frames, byModel: diag.source === 'model', coverage: diag.coverage } },
+          Date.now,
+        ),
+      );
+    } catch {
+      /* 埋点失败不影响使用 */
+    }
+  };
+
   /** 验证期埋点：记录一次使用事件（seek/字幕/大纲/概念图） */
   const trackUsage = async (kind: 'seek' | 'subtitle' | 'outline' | 'conceptMap') => {
     const vid = video?.videoId;
@@ -276,6 +298,7 @@ export function App() {
       const data = await genConceptMap(video?.videoId ?? '', secs, title);
       setConceptMap(data);
       await trackUsage('conceptMap');
+      await trackVision();
     } catch {
       setConceptMap(termIndexFallback(secs));
       setConceptDegraded(true);
@@ -467,7 +490,10 @@ export function App() {
                 onSaveVideoNote={handleSaveVideoNote}
                 onSectionsChanged={(secs) => {
                   setSections(secs);
-                  if (secs.length > 0) void trackUsage('outline');
+                  if (secs.length > 0) {
+                    void trackUsage('outline');
+                    void trackVision();
+                  }
                 }}
                 onOpenSettings={() => setShowSettings(true)}
               />

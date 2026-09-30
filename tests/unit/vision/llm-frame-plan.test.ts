@@ -36,17 +36,18 @@ const baseReq = {
 describe('validateFramePlan 校验与吸附', () => {
   it('合法 JSON → 吸附到最近字幕时刻（真值落在 Cue.startMs）', () => {
     const out = validateFramePlan(JSON.stringify({ targets: [{ tSec: 31, why: '代码' }, { tSec: 91, why: '架构图' }] }), baseReq);
-    expect(out).toEqual([30_000, 90_000]);
+    expect(out.targets).toEqual([30_000, 90_000]);
+    expect(out.items.map((i) => i.why)).toEqual(['代码', '架构图']);
   });
 
   it('非 JSON / Schema 违例 → 空数组（调用方回退公式）', () => {
-    expect(validateFramePlan('not json', baseReq)).toEqual([]);
-    expect(validateFramePlan(JSON.stringify({ targets: [] }), baseReq)).toEqual([]);
+    expect(validateFramePlan('not json', baseReq).targets).toEqual([]);
+    expect(validateFramePlan(JSON.stringify({ targets: [] }), baseReq).targets).toEqual([]);
   });
 
   it('超出视频时长或不在字幕附近 → 该点丢弃', () => {
     const out = validateFramePlan(JSON.stringify({ targets: [{ tSec: 9999 }, { tSec: 31 }] }), baseReq);
-    expect(out).toEqual([30_000]);
+    expect(out.targets).toEqual([30_000]);
   });
 
   it('间隔过近的点合并为一个；数量超预算截断', () => {
@@ -54,10 +55,10 @@ describe('validateFramePlan 校验与吸附', () => {
       JSON.stringify({ targets: [{ tSec: 30 }, { tSec: 32 }, { tSec: 90 }, { tSec: 150 }] }),
       baseReq,
     );
-    expect(out.length).toBeLessThanOrEqual(3);
-    expect(out[0]).toBe(30_000);
+    expect(out.targets.length).toBeLessThanOrEqual(3);
+    expect(out.targets[0]).toBe(30_000);
     // 30s 与 32s 只保留一个
-    expect(out.filter((t) => t >= 30_000 && t <= 32_000).length).toBe(1);
+    expect(out.targets.filter((t) => t >= 30_000 && t <= 32_000).length).toBe(1);
   });
 });
 
@@ -68,7 +69,7 @@ describe('requestFramePlan 模型优先 + 失败回退', () => {
       async () => ({ content: JSON.stringify({ targets: [{ tSec: 90, why: '架构图' }, { tSec: 30, why: '代码' }] }) }),
       () => 'system',
     );
-    expect(out).toEqual([30_000, 90_000]);
+    expect(out?.targets).toEqual([30_000, 90_000]);
   });
 
   it('模型抛错 / 返回乱码 → null（由调用方回退公式规划）', async () => {
@@ -152,5 +153,30 @@ describe('参考素材装配（给模型充足上下文）', () => {
     expect(excerpt).toContain('第 1 章 开场');
     expect(excerpt).toContain('第 2 章 代码演示');
     expect(excerpt).toContain('看一下这段代码');
+  });
+});
+
+describe('覆盖率自检回传（可观测的命中率）', () => {
+  it('模型自报 coverage → 校验后保留，供埋点与报告统计', () => {
+    const out = validateFramePlan(
+      JSON.stringify({
+        targets: [
+          { tSec: 30, covers: 'ReAct 循环', why: '代码编辑器' },
+          { tSec: 90, covers: '架构图', why: 'PPT 图示' },
+        ],
+        coverage: { knowledgeBlocks: 6, covered: 5, notCovered: '开场寒暄' },
+      }),
+      baseReq,
+    );
+    expect(out.coverage?.knowledgeBlocks).toBe(6);
+    expect(out.coverage?.covered).toBe(5);
+    expect(out.coverage?.notCovered).toBe('开场寒暄');
+    expect(out.items.map((i) => i.covers)).toEqual(['ReAct 循环', '架构图']);
+  });
+
+  it('未上报 coverage 时缺省，不影响取帧', () => {
+    const out = validateFramePlan(JSON.stringify({ targets: [{ tSec: 30 }] }), baseReq);
+    expect(out.targets).toEqual([30_000]);
+    expect(out.coverage).toBeUndefined();
   });
 });

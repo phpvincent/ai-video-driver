@@ -321,4 +321,15 @@ describe('格式化', () => {
     expect(formatPercent(0)).toBe('0%');
     expect(formatPercent(2 / 3)).toBe('66.7%');
   });
+  it('抽帧诊断统计：帧数累计、模型规划次数、平均覆盖率', () => {
+    const base = { seeks: 0, subtitleLoaded: true, outlineGenerated: true, conceptMapGenerated: true, firstUsedAt: '', lastUsedAt: '' };
+    const usage = [
+      { ...base, videoId: 'BV1', vision: { frames: 4, modelPlans: 2, coverageSum: 1.6, coverageCount: 2 } },
+      { ...base, videoId: 'BV2', vision: { frames: 2, modelPlans: 0, coverageSum: 0, coverageCount: 0 } },
+    ] as never;
+    const stats = computeStats({ usage, qa: [] } as never);
+    expect(stats.visionFrames).toBe(6);
+    expect(stats.visionModelPlans).toBe(2);
+    expect(stats.visionCoverageAvg).toBeCloseTo(0.8, 5);
+  });
 });

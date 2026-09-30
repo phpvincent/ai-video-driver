@@ -47,9 +47,41 @@ export interface FramePlanArgs {
  *
  * 模型只负责"看什么"，最终时间点仍由代码吸附到真实字幕时刻并做间隔/预算裁剪。
  */
+/** 最近一次抽帧规划的诊断信息（验证结构推断命中率用） */
+export interface FramePlanDiag {
+  module: 'outline' | 'mindmap' | 'qa';
+  /** model=模型规划成功；formula=回退公式；none=未抽帧 */
+  source: 'model' | 'formula' | 'none';
+  frames: number;
+  /** 模型自报覆盖率 0~1（仅 source=model 且有自检时） */
+  coverage?: number;
+  /** 每帧覆盖的知识块（模型自报，可能为空） */
+  covers: string[];
+  targets: number[];
+}
+
+let lastFramePlan: FramePlanDiag | null = null;
+
+/** 读取最近一次抽帧规划诊断（供埋点与验证期报告） */
+export function getLastFramePlan(): FramePlanDiag | null {
+  return lastFramePlan;
+}
+
+function recordDiag(diag: FramePlanDiag): void {
+  lastFramePlan = diag;
+  // 诊断日志：真实使用时可据此判断"结构推断"是否优于均匀抽样
+  console.debug(
+    `[vsc] frame plan: module=${diag.module} source=${diag.source} frames=${diag.frames}` +
+      (typeof diag.coverage === 'number' ? ` coverage=${diag.coverage}` : ''),
+  );
+}
+
 export async function planFrames(args: FramePlanArgs): Promise<number[]> {
   const { cues, sections, budget } = args;
-  if (cues.length === 0 || budget <= 0) return [];
+  if (cues.length === 0 || budget <= 0) {
+    recordDiag({ module: args.module, source: 'none', frames: 0, covers: [], targets: [] });
+    return [];
+  }
 
   const model = (await readModuleModel(args.module)) ?? null;
   const suggested = suggestFrameRange(args.durationMs, budget);
@@ -65,7 +97,7 @@ export async function planFrames(args: FramePlanArgs): Promise<number[]> {
 
   // ① 模型规划（可选）
   if (model?.apiKey) {
-    const modelTargets = await requestFramePlan(
+    const plan = await requestFramePlan(
       req,
       ({ systemPrompt, userPrompt }) =>
         chatCompletion({
@@ -84,30 +116,54 @@ export async function planFrames(args: FramePlanArgs): Promise<number[]> {
         }).then((res) => ({ content: res.content })),
       getFramePlanSystemPrompt,
     ).catch(() => null);
-    if (modelTargets && modelTargets.length > 0) {
-      // 模型给得太少（内容会空洞）→ 用公式帧补到建议下限；给得太多由 merge 截断
-      if (modelTargets.length >= suggested.min) {
-        return mergeFrameTargets(modelTargets, [], { ...suggested, minGapMs: VISION.minGapMs });
+
+    if (plan && plan.targets.length > 0) {
+      let targets = plan.targets;
+      if (targets.length < suggested.min) {
+        targets = mergeFrameTargets(plan.targets, formulaTargets(args, sections, cues, suggested), {
+          ...suggested,
+          minGapMs: VISION.minGapMs,
+        });
       }
-      const filler = planFrameTargets(
-        sections.length > 0 ? sectionWindows(sections, cues) : cueWindows(cues, Math.max(60_000, Math.ceil(args.durationMs / 8))),
-        cues,
-        { budget: suggested.max, minGapMs: VISION.minGapMs, minScore: VISION.minScore },
-        sections.length > 0 ? sectionMetaOf(sections) : undefined,
-      ).map((w) => w.targetMs);
-      return mergeFrameTargets(modelTargets, filler, { ...suggested, minGapMs: VISION.minGapMs });
+      const blocks = plan.coverage?.knowledgeBlocks ?? 0;
+      const covered = plan.coverage?.covered ?? 0;
+      recordDiag({
+        module: args.module,
+        source: 'model',
+        frames: targets.length,
+        coverage: blocks > 0 ? covered / blocks : undefined,
+        covers: plan.items.map((i) => i.covers ?? '').filter((c) => c.length > 0),
+        targets,
+      });
+      return targets;
     }
   }
 
-  // ② 公式回退：有章节按章节打分，无章节按固定窗口（大纲生成阶段）
+  // ② 公式回退
+  const targets = mergeFrameTargets([], formulaTargets(args, sections, cues, suggested), {
+    ...suggested,
+    minGapMs: VISION.minGapMs,
+  });
+  recordDiag({ module: args.module, source: 'formula', frames: targets.length, covers: [], targets });
+  return targets;
+}
+
+/** 公式规划（章节存在时按章节打分，否则按固定窗口） */
+function formulaTargets(
+  args: FramePlanArgs,
+  sections: typeof args.sections,
+  cues: typeof args.cues,
+  suggested: { min: number; max: number },
+): number[] {
   const windows =
-    sections.length > 0 ? sectionWindows(sections, cues) : cueWindows(cues, Math.max(60_000, Math.ceil(args.durationMs / 8)));
-  const formula = planFrameTargets(windows, cues, {
+    sections.length > 0
+      ? sectionWindows(sections, cues)
+      : cueWindows(cues, Math.max(60_000, Math.ceil(args.durationMs / 8)));
+  return planFrameTargets(windows, cues, {
     budget: suggested.max,
     minGapMs: VISION.minGapMs,
     minScore: VISION.minScore,
   }, sections.length > 0 ? sectionMetaOf(sections) : undefined).map((w) => w.targetMs);
-  return mergeFrameTargets([], formula, { ...suggested, minGapMs: VISION.minGapMs });
 }
 
 /** 读取模块模型（与 loader 同一解析口径） */

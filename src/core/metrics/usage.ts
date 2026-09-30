@@ -10,10 +10,21 @@
  */
 
 /** 埋点事件种类：与 UsageRecord 的四个计数器/布尔位一一对应 */
-export type UsageEventKind = 'seek' | 'subtitle' | 'outline' | 'conceptMap';
+export type UsageEventKind = 'seek' | 'subtitle' | 'outline' | 'conceptMap' | 'vision';
+
+export interface VisionEventMeta {
+  /** 本次送出的帧数 */
+  frames: number;
+  /** 本次是否为模型规划成功（否则为公式回退） */
+  byModel: boolean;
+  /** 模型自报覆盖率 0~1（无自检时缺省） */
+  coverage?: number;
+}
 
 export interface UsageEvent {
   kind: UsageEventKind;
+  /** kind='vision' 时的诊断数据 */
+  vision?: VisionEventMeta;
 }
 
 export interface UsageRecord {
@@ -26,6 +37,12 @@ export interface UsageRecord {
   outlineGenerated: boolean;
   /** 是否生成过概念图 */
   conceptMapGenerated: boolean;
+  /**
+   * 抽帧诊断累计（验证"结构推断"命中率）：
+   * frames=累计送出帧数，modelPlans=模型规划成功次数，
+   * coverageSum/coverageCount 用于算平均覆盖率。
+   */
+  vision?: { frames: number; modelPlans: number; coverageSum: number; coverageCount: number };
   /** 首次/最近使用时间 ISO */
   firstUsedAt: string;
   lastUsedAt: string;
@@ -69,6 +86,19 @@ export function applyUsageEvent(
       return { ...base, outlineGenerated: true };
     case 'conceptMap':
       return { ...base, conceptMapGenerated: true };
+    case 'vision': {
+      const v = event.vision ?? { frames: 0, byModel: false };
+      const prev = rec.vision ?? { frames: 0, modelPlans: 0, coverageSum: 0, coverageCount: 0 };
+      return {
+        ...base,
+        vision: {
+          frames: prev.frames + Math.max(0, v.frames),
+          modelPlans: prev.modelPlans + (v.byModel ? 1 : 0),
+          coverageSum: prev.coverageSum + (typeof v.coverage === 'number' ? v.coverage : 0),
+          coverageCount: prev.coverageCount + (typeof v.coverage === 'number' ? 1 : 0),
+        },
+      };
+    }
     default:
       return base;
   }

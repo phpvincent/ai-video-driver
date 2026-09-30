@@ -80,4 +80,13 @@ describe('applyUsageEvent', () => {
     const b = applyUsageEvent(base, { kind: 'subtitle' }, () => T1);
     expect(a).toEqual(b);
   });
+  it('vision 事件：累计帧数、模型规划次数与覆盖率', () => {
+    let rec = createEmptyUsage('BV1', () => 0);
+    rec = applyUsageEvent(rec, { kind: 'vision', vision: { frames: 4, byModel: true, coverage: 0.8 } }, () => 0);
+    rec = applyUsageEvent(rec, { kind: 'vision', vision: { frames: 3, byModel: false } }, () => 0);
+    expect(rec.vision?.frames).toBe(7);
+    expect(rec.vision?.modelPlans).toBe(1);
+    expect(rec.vision?.coverageSum).toBeCloseTo(0.8, 5);
+    expect(rec.vision?.coverageCount).toBe(1);
+  });
 });

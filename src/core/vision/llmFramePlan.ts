@@ -36,6 +36,15 @@ export const FramePlanSchema = z.object({
 
 export type FramePlanPayload = z.infer<typeof FramePlanSchema>;
 
+/** 规划结果：时间点 + 覆盖率自检 + 每帧说明（供验证命中率） */
+export interface FramePlanResult {
+  targets: number[];
+  /** 模型自报的覆盖率（未上报时缺省） */
+  coverage?: { knowledgeBlocks?: number; covered?: number; notCovered?: string };
+  /** 被采纳的每一帧：时间 + 覆盖的知识块 + 画面说明 */
+  items: Array<{ tMs: number; covers?: string; why?: string }>;
+}
+
 /** 模型规划器注入接口（与 pipeline 的 modelFn 同风格） */
 export type FramePlanModelFn = (req: { systemPrompt: string; userPrompt: string }) => Promise<{ content: string }>;
 
@@ -60,15 +69,13 @@ export interface FramePlanRequest {
  * 解析并校验模型输出 → 合法时间点（毫秒，升序）。
  * 任何不合法（非 JSON / Schema 违例 / 越界 / 不在字幕附近 / 间隔过近）都被裁剪或丢弃。
  */
-export function validateFramePlan(
-  content: string,
-  req: FramePlanRequest,
-): number[] {
+export function validateFramePlan(content: string, req: FramePlanRequest): FramePlanResult {
+  const empty: FramePlanResult = { targets: [], items: [] };
   const parsed = FramePlanSchema.safeParse(safeJson(content));
-  if (!parsed.success) return [];
+  if (!parsed.success) return empty;
   const drift = req.snapMaxDriftMs ?? 5000;
   const maxSec = Math.floor(req.durationMs / 1000) + 5;
-  const snapped: number[] = [];
+  const snapped: Array<{ tMs: number; covers?: string; why?: string }> = [];
   for (const t of parsed.data.targets) {
     if (t.tSec < 0 || t.tSec > maxSec) continue;
     const targetMs = t.tSec * 1000;
@@ -76,10 +83,16 @@ export function validateFramePlan(
     const nearest = nearestCueStart(req.cues, targetMs);
     if (nearest === null) continue;
     if (Math.abs(nearest - targetMs) > drift) continue;
-    if (snapped.some((p) => Math.abs(p - nearest) < req.minGapMs)) continue;
-    snapped.push(nearest);
+    if (snapped.some((p) => Math.abs(p.tMs - nearest) < req.minGapMs)) continue;
+    snapped.push({ tMs: nearest, covers: t.covers, why: t.why });
   }
-  return snapped.sort((a, b) => a - b).slice(0, Math.max(1, req.budget));
+  snapped.sort((a, b) => a.tMs - b.tMs);
+  const kept = snapped.slice(0, Math.max(1, req.budget));
+  return {
+    targets: kept.map((k) => k.tMs),
+    items: kept,
+    coverage: parsed.data.coverage,
+  };
 }
 
 /**
@@ -122,19 +135,18 @@ export async function requestFramePlan(
   req: FramePlanRequest,
   modelFn: FramePlanModelFn,
   getSystemPrompt: () => string,
-): Promise<number[] | null> {
+): Promise<FramePlanResult | null> {
   try {
     const { systemPrompt, userPrompt } = buildFramePlanPrompts(req);
     const fullSystem = `${getSystemPrompt()}\n\n${systemPrompt}`.trim();
     const { content } = await modelFn({ systemPrompt: fullSystem, userPrompt });
-    const targets = validateFramePlan(content, req);
-    return targets.length > 0 ? targets : null;
+    const result = validateFramePlan(content, req);
+    return result.targets.length > 0 ? result : null;
   } catch {
     return null;
   }
 }
 
-/** 规划用的 user prompt（章��摘要 + 字幕，素材包裹声明） */
 export function buildFramePlanPrompts(req: FramePlanRequest): { systemPrompt: string; userPrompt: string } {
   const min = Math.max(1, Math.floor(req.suggested?.min ?? Math.min(2, req.budget)));
   const max = Math.max(min, Math.floor(req.suggested?.max ?? req.budget));
