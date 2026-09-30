@@ -33,7 +33,7 @@ describe('manifest.json（TECH-DESIGN §9 可执行快照）', () => {
       'https://api.bilibili.com/*',
       'https://*.hdslb.com/*',
       'https://api.deepseek.com/*',
-      'http://127.0.0.1:27124/*',
+      'http://127.0.0.1:27123/*',
     ]);
   });
 
