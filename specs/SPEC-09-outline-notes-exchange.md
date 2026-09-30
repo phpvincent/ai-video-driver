@@ -167,3 +167,4 @@
 | 10-01 | 父 agent | **开工范围说明**：SPEC-08 仅剩 [人工] 冒烟项，地基子任务（9.1/9.2/9.5）先行施工，不触碰 UI 与既有功能 | — | — |
 | 10-01 | 父 agent | 9.1 数据模型与存储：`OutlineNote`/`NoteAnchor`/`NoteReply` 入 types.ts；DB.stores.notes + 版本 v3→v4（补建 store 幂等）；saveNote/deleteNote/listNotesByVideo。**范围说明**：设计稿"索引 videoId"简化为 getAll+过滤（沿用 qaHistory 先例，量级低），行为等价 | 单测 6 例过（排序/隔离/删除/透传/脏数据过滤） | 本提交 |
 | 10-01 | 父 agent | 9.2 重新归位：`core/notes/reanchor.ts` 纯函数（bullet 15s 窗口 + 字符 bigram Jaccard 相似度选优；section 待确认 = 标题完全不同且时长重叠 <50%；time 按 tMs 落章；越界未归位；**永不删除**）；常量入 config NOTES | 单测 17 例过（A3 全路径：命中/降级/选优/待确认/越界不减/可再归位） | 本提交 |
+| 10-01 | 父 agent | 9.5 交换格式：`core/exchange/vscOutline.ts`（buildOutlineExport / parseOutlineImport / computeChecksum / stableStringify / outlineExportFileName）+ `docs/EXCHANGE-FORMAT.md` 对外契约。校验顺序 = JSON→format/version→checksum→结构(zod 忽略未知字段)→视频身份→覆盖率警告；checksum = sha256(稳定序列化去 checksum 键)，computeChecksum 防御性剔除自带 checksum 键 | 单测 18 例过（A5 往返逐字段相等 / A6 五条拒绝路径+未知字段忽略 / A7 文档示例过校验器） | 本提交 |
