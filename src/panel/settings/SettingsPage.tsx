@@ -29,6 +29,8 @@ import {
   listProfiles,
   migrateLegacyVisionModel,
   migrateVisionToModel,
+  stripSeedProfiles,
+  preserveSecrets,
   mergeSettings,
   normalizeModelConfig,
   presetShortLabel,
@@ -237,7 +239,9 @@ export function SettingsPage({
 
   /** 合并写：patch 覆盖目标分区，其余分区原样保留 */
   const savePatch = (patch: Partial<Settings>): Promise<boolean> => {
-    const next = mergeSettings(savedRef.current, patch);
+    const merged = mergeSettings(savedRef.current, patch);
+    // 两道护栏：剥离未激活的种子方案 + 不得清空已有密钥
+    const next = stripSeedProfiles(preserveSecrets(merged, savedRef.current));
     return sendRuntimeMessage({ type: MSG.SET_SETTINGS, payload: next })
       .then((response: unknown) => {
         if ((response as { ok?: boolean } | null)?.ok === true) {

@@ -12,6 +12,7 @@ import {
 import {
   isModelConfigured,
   seedProfilesIfEmpty,
+  stripSeedProfiles,
 } from './settings/modelForm';
 import type { ModelConfig, Settings } from '../types';
 
@@ -118,7 +119,8 @@ export function ModelPicker({ module }: ModelPickerProps) {
         const moduleModel = { ...(stored.moduleModel ?? {}) };
         if (value) moduleModel[module] = value;
         else delete moduleModel[module];
-        const next: Settings = { ...stored, moduleModel };
+        // 只写模块选择，绝不把派生的种子方案（空 Key）写回，避免覆盖用户已填的方案
+        const next: Settings = stripSeedProfiles({ ...stored, moduleModel });
         return sendRuntimeMessage({ type: MSG.SET_SETTINGS, payload: next }).then(
           (response: unknown) => {
             if ((response as { ok?: boolean } | null)?.ok === true) {

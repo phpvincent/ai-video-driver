@@ -171,6 +171,50 @@ export function migrateLegacyVisionModel(settings: Settings): Settings {
 }
 
 /** 合并写回：把局部更新合并进整份 settings（不动其他分区） */
+/** 内置种子方案的名称前缀（seedProfilesIfEmpty 生成，Key 为空） */
+export const SEED_PROFILE_PREFIX = '内置 · ';
+
+/**
+ * 写回前剥离"未激活的种子方案"：种子方案是**派生的展示项**（Key 为空），
+ * 若随保存写回，会把用户已填好 Key 的同名方案覆盖成空 Key——这是密钥丢失的根因。
+ */
+export function stripSeedProfiles(settings: Settings): Settings {
+  const profiles = settings.modelProfiles as Array<ModelConfig & { name?: string }> | undefined;
+  if (!profiles || profiles.length === 0) return settings;
+  const kept = profiles.filter((p) => {
+    const name = p?.name?.trim() ?? '';
+    const seeded = name.startsWith(SEED_PROFILE_PREFIX);
+    // 只剔除"仍是种子状态"（无 Key）的项；用户填过 Key 的同名方案必须保留
+    return !(seeded && !p.apiKey?.trim());
+  });
+  return { ...settings, modelProfiles: kept as Settings['modelProfiles'] };
+}
+
+/**
+ * 密钥护栏：新值 Key 为空而旧值非空时沿用旧值。
+ * 任何保存路径都不得因为"表单里没填 / 载入未完成"而把已配置的 Key 清空。
+ */
+export function preserveSecrets(next: Settings, prev: Settings): Settings {
+  const pm = prev.model;
+  const nm = next.model;
+  const model =
+    nm && pm && !nm.apiKey?.trim() && pm.apiKey?.trim() ? { ...nm, apiKey: pm.apiKey } : nm;
+
+  const prevProfiles = (prev.modelProfiles ?? []) as Array<ModelConfig & { name?: string }>;
+  const nextProfiles = (next.modelProfiles ?? []) as Array<ModelConfig & { name?: string }>;
+  const profiles =
+    nextProfiles.length > 0
+      ? nextProfiles.map((p) => {
+          const name = p?.name?.trim();
+          if (!name || p.apiKey?.trim()) return p;
+          const old = prevProfiles.find((q) => (q?.name?.trim() ?? '') === name);
+          return old?.apiKey?.trim() ? { ...p, apiKey: old.apiKey } : p;
+        })
+      : next.modelProfiles;
+
+  return { ...next, model: model ?? next.model, modelProfiles: profiles ?? next.modelProfiles };
+}
+
 /** 预设按钮短名（避免多个 Qwen 端点按钮同名） */
 export function presetShortLabel(preset: PresetKey): string {
   switch (preset) {

@@ -22,6 +22,8 @@ import {
   presetShortLabel,
   activePreset,
   seedProfilesIfEmpty,
+  stripSeedProfiles,
+  preserveSecrets,
 } from '../../../src/panel/settings/modelForm';
 import type { ModelConfig, Settings } from '../../../src/types';
 
@@ -580,5 +582,35 @@ describe('mergeSettings', () => {
     // 已有方案时不覆盖（幂等）
     const existing = { modelProfiles: [{ name: '我的方案', apiKey: 'k' }] };
     expect((seedProfilesIfEmpty(existing as never).modelProfiles as never[]).length).toBe(1);
+  });
+  it('stripSeedProfiles：剔除未激活的种子方案，保留已填 Key 的同名方案', () => {
+    const settings = {
+      modelProfiles: [
+        { name: '内置 · Qwen · maas 网关', apiKey: '' },
+        { name: '内置 · DeepSeek', apiKey: '' },
+        { name: '内置 · Qwen · maas 网关', apiKey: 'sk-real' },
+        { name: '我的方案', apiKey: '' },
+      ],
+    } as never;
+    const out = stripSeedProfiles(settings).modelProfiles as Array<{ name: string; apiKey?: string }>;
+    // 空 Key 的种子项被剔除；用户填过 Key 的与自定义方案保留
+    expect(out.map((p) => p.name)).toEqual(['内置 · Qwen · maas 网关', '我的方案']);
+    expect(out[0]?.apiKey).toBe('sk-real');
+  });
+
+  it('preserveSecrets：新值 Key 为空时沿用旧值（密钥不得被静默清空）', () => {
+    const prev = { model: { ...DEFAULT_MODEL, apiKey: 'sk-old' } } as never;
+    const next = { model: { ...DEFAULT_MODEL, apiKey: '' } } as never;
+    expect(preserveSecrets(next, prev).model?.apiKey).toBe('sk-old');
+    // 方案级别同样生效
+    const prev2 = { modelProfiles: [{ name: 'A', apiKey: 'sk-a', baseUrl: 'https://x', model: 'm' }] } as never;
+    const next2 = { modelProfiles: [{ name: 'A', apiKey: '', baseUrl: 'https://x', model: 'm' }] } as never;
+    expect((preserveSecrets(next2, prev2).modelProfiles as Array<{ apiKey: string }>)[0]?.apiKey).toBe('sk-a');
+  });
+
+  it('preserveSecrets：新值填了 Key 时以新值为准（正常覆盖）', () => {
+    const prev = { model: { ...DEFAULT_MODEL, apiKey: 'sk-old' } } as never;
+    const next = { model: { ...DEFAULT_MODEL, apiKey: 'sk-new' } } as never;
+    expect(preserveSecrets(next, prev).model?.apiKey).toBe('sk-new');
   });
 });
