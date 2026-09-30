@@ -9,8 +9,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   PROMPT_VERSIONS,
-  getConceptFlowsSystemPrompt,
-  getConceptMapSystemPrompt,
   getOutlineRegenerateSystemPrompt,
   getOutlineSystemPrompt,
   getPersonaSystemPrompt,
@@ -31,8 +29,6 @@ const outlineRegenerateMdRaw = promptFiles['../../../src/prompts/outline-regener
 const termExplainerMdRaw = promptFiles['../../../src/prompts/term-explainer.md'];
 const segmentQaMdRaw = promptFiles['../../../src/prompts/segment-qa.md'];
 const personaMdRaw = promptFiles['../../../src/prompts/persona.md'];
-const conceptMapMdRaw = promptFiles['../../../src/prompts/concept-map.md'];
-const conceptFlowsMdRaw = promptFiles['../../../src/prompts/concept-flows.md'];
 
 describe('parsePromptHeader', () => {
   it('解析 outline.md 头注释：promptVersion 0.2.1 与 kind outline', () => {
@@ -258,83 +254,6 @@ describe('问答动态角色：persona.md 0.1.0', () => {
     const body = getPersonaSystemPrompt();
     expect(body).toContain('禁止编造视频中不存在的领域');
     expect(body).toContain('信息不足');
-  });
-});
-
-describe('导图主线组织：concept-map 0.7.1 / concept-flows 0.3.0（nature-paper2ppt 提炼）', () => {
-  it('文件头版本与 PROMPT_VERSIONS 一致（conceptMap 升版自动失效旧图缓存，flows 随之重生成）', () => {
-    expect(parsePromptHeader(conceptMapMdRaw)).toEqual({
-      promptVersion: '0.7.1',
-      kind: 'concept-map',
-    });
-    expect(parsePromptHeader(conceptFlowsMdRaw)).toEqual({
-      promptVersion: '0.3.0',
-      kind: 'concept-flows',
-    });
-    expect(PROMPT_VERSIONS.conceptMap).toBe('0.7.1');
-    expect(PROMPT_VERSIONS.conceptFlows).toBe('0.3.0');
-  });
-
-  it('0.7.1 防混淆护栏：弧不进输出 + stages 元素必须是对象', () => {
-    const body = getConceptMapSystemPrompt();
-    expect(body).toContain('不要出现在输出里');
-    expect(body).toContain('都必须是 {"label":"","concepts":[…]} 形态的对象');
-    expect(body).toContain('不允许出现字符串、数字或数组元素');
-  });
-
-  it('主线优先于章节顺序（论证主线 > 照搬章节顺序）', () => {
-    expect(getConceptMapSystemPrompt()).toContain('主线优先于章节顺序');
-  });
-
-  it('先判型再选叙事弧：五类课程弧 + 适配不强套 + 结论先行选项', () => {
-    const body = getConceptMapSystemPrompt();
-    expect(body).toContain('先判型');
-    for (const arc of ['概念课', '操作/教程课', '原理推导课', '项目实战课', '综述/导览课']) {
-      expect(body).toContain(arc);
-    }
-    expect(body).toContain('不强套');
-    expect(body).toContain('结论先行');
-  });
-
-  it('阶段推进主线 + 结论式命名（反空泛标签）', () => {
-    const body = getConceptMapSystemPrompt();
-    expect(body).toContain('推进主线');
-    expect(body).toContain('结论式命名');
-  });
-
-  it('术语规范：同一概念一个规范名（关系边一字不差引用）', () => {
-    const body = getConceptMapSystemPrompt();
-    expect(body).toContain('一个规范名');
-    expect(body).toContain('一字不差');
-  });
-
-  it('绑定具体内容：放到任何视频都成立的万金油表述改写或删除', () => {
-    expect(getConceptMapSystemPrompt()).toContain('放到任何视频都成立');
-  });
-
-  it('flows：先识别主线，骨干边优先，再补判断分支与回环', () => {
-    const body = getConceptFlowsSystemPrompt();
-    expect(body).toContain('骨干边');
-    expect(body).toContain('判断分支');
-    expect(body).toContain('回环');
-    expect(body).toContain('只画推进主线的边');
-  });
-
-  it('flows 既有约束保留：一字不差引用 + 禁编号前缀', () => {
-    const body = getConceptFlowsSystemPrompt();
-    expect(body).toContain('一字不差');
-    expect(body).toContain('S1-2');
-  });
-
-  it('?raw 内联内容与磁盘文件一致（单一事实源不失真）', () => {
-    expect(getConceptMapSystemPrompt()).toBe(stripPromptHeaderComments(conceptMapMdRaw));
-    expect(getConceptFlowsSystemPrompt()).toBe(stripPromptHeaderComments(conceptFlowsMdRaw));
-  });
-
-  it('concept-map 输出结构不变（stages schema，flows 仍由独立任务生成）', () => {
-    const body = getConceptMapSystemPrompt();
-    expect(body).toContain('"stages":[{"label":"","concepts":[{"label":"","importance":3,"anchorSections":[1],"details":[""]}]}]');
-    expect(body).toContain('本任务不输出 flows');
   });
 });
 

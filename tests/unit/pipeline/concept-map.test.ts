@@ -14,7 +14,6 @@ import {
   buildTermIndexMap,
   describeMapImages,
   findOverviewSectionIndices,
-  normalizeConceptStages,
   parseConceptStages,
   shortenLabel,
   resolveFlows,
@@ -87,13 +86,11 @@ describe('parseConceptStages', () => {
     expect(() => parseConceptStages('这不是JSON')).toThrow('不是合法 JSON');
   });
 
-  it('阶段数越界：2 个仍被拒；6 个被归一化截到 5（能救则救，0.7.1）', () => {
+  it('阶段数越界（2 个 / 6 个）均被 zod 拒', () => {
     const two = JSON.parse(validJson) as { stages: unknown[] };
     expect(() => parseConceptStages(JSON.stringify({ stages: two.stages.slice(0, 2) }))).toThrow();
-    const six = { stages: Array.from({ length: 6 }, (_, i) => ({ label: `阶段${i}`, concepts: [{ label: `概念${i}a`, importance: 3, anchorSections: [1], details: [] }, { label: `概念${i}b`, importance: 3, anchorSections: [1], details: [] }] })) };
-    const raw = parseConceptStages(JSON.stringify(six));
-    expect(raw.stages).toHaveLength(5); // 保序取前 5
-    expect(raw.stages[0].label).toBe('阶段0');
+    const six = { stages: Array.from({ length: 6 }, (_, i) => ({ label: `阶段${i}`, concepts: [{ label: `概念${i}`, importance: 3, anchorSections: [1], details: [] }] })) };
+    expect(() => parseConceptStages(JSON.stringify(six))).toThrow('Schema 校验');
   });
 
   it('阶段 label 超 20 字被拒（阶段名体现推进逻辑的上限）', () => {
@@ -104,7 +101,7 @@ describe('parseConceptStages', () => {
     expect(() => parseConceptStages(JSON.stringify(parsed))).not.toThrow();
   });
 
-  it('每阶段概念数越界：1 个仍被拒；7 个被归一化截到 6（0.7.1）', () => {
+  it('每阶段概念数越界（1 个 / 7 个）被 zod 拒', () => {
     const one = JSON.parse(validJson) as { stages: Array<{ concepts: unknown[] }> };
     const backup = one.stages[0].concepts;
     one.stages[0].concepts = [backup[0]];
@@ -113,8 +110,7 @@ describe('parseConceptStages', () => {
       ...backup,
       ...Array.from({ length: 5 }, (_, i) => ({ label: `补充概念${i}`, importance: 3, anchorSections: [1], details: [] })),
     ];
-    const raw = parseConceptStages(JSON.stringify(one));
-    expect(raw.stages[0].concepts).toHaveLength(6); // 保序取前 6
+    expect(() => parseConceptStages(JSON.stringify(one))).toThrow('Schema 校验');
   });
 
   it('概念 label 13~16 字（模型常见输出）通过 zod，不再硬拒', () => {
@@ -146,83 +142,6 @@ describe('parseConceptStages', () => {
     const broken = JSON.parse(validJson) as { stages: Array<{ concepts: Array<Record<string, unknown>> }> };
     delete broken.stages[0].concepts[0].importance;
     expect(() => parseConceptStages(JSON.stringify(broken))).toThrow('Schema 校验');
-  });
-
-  it('线上失败形态复现（0.7.0 实测）：合法对象后混入弧串/数字/数组，归一化后可救回', () => {
-    // 形态：stages.1~.4/.6 为字符串、.5 为数字、.7 为数组，且 >5 个元素
-    const raw = JSON.parse(validJson) as { stages: unknown[] };
-    const junk = [
-      raw.stages[0],
-      '概念课：动机/现象 → 概念定义 → 原理机制 → 示例 → 易错点/边界',
-      '操作/教程课：目标 → 前置准备 → 步骤链 → 验证 → 常见坑',
-      '原理推导课：问题 → 已知前提 → 推导链 → 结论 → 适用范围',
-      '项目实战课：需求 → 架构/设计 → 实现要点 → 运行验证 → 踩坑总结',
-      5,
-      '综述/导览课：为何重要 → 概念框架 → 主题 1~n → 对比/争议 → 方向',
-      ['主题1', '主题2', '主题3'],
-      raw.stages[1],
-      raw.stages[2],
-    ];
-    // 修复前该形态硬拒；现在垃圾元素被丢弃、合法对象保留（3 个 ≥ stagesMin）
-    const parsed = parseConceptStages(JSON.stringify({ stages: junk }));
-    expect(parsed.stages).toHaveLength(3);
-    expect(parsed.stages[0].label).toBe('背景回顾');
-    expect(parsed.stages[2].label).toBe('总结展望');
-  });
-
-  it('垃圾元素丢弃后不足 3 个阶段时仍如实报错（交给重试链路）', () => {
-    const raw = JSON.parse(validJson) as { stages: unknown[] };
-    const mostlyJunk = [raw.stages[0], '弧串', 5, ['主题']];
-    expect(() => parseConceptStages(JSON.stringify({ stages: mostlyJunk }))).toThrow('Schema 校验');
-  });
-});
-
-describe('normalizeConceptStages（形状归一化，确定性纯函数，0.7.1）', () => {
-  it('全合法输入恒等返回（幂等）', () => {
-    const value = JSON.parse(validJson);
-    expect(normalizeConceptStages(value)).toEqual(value);
-  });
-
-  it('非对象根 / stages 非数组：原样返回不加工', () => {
-    expect(normalizeConceptStages(null)).toBe(null);
-    expect(normalizeConceptStages('x')).toBe('x');
-    expect(normalizeConceptStages({ stages: 'oops' })).toEqual({ stages: 'oops' });
-  });
-
-  it('stages 混入非对象元素：只保留对象（含 null / 数组元素的丢弃）', () => {
-    const value = { stages: [{ label: 'a', concepts: [] }, null, ['数组'], '字符串', 3] };
-    expect(normalizeConceptStages(value)).toEqual({ stages: [{ label: 'a', concepts: [] }] });
-  });
-
-  it('concepts 混入非对象元素被丢弃；details 混入非字符串被丢弃', () => {
-    const value = {
-      stages: [
-        {
-          label: 'a',
-          concepts: [
-            { label: 'c1', details: ['ok', 5, null, ['x']] },
-            'junk',
-            { label: 'c2', details: [] },
-          ],
-        },
-      ],
-    };
-    expect(normalizeConceptStages(value)).toEqual({
-      stages: [{ label: 'a', concepts: [{ label: 'c1', details: ['ok'] }, { label: 'c2', details: [] }] }],
-    });
-  });
-
-  it('超限截断：stages > 5 截到 5，concepts > 6 截到 6（保序取前 N）', () => {
-    const mkConcept = (i: number) => ({ label: `概念${i}`, importance: 3, anchorSections: [1], details: [] });
-    const value = {
-      stages: Array.from({ length: 7 }, (_, i) => ({
-        label: `阶段${i}`,
-        concepts: Array.from({ length: 8 }, (_, j) => mkConcept(j)),
-      })),
-    };
-    const out = normalizeConceptStages(value) as { stages: Array<{ concepts: unknown[] }> };
-    expect(out.stages).toHaveLength(5);
-    expect(out.stages.every((s) => s.concepts.length === 6)).toBe(true);
   });
 });
 
