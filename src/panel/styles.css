@@ -1028,3 +1028,17 @@ body {
   padding: 3px 10px;
   font-size: 12px;
 }
+
+.llm-log-copy-one {
+  margin-left: 8px;
+  padding: 0 6px;
+  font-size: 11px;
+  color: #185fa5;
+  background: none;
+  border: 1px solid #d0d5dd;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.llm-log-copy-one:hover {
+  background: #f2f7fd;
+}

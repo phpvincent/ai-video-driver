@@ -222,8 +222,14 @@ export async function requestFrames(args: FrameRequestOptions): Promise<Captured
       payload: { videoId: args.videoId, targetsMs: args.targetsMs, maxSize: VISION.maxSize },
     })) as { frames?: CapturedFrame[] } | null;
     const rawFrames = Array.isArray(response?.frames) ? (response?.frames as CapturedFrame[]) : [];
-    // 结构感知抽帧第二道闸门：时间过近且画面几乎未变（同一页 PPT）的帧丢弃
-    return dedupeFrames(rawFrames, { minGapMs: VISION.minGapMs, dhashMaxDistance: VISION.dhashMaxDistance });
+    // 结构感知抽帧第二道闸门：画面几乎未变（同一页 PPT）的帧丢弃；
+    // minKeep 保底——dHash 对版式相同、内容不同的 PPT 页区分度不足，
+    // 不允许把规划的一半以下砍掉（冒烟 3c：16 帧被砍到 1 帧）
+    return dedupeFrames(rawFrames, {
+      minGapMs: VISION.minGapMs,
+      dhashMaxDistance: VISION.dhashMaxDistance,
+      minKeep: Math.ceil(args.targetsMs.length / 2),
+    });
   } catch {
     return [];
   }

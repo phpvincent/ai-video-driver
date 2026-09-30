@@ -34,10 +34,11 @@ export async function ensureHostPermission(
   origin: string,
 ): Promise<'granted' | 'denied' | 'unsupported' | 'invalid'> {
   if (!isValidOrigin(origin)) return 'invalid';
-  const already = await hasHostPermission(origin);
-  if (already === true) return 'granted';
   const perms = (globalThis as { chrome?: { permissions?: ChromePermissionsLike } }).chrome?.permissions;
   if (!perms?.request) return 'unsupported';
+  // **先 request**：permissions.request 必须在用户手势上下文的第一个 await 处调用。
+  // 之前先 await contains 再 request，手势已失效 → Chrome 静默拒绝、不弹窗（冒烟 8 的根因）。
+  // 对已授权的 origin，request 会直接 resolve true，不会重复弹窗。
   try {
     const ok = await perms.request({ origins: [origin] });
     return ok ? 'granted' : 'denied';

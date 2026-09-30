@@ -507,3 +507,78 @@ g.mm-active foreignObject span {
   font-weight: 600;
   color: #0c447c;
 }
+
+/* ===== 流程图视图（draw.io 式：阶段为列、概念为节点、flows 为边） ===== */
+.cmf-flow-scroll {
+  overflow: auto;
+  border: 1px solid #e5e6eb;
+  border-radius: 10px;
+  background: #fbfcfe;
+}
+.cmf-svg {
+  display: block;
+}
+.cmf-stage-rect {
+  fill: #f2f6fd;
+  stroke: #d8e2f2;
+}
+.cmf-stage-rect.hue-0 { fill: #e8f1fb; stroke: #b9d4f0; }
+.cmf-stage-rect.hue-1 { fill: #e6f4ef; stroke: #b8e0d2; }
+.cmf-stage-rect.hue-2 { fill: #fbf3e4; stroke: #ecd9b0; }
+.cmf-stage-rect.hue-3 { fill: #f9ecf1; stroke: #e8c4d3; }
+.cmf-stage-rect.hue-4 { fill: #edecf9; stroke: #c9c6ec; }
+.cmf-stage-text {
+  font-size: 12px;
+  font-weight: 600;
+  fill: #1f2329;
+}
+.cmf-edge path {
+  fill: none;
+  stroke: #378add;
+  stroke-width: 1.6;
+}
+.cmf-edge.seq path {
+  stroke: #c3cbd6;
+  stroke-width: 1.2;
+  stroke-dasharray: 4 3;
+}
+.cmf-arrow-head { fill: #378add; }
+.cmf-arrow-head-seq { fill: #c3cbd6; }
+.cmf-edge-label {
+  font-size: 11px;
+  fill: #4e5969;
+  paint-order: stroke;
+  stroke: #fbfcfe;
+  stroke-width: 3px;
+}
+.cmf-node-rect {
+  fill: #ffffff;
+  stroke: #c9d4e3;
+  stroke-width: 1.4;
+  cursor: pointer;
+  transition: stroke 0.15s ease;
+}
+.cmf-node:hover .cmf-node-rect {
+  stroke: #378add;
+}
+.cmf-node.active .cmf-node-rect {
+  stroke: #185fa5;
+  stroke-width: 2.2;
+  fill: #eef5fd;
+}
+.cmf-node-text {
+  font-size: 12.5px;
+  fill: #1f2329;
+  pointer-events: none;
+}
+.cmf-node.imp-5 .cmf-node-text {
+  font-weight: 600;
+  fill: #0c447c;
+}
+.cmf-node.imp-5 .cmf-node-rect {
+  stroke: #85b7eb;
+}
+.cmf-hint-banner {
+  background: #f2f6fd;
+  border-color: #d8e2f2;
+}

@@ -34,6 +34,7 @@ import {
   matchConcepts,
   parseNodeTimestamp,
   sectionHeadingText,
+  layoutConceptFlow,
 } from '../../../src/panel/MindmapTab';
 
 const section = (
@@ -336,6 +337,7 @@ describe('阶段流程渲染（renderToString：步骤圆徽 / 阶段名 / 连�
   it('阶段头：步骤圆徽 1/2/3 + 阶段名 + 概念数徽标', () => {
     const html = renderToString(
       createElement(MindmapTab, {
+        initialView: 'concept',
         sections,
         positionMs: 0,
         onRequestSeek: noop,
@@ -357,6 +359,7 @@ describe('阶段流程渲染（renderToString：步骤圆徽 / 阶段名 / 连�
   it('阶段间连接：3 个阶段 → 2 个 kp-connector（首阶段无），体现推进', () => {
     const html = renderToString(
       createElement(MindmapTab, {
+        initialView: 'concept',
         sections,
         positionMs: 0,
         onRequestSeek: noop,
@@ -369,6 +372,7 @@ describe('阶段流程渲染（renderToString：步骤圆徽 / 阶段名 / 连�
   it('主锚 chip 实心强调（cm-chip-primary，anchors[0]），次锚次级样式（无该类）', () => {
     const html = renderToString(
       createElement(MindmapTab, {
+        initialView: 'concept',
         sections,
         positionMs: 0,
         onRequestSeek: noop,
@@ -387,6 +391,7 @@ describe('阶段流程渲染（renderToString：步骤圆徽 / 阶段名 / 连�
   it('rail：有锚概念行渲染 cm-rail-dot，title 为最早锚点时间（语义圆点）', () => {
     const html = renderToString(
       createElement(MindmapTab, {
+        initialView: 'concept',
         sections,
         positionMs: 0,
         onRequestSeek: noop,
@@ -405,6 +410,7 @@ describe('阶段流程渲染（renderToString：步骤圆徽 / 阶段名 / 连�
     // sec_0001（0-60s）terms 含 上下文窗口 / Token → 两行高亮
     const html = renderToString(
       createElement(MindmapTab, {
+        initialView: 'concept',
         sections,
         positionMs: 0,
         onRequestSeek: noop,
@@ -417,6 +423,7 @@ describe('阶段流程渲染（renderToString：步骤圆徽 / 阶段名 / 连�
   it('当前阶段高亮：命中概念所在阶段块带 stage-current', () => {
     const html = renderToString(
       createElement(MindmapTab, {
+        initialView: 'concept',
         sections,
         positionMs: 0,
         onRequestSeek: noop,
@@ -434,6 +441,7 @@ describe('阶段流程渲染（renderToString：步骤圆徽 / 阶段名 / 连�
     const secs = [section('s1', 60_000, 120_000, '无关章', { terms: ['完全无关的术语'] })];
     const html = renderToString(
       createElement(MindmapTab, {
+        initialView: 'concept',
         sections: secs,
         positionMs: 60_000,
         onRequestSeek: noop,
@@ -451,6 +459,7 @@ describe('MindmapTab 渲染冒烟（renderToString，仅无 effect 分支）', (
   it('空大纲显示引导文案，未传 onGoOutline 时无按钮', () => {
     const html = renderToString(
       createElement(MindmapTab, {
+        initialView: 'concept',
         sections: [],
         positionMs: 0,
         onRequestSeek: noop,
@@ -474,6 +483,7 @@ describe('MindmapTab 渲染冒烟（renderToString，仅无 effect 分支）', (
   it('无 generateConceptMap 接线且有 sections：降级渲染本地术语关联图（阶段流 + 降级横幅，无 SVG）', () => {
     const html = renderToString(
       createElement(MindmapTab, {
+        initialView: 'concept',
         sections,
         positionMs: 0,
         onRequestSeek: noop,
@@ -493,6 +503,7 @@ describe('MindmapTab 渲染冒烟（renderToString，仅无 effect 分支）', (
   it('有 generateConceptMap 且未就绪：显示模型配置引导', () => {
     const html = renderToString(
       createElement(MindmapTab, {
+        initialView: 'concept',
         sections,
         positionMs: 0,
         onRequestSeek: noop,
@@ -507,6 +518,7 @@ describe('MindmapTab 渲染冒烟（renderToString，仅无 effect 分支）', (
   it('缓存命中（conceptMap 注入）：渲染阶段与概念（阶段名 + 概念名 + 徽标），无降级横幅', () => {
     const html = renderToString(
       createElement(MindmapTab, {
+        initialView: 'concept',
         sections,
         positionMs: 0,
         onRequestSeek: noop,
@@ -530,6 +542,7 @@ describe('MindmapTab 渲染冒烟（renderToString，仅无 effect 分支）', (
   it('降级图（model=term-index 约定）：显示降级横幅 + 重试按钮（调 generateConceptMap）', () => {
     const html = renderToString(
       createElement(MindmapTab, {
+        initialView: 'concept',
         sections,
         positionMs: 0,
         onRequestSeek: noop,
@@ -547,6 +560,7 @@ describe('MindmapTab 渲染冒烟（renderToString，仅无 effect 分支）', (
   it('props.degraded=true（App 生成 catch 路径设置）：即使数据无约定标记也显示降级横幅', () => {
     const html = renderToString(
       createElement(MindmapTab, {
+        initialView: 'concept',
         sections,
         positionMs: 0,
         onRequestSeek: noop,
@@ -563,6 +577,7 @@ describe('MindmapTab 渲染冒烟（renderToString，仅无 effect 分支）', (
   it('details 折叠区默认收起：有"细节 ▸"切换且无 open 类（grid 0fr/1fr 过渡）', () => {
     const html = renderToString(
       createElement(MindmapTab, {
+        initialView: 'concept',
         sections,
         positionMs: 0,
         onRequestSeek: noop,
@@ -579,6 +594,7 @@ describe('MindmapTab 渲染冒烟（renderToString，仅无 effect 分支）', (
   it('时间 chips：概念锚点渲染 [mm:ss] 小按钮（主锚 + 次锚）', () => {
     const html = renderToString(
       createElement(MindmapTab, {
+        initialView: 'concept',
         sections,
         positionMs: 0,
         onRequestSeek: noop,
@@ -663,5 +679,55 @@ describe('LlmLogView 渲染冒烟（无 chrome 环境不抛错）', () => {
   it('formatLogTime：非法时间回落 --:--:--', () => {
     expect(formatLogTime('not-a-date')).toBe('--:--:--');
     expect(LLM_LOG_EMPTY_TEXT.length).toBeGreaterThan(0);
+  });
+});
+
+const noop = (): void => undefined;
+
+describe('流程图视图（冒烟 3b：draw.io 式）', () => {
+  it('layoutConceptFlow：阶段为列、概念自上而下、尺寸随行列增长', () => {
+    const layout = layoutConceptFlow(stageFlow());
+    expect(layout.nodes).toHaveLength(5);
+    const col0 = layout.nodes.filter((n) => n.stageIndex === 0);
+    const col1 = layout.nodes.filter((n) => n.stageIndex === 1);
+    expect(col0.every((n) => n.x === col0[0]!.x)).toBe(true);
+    expect(col1[0]!.x).toBeGreaterThan(col0[0]!.x);
+    expect(col0[1]!.y).toBeGreaterThan(col0[0]!.y);
+    expect(layout.width).toBeGreaterThan(0);
+    expect(layout.height).toBeGreaterThan(0);
+  });
+
+  it('默认视图为流程图：渲染 cmf-svg / 阶段列头 / 顺序边；旧缓存提示重新生成', () => {
+    const html = renderToString(
+      createElement(MindmapTab, {
+        sections,
+        positionMs: 0,
+        onRequestSeek: noop,
+        conceptMap: mapData(stageFlow()),
+      }),
+    );
+    expect(html).toContain('cmf-svg');
+    expect(html).toContain('cmf-stage-rect');
+    expect(html).toContain('cmf-edge seq');
+    expect(html).toContain('重新生成」可获得');
+  });
+
+  it('带 flows 的数据：渲染 flow 边与边标签；无效引用被丢弃', () => {
+    const data = mapData(stageFlow());
+    data.flows = [
+      { fromId: 'cm_0001', toId: 'cm_0003', label: '产出' },
+      { fromId: 'cm_0001', toId: 'cm_9999', label: '幽灵' },
+    ];
+    const html = renderToString(
+      createElement(MindmapTab, {
+        sections,
+        positionMs: 0,
+        onRequestSeek: noop,
+        conceptMap: data,
+      }),
+    );
+    expect(html).toContain('cmf-edge flow');
+    expect(html).toContain('产出');
+    expect(html).not.toContain('幽灵');
   });
 });

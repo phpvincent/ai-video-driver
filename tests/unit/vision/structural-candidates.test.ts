@@ -222,3 +222,30 @@ describe('dHash 感知去重', () => {
     expect(out.map((f) => f.actualMs)).toEqual([10_000, 12_000]);
   });
 });
+
+
+describe('dedupeFrames minKeep 保底（冒烟 3c：PPT 版式相同被砍到 1 帧）', () => {
+  const frame = (i: number, dhash: string) => ({
+    targetMs: i * 60_000,
+    actualMs: i * 60_000,
+    dataBase64: `x${i}`,
+    dhash,
+  });
+
+  it('16 帧画面全部相似（dHash 距离 0）→ 仍保留至少一半', () => {
+    const frames = Array.from({ length: 16 }, (_, i) => frame(i, '0000000000000000'));
+    const out = dedupeFrames(frames, { minGapMs: 15_000, dhashMaxDistance: 5, minKeep: 8 });
+    expect(out.length).toBe(8);
+  });
+
+  it('不传 minKeep 时行为不变（全砍）', () => {
+    const frames = Array.from({ length: 16 }, (_, i) => frame(i, '0000000000000000'));
+    expect(dedupeFrames(frames, { dhashMaxDistance: 5 })).toHaveLength(1);
+  });
+
+  it('凑不满 minKeep 时保留必要的重复帧（尾部回收）', () => {
+    const frames = Array.from({ length: 10 }, (_, i) => frame(i, '0000000000000000'));
+    const out = dedupeFrames(frames, { dhashMaxDistance: 5, minKeep: 3 });
+    expect(out.length).toBe(3);
+  });
+});

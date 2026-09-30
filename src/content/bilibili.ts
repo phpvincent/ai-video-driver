@@ -6,7 +6,7 @@
 import { BILI_URL_PATTERN, BVID_REGEXES, PLAYBACK } from '../config/shared';
 import { MSG, type PlaybackPayload, type RuntimeMessage, type VideoIdPayload, type VideoInfoPayload } from '../messages';
 import { initPlayer } from './player';
-import { registerFrameCaptureHandler } from './frameCapture';
+import { isCaptureInProgress, registerFrameCaptureHandler } from './frameCapture';
 
 // ---------- 纯函数（单测覆盖） ----------
 
@@ -160,6 +160,9 @@ function handleUrlChange(): void {
 function onTimeUpdate(): void {
   const video = currentVideo;
   if (!video || !currentVideoId) return;
+  // 抽帧期间连续 seek 会触发一串 timeupdate：上报会让面板的播放位置/字幕高亮
+  // 在真实位置和抽帧目标之间来回跳（冒烟 1b/5）。跳过；恢复后由 restore 补发一次。
+  if (isCaptureInProgress()) return;
   const now = Date.now();
   if (now - lastProgressAt < PLAYBACK.progressThrottleMs) return;
   lastProgressAt = now;

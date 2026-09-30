@@ -21,7 +21,7 @@
  */
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type { Markmap } from 'markmap-view';
-import type { ConceptMapData, ConceptItem, ConceptStage, Section } from '../types';
+import type { ConceptMapData, ConceptItem, ConceptStage, ConceptFlow, Section } from '../types';
 import { buildTermIndexMap } from '../core/pipeline/conceptMap';
 import { formatTimestamp } from './SubtitleTab';
 import { ModelPicker } from './ModelPicker';
@@ -29,6 +29,8 @@ import { GenerationBanner } from './GenerationBanner';
 import './mindmap.css';
 
 export interface MindmapTabProps {
+  /** 单测/深链注入的初始视图（默认流程图） */
+  initialView?: 'flow' | 'concept' | 'chrono';
   /** 大纲章节（空数组 = 未生成，显示引导） */
   sections?: Section[];
   /** 视频标题（概念图生成入参） */
@@ -381,6 +383,264 @@ export const CONCEPT_DETAILS_TOGGLE_OPEN_TEXT = '细节 ▾';
 /** 主锚 chip 的无障碍/测试语义标记 */
 export const PRIMARY_CHIP_CLASS = 'cm-chip-primary';
 
+// ---------------------------------------------------------------------------
+// 流程图视图（冒烟 3b：draw.io 式逻辑流程，阶段为列、概念为节点、flows 为边）
+// ---------------------------------------------------------------------------
+
+export const FLOW_VIEW_LABEL = '流程图';
+
+/** 流程布局常量（纯展示） */
+const FLOW_NODE_W = 150;
+const FLOW_NODE_H = 44;
+const FLOW_NODE_GAP = 12;
+const FLOW_COL_GAP = 56;
+const FLOW_PAD = 14;
+const FLOW_HEADER_H = 34;
+
+export interface FlowNode {
+  id: string;
+  label: string;
+  importance: number;
+  /** 跳播时间（primaryAnchorTMs；无锚 -1） */
+  tMs: number;
+  stageIndex: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface FlowLayout {
+  nodes: FlowNode[];
+  width: number;
+  height: number;
+}
+
+/**
+ * 流程布局（纯函数，确定性）：阶段为列（按讲解推进从左到右），概念在列内按
+ * 模型输出顺序（即讲解顺序）自上而下。同列节点等宽等高，位置由序号决定。
+ */
+export function layoutConceptFlow(stages: ConceptStage[]): FlowLayout {
+  const nodes: FlowNode[] = [];
+  let maxRows = 1;
+  stages.forEach((stage, si) => {
+    stage.concepts.forEach((c, ci) => {
+      nodes.push({
+        id: c.id,
+        label: c.label,
+        importance: c.importance,
+        tMs: c.primaryAnchorTMs,
+        stageIndex: si,
+        x: FLOW_PAD + si * (FLOW_NODE_W + FLOW_COL_GAP),
+        y: FLOW_PAD + FLOW_HEADER_H + ci * (FLOW_NODE_H + FLOW_NODE_GAP),
+        w: FLOW_NODE_W,
+        h: FLOW_NODE_H,
+      });
+    });
+    maxRows = Math.max(maxRows, stage.concepts.length);
+  });
+  return {
+    nodes,
+    width: FLOW_PAD * 2 + stages.length * FLOW_NODE_W + Math.max(0, stages.length - 1) * FLOW_COL_GAP,
+    height: FLOW_PAD * 2 + FLOW_HEADER_H + maxRows * (FLOW_NODE_H + FLOW_NODE_GAP) - FLOW_NODE_GAP,
+  };
+}
+
+/** 节点 → 右侧出边锚点 */
+function outPoint(n: FlowNode): { x: number; y: number } {
+  return { x: n.x + n.w, y: n.y + n.h / 2 };
+}
+
+/** 节点 → 左侧入边锚点（同列时用底部，避免重叠） */
+function inPoint(n: FlowNode, sameColumn: boolean): { x: number; y: number } {
+  return sameColumn ? { x: n.x + n.w / 2, y: n.y + n.h } : { x: n.x, y: n.y + n.h / 2 };
+}
+
+/** 贝塞尔路径（水平流向；同列时走右侧绕行） */
+function edgePath(a: { x: number; y: number }, b: { x: number; y: number }, sameColumn: boolean): string {
+  if (sameColumn) {
+    const mx = Math.max(a.x, b.x) + FLOW_COL_GAP / 2;
+    return `M ${a.x} ${a.y} C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x} ${b.y}`;
+  }
+  const mx = (a.x + b.x) / 2;
+  return `M ${a.x} ${a.y} C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x} ${b.y}`;
+}
+
+/** 流程图视图：节点 = 概念（点击跳播），边 = 模型 flows + 阶段内顺序边 */
+function ConceptFlowView({
+  stages,
+  flows,
+  activeLabels,
+  onRequestSeek,
+  degraded,
+  degradedText,
+  onRetry,
+}: {
+  stages: ConceptStage[];
+  flows: ConceptFlow[] | undefined;
+  activeLabels: ReadonlySet<string>;
+  onRequestSeek?: (ms: number) => void;
+  degraded?: boolean;
+  degradedText?: string;
+  onRetry?: () => void;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const layout = useMemo(() => layoutConceptFlow(stages), [stages]);
+  const nodeById = useMemo(() => new Map(layout.nodes.map((n) => [n.id, n])), [layout]);
+
+  // 模型 flows（端点必须能解析到节点）+ 阶段内顺序边（虚线，弱化）
+  const edges = useMemo(() => {
+    const out: Array<{ key: string; d: string; label?: string; kind: 'flow' | 'seq' }> = [];
+    for (const f of flows ?? []) {
+      const a = nodeById.get(f.fromId);
+      const b = nodeById.get(f.toId);
+      if (!a || !b) continue;
+      const sameColumn = a.stageIndex === b.stageIndex;
+      out.push({
+        key: `${f.fromId}->${f.toId}:${f.label ?? ''}`,
+        d: edgePath(outPoint(a), inPoint(b, sameColumn), sameColumn),
+        label: f.label,
+        kind: 'flow',
+      });
+    }
+    for (const stage of stages) {
+      for (let i = 0; i + 1 < stage.concepts.length; i++) {
+        const a = nodeById.get(stage.concepts[i]!.id);
+        const b = nodeById.get(stage.concepts[i + 1]!.id);
+        if (!a || !b) continue;
+        out.push({
+          key: `seq-${a.id}-${b.id}`,
+          d: edgePath({ x: a.x + a.w, y: a.y + a.h / 2 }, { x: b.x, y: b.y + b.h / 2 }, false),
+          kind: 'seq',
+        });
+      }
+    }
+    return out;
+  }, [flows, nodeById, stages]);
+
+  // 活动概念跟随：高亮节点滚入可视区
+  const lastActiveKeyRef = useRef('');
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container || activeLabels.size === 0) return;
+    const key = [...activeLabels].sort().join('|');
+    if (key === lastActiveKeyRef.current) return;
+    lastActiveKeyRef.current = key;
+    const target = container.querySelector('.cmf-node.active');
+    if (target) {
+      const rect = target.getBoundingClientRect();
+      const view = container.getBoundingClientRect();
+      if (rect.bottom < view.top || rect.top > view.bottom) {
+        target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      }
+    }
+  }, [activeLabels]);
+
+  const flowCount = (flows ?? []).length;
+  return (
+    <div className="cm-container">
+      {(degraded || flowCount === 0) && (
+        <div className={`cm-degraded-banner${degraded ? '' : ' cmf-hint-banner'}`} role="status">
+          <span className="cm-degraded-text">
+            {degraded
+              ? (degradedText ?? CONCEPT_DEGRADED_TEXT)
+              : '本图为旧版缓存（无逻辑关系边）——点「重新生成」可获得 draw.io 式流程'}
+          </span>
+          {(degraded ? onRetry : generateFlowRetry()) && onRetry && (
+            <button type="button" className="cm-retry-btn" onClick={onRetry}>
+              {CONCEPT_RETRY_TEXT}
+            </button>
+          )}
+        </div>
+      )}
+      <div className="cmf-flow-scroll" ref={scrollRef}>
+        <svg
+          className="cmf-svg"
+          width={layout.width}
+          height={layout.height}
+          viewBox={`0 0 ${layout.width} ${layout.height}`}
+          role="img"
+          aria-label="知识流程图"
+        >
+          <defs>
+            <marker id="cmf-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" className="cmf-arrow-head" />
+            </marker>
+            <marker id="cmf-arrow-seq" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" className="cmf-arrow-head-seq" />
+            </marker>
+          </defs>
+
+          {/* 阶段列头 */}
+          {stages.map((stage, si) => (
+            <g key={stage.id} className="cmf-stage-head">
+              <rect
+                x={FLOW_PAD + si * (FLOW_NODE_W + FLOW_COL_GAP)}
+                y={FLOW_PAD}
+                width={FLOW_NODE_W}
+                height={26}
+                rx={6}
+                className={`cmf-stage-rect hue-${si % STAGE_HUE_COUNT}`}
+              />
+              <text
+                x={FLOW_PAD + si * (FLOW_NODE_W + FLOW_COL_GAP) + FLOW_NODE_W / 2}
+                y={FLOW_PAD + 17}
+                textAnchor="middle"
+                className="cmf-stage-text"
+              >
+                {`${si + 1}. ${stage.label}`.slice(0, 14)}
+              </text>
+            </g>
+          ))}
+
+          {/* 边（先画，节点覆盖其上） */}
+          {edges.map((e) => (
+            <g key={e.key} className={`cmf-edge ${e.kind}`}>
+              <path d={e.d} markerEnd={e.kind === 'flow' ? 'url(#cmf-arrow)' : 'url(#cmf-arrow-seq)'} />
+              {e.label && (
+                <text className="cmf-edge-label" x={0} y={0}>
+                  {e.label}
+                </text>
+              )}
+            </g>
+          ))}
+
+          {/* 节点 */}
+          {layout.nodes.map((n) => {
+            const active = activeLabels.has(normalizeTerm(n.label));
+            return (
+              <g
+                key={n.id}
+                className={`cmf-node imp-${n.importance}${active ? ' active' : ''}`}
+                onClick={() => {
+                  if (n.tMs >= 0) onRequestSeek?.(n.tMs);
+                }}
+              >
+                <rect x={n.x} y={n.y} width={n.w} height={n.h} rx={8} className="cmf-node-rect" />
+                <text x={n.x + n.w / 2} y={n.y + n.h / 2 + 4} textAnchor="middle" className="cmf-node-text">
+                  {n.label.slice(0, 11)}
+                </text>
+                <title>{n.tMs >= 0 ? `${n.label}（点击跳播到 ${mmssLabel(n.tMs)}）` : n.label}</title>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+/** 流程图节点标题里的 mm:ss（独立小函数，避免依赖 compiler 的导出面） */
+function mmssLabel(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+
+/** 旧缓存提示条的重试按钮仅在可重试时渲染（占位，避免未定义引用） */
+function generateFlowRetry(): boolean {
+  return true;
+}
+
 /** 概念图视图（竖向阶段流程；stages 由调用方决定来源：缓存、App 降级或本地降级） */
 function ConceptView({
   stages,
@@ -640,7 +900,8 @@ export function MindmapTab(props: MindmapTabProps) {
     onGoOutline,
   } = props;
 
-  const [view, setView] = useState<'concept' | 'chrono'>('concept');
+  // initialView：单测注入列表/时间轴视图（默认流程图，冒烟 3b）
+  const [view, setView] = useState<'flow' | 'concept' | 'chrono'>(props.initialView ?? 'flow');
 
   // 未接线模型路径时：本地术语关联图（零模型确定性降级，红线 1）
   const fallbackMap = useMemo(() => {
@@ -660,11 +921,18 @@ export function MindmapTab(props: MindmapTabProps) {
   // model='term-index' 约定兜底（types.ts 的 ConceptMapData 无字段）
   const mapDegraded = degraded || (conceptMap != null && isTermIndexData(conceptMap));
 
-  const showEmptyGuide = view === 'concept' && sections.length === 0 && !conceptMap;
+  const showEmptyGuide = (view === 'concept' || view === 'flow') && sections.length === 0 && !conceptMap;
 
   return (
     <div className="mindmap-tab">
       <div className="mm-view-switch" role="tablist">
+        <button
+          type="button"
+          className={`mm-view-btn${view === 'flow' ? ' active' : ''}`}
+          onClick={() => setView('flow')}
+        >
+          {FLOW_VIEW_LABEL}
+        </button>
         <button
           type="button"
           className={`mm-view-btn${view === 'concept' ? ' active' : ''}`}
@@ -691,6 +959,32 @@ export function MindmapTab(props: MindmapTabProps) {
       </div>
 
       {showEmptyGuide && <MindmapEmptyGuide onGoOutline={onGoOutline} />}
+
+      {view === 'flow' && !showEmptyGuide && (
+        <div className="mm-view-body">
+          {conceptMap ? (
+            <ConceptFlowView
+              stages={conceptMap.stages}
+              flows={conceptMap.flows}
+              activeLabels={(() => {
+                // 与列表视图同一跟随口径（matchConcepts），此处内联避免提升 hook
+                const labels = matchConcepts(sections, positionMs, conceptMap.stages);
+                return new Set(labels.map((l) => l.toLowerCase()));
+              })()}
+              onRequestSeek={onRequestSeek}
+              degraded={mapDegraded}
+              degradedText={degradedText ?? CONCEPT_DEGRADED_TEXT}
+              onRetry={generateConceptMap ? handleGenerate : undefined}
+            />
+          ) : generating ? (
+            <ConceptSkeleton />
+          ) : (
+            <div className="tab-placeholder cm-gate">
+              <p>基于大纲重组为逻辑流程（概念节点 + 关系边）</p>
+            </div>
+          )}
+        </div>
+      )}
 
       {view === 'concept' && !showEmptyGuide && (
         <div className="mm-view-body">

@@ -230,6 +230,16 @@ export async function captureFrameAt(
 }
 
 /**
+ * 抽帧进行中标志（content 内共享）：抽帧要连续 seek <video>，每次 seek 都会触发
+ * timeupdate → 面板的播放位置/字幕高亮跟着跳（冒烟 1b/5 的根因）。播放进度上报方
+ * （bilibili.ts）据此跳过抽帧期间的 timeupdate。
+ */
+let captureInProgress = false;
+export function isCaptureInProgress(): boolean {
+  return captureInProgress;
+}
+
+/**
  * 批量抽帧：取前 maxFrames（默认 48）个目标；单帧失败跳过继续（不整体失败）。
  */
 export async function captureFrames(
@@ -245,13 +255,18 @@ export async function captureFrames(
   // 抽帧要连续 seek：若此时正在播放，画面会一路乱跳。先暂停，抽完再恢复原状态。
   // 帧数越多越明显（10 分钟密集视频可取到十几帧），这一步不能省。
   if (wasPlaying) video.pause?.();
+  captureInProgress = true;
   const frames: CapturedFrame[] = [];
-  for (const targetMs of targets) {
-    try {
-      frames.push(await captureFrameAt(video, targetMs, opts));
-    } catch {
-      // 单帧失败（seek 失败 / canvas 被污染 / 编码失败）跳过该帧
+  try {
+    for (const targetMs of targets) {
+      try {
+        frames.push(await captureFrameAt(video, targetMs, opts));
+      } catch {
+        // 单帧失败（seek 失败 / canvas 被污染 / 编码失败）跳过该帧
+      }
     }
+  } finally {
+    captureInProgress = false;
   }
   await restorePlayback(video, originMs, wasPlaying);
   return frames;

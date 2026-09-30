@@ -277,13 +277,17 @@ export function evaluatePlan(
  */
 export function dedupeFrames<F extends { targetMs: number; actualMs: number; dataBase64: string; dhash?: string }>(
   frames: F[],
-  opts: { minGapMs?: number; maxLengthDeltaRatio?: number; dhashMaxDistance?: number } = {},
+  opts: { minGapMs?: number; maxLengthDeltaRatio?: number; dhashMaxDistance?: number; minKeep?: number } = {},
 ): F[] {
   const minGap = opts.minGapMs ?? 0;
   const ratio = opts.maxLengthDeltaRatio ?? 0.02;
   const maxDist = opts.dhashMaxDistance ?? 5;
+  // 保底：去重不允许把帧砍到规划数的一半以下。dHash 对"版式相同、内容不同"的
+  // PPT 页（冒烟 3c：16 帧被砍到 1 帧）区分度不足——保多样性优先于省 token。
+  const minKeep = Math.max(1, opts.minKeep ?? Number.POSITIVE_INFINITY);
   const kept: F[] = [];
-  for (const f of frames) {
+  for (let i = 0; i < frames.length; i++) {
+    const f = frames[i]!;
     if (f.dataBase64.length === 0) continue;
     const dup = kept.some((k) => {
       // ① 双方都有 dHash：只看画面是否相同（与时间无关——隔了 3 分钟回到同一页 PPT 也算重复）
@@ -294,7 +298,15 @@ export function dedupeFrames<F extends { targetMs: number; actualMs: number; dat
         Math.abs(k.dataBase64.length - f.dataBase64.length) / Math.max(1, k.dataBase64.length) < ratio
       );
     });
-    if (dup) continue;
+    // 保底：若把这条重复帧也丢掉、剩下的帧全去重也凑不满 minKeep，则保留它。
+    // minKeep 未传（Infinity）时不启用保底——否则恒真，重复帧全被保留。
+    if (dup) {
+      if (minKeep < Number.POSITIVE_INFINITY) {
+        const remainingAfter = frames.length - i - 1;
+        if (kept.length + remainingAfter < minKeep) kept.push(f);
+      }
+      continue;
+    }
     kept.push(f);
   }
   return kept;

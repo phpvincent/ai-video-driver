@@ -14,7 +14,7 @@
  * 纯函数 + 注入式模型调用（ConceptModelFn），无 chrome.* 依赖。
  */
 import { CONCEPT_MAP } from '../../config';
-import type { ConceptAnchor, ConceptItem, ConceptStage, Section } from '../../types';
+import type { ConceptAnchor, ConceptFlow, ConceptItem, ConceptStage, Section } from '../../types';
 import { formatTimecode } from './prompts';
 import { parseJsonLoose, withRepairHint } from './jsonRepair';
 import type {
@@ -54,6 +54,17 @@ export const ConceptStagesSchema = z.object({
     )
     .min(CONCEPT_MAP.stagesMin)
     .max(CONCEPT_MAP.stagesMax),
+  /** 概念间关系边（可选；draw.io 式流程的关键，缺省时流程视图退化为顺序边） */
+  flows: z
+    .array(
+      z.object({
+        from: z.string().min(1).max(30),
+        to: z.string().min(1).max(30),
+        label: z.string().min(1).max(12).optional(),
+      }),
+    )
+    .max(30)
+    .optional(),
 });
 
 /**
@@ -200,6 +211,8 @@ export function buildConceptAnchors(
   anchorSections: number[],
   sections: Section[],
   overview: ReadonlySet<number>,
+  /** 章内细分锚（可选）：概念在本阶段的序号与阶段内概念总数，用于把同章概念错开到不同要点 */
+  spread?: { indexInStage: number; stageConceptCount: number },
 ): ConceptAnchor[] {
   const seen = new Set<string>();
   const valid: Section[] = [];
@@ -219,7 +232,15 @@ export function buildConceptAnchors(
     if (sectionScore(sec) > sectionScore(primary)) primary = sec;
   }
   const rest = valid.filter((s) => s !== primary);
-  return [primary, ...rest].map((s) => ({ tMs: s.startMs, sectionId: s.id }));
+  const pickTime = (s: Section): number => {
+    // 冒烟 3a：同章多个概念此前全部锚在章节起点（00:00）。章节有要点时，
+    // 按概念在阶段内的顺序取对应要点的时间（确定性、循环取），讲解顺序即时间顺序。
+    const bullets = (s.bullets ?? []).filter((b) => Number.isFinite(b.startMs));
+    if (bullets.length === 0 || !spread || spread.stageConceptCount <= 0) return s.startMs;
+    const idx = spread.indexInStage % bullets.length;
+    return bullets[idx]!.startMs;
+  };
+  return [primary, ...rest].map((s) => ({ tMs: pickTime(s), sectionId: s.id }));
 }
 
 // ---------------------------------------------------------------------------
@@ -241,8 +262,11 @@ export function buildStagesFromRaw(
   const overview = findOverviewSectionIndices(raw, sections);
   let cmSeq = 0;
   return raw.stages.map((stage, si) => {
-    const concepts: ConceptItem[] = stage.concepts.map((c: ConceptRaw) => {
-      const anchors = buildConceptAnchors(c.anchorSections, sections, overview);
+    const concepts: ConceptItem[] = stage.concepts.map((c: ConceptRaw, ci) => {
+      const anchors = buildConceptAnchors(c.anchorSections, sections, overview, {
+        indexInStage: ci,
+        stageConceptCount: stage.concepts.length,
+      });
       cmSeq += 1;
       return {
         id: `cm_${String(cmSeq).padStart(4, '0')}`,
@@ -259,6 +283,38 @@ export function buildStagesFromRaw(
       concepts,
     };
   });
+}
+
+/**
+ * 模型输出的 flows（label 引用）→ ConceptFlow（id 引用）纯函数：
+ * - from/to 按概念 label 归一化匹配（trim + 小写）；同 label 多个概念取首个（确定性）；
+ * - 引用不存在 / 自环 / 重复边 丢弃；
+ * - 输出顺序保持模型顺序（渲染不重排）。
+ */
+export function resolveFlows(
+  raw: ConceptStagesRaw['flows'],
+  stages: ConceptStage[],
+): ConceptFlow[] | undefined {
+  if (!raw || raw.length === 0) return undefined;
+  const idByLabel = new Map<string, string>();
+  for (const stage of stages) {
+    for (const c of stage.concepts) {
+      const key = c.label.trim().toLowerCase();
+      if (!idByLabel.has(key)) idByLabel.set(key, c.id);
+    }
+  }
+  const out: ConceptFlow[] = [];
+  const seen = new Set<string>();
+  for (const f of raw) {
+    const fromId = idByLabel.get(f.from.trim().toLowerCase());
+    const toId = idByLabel.get(f.to.trim().toLowerCase());
+    if (!fromId || !toId || fromId === toId) continue;
+    const key = `${fromId}->${toId}:${f.label ?? ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ fromId, toId, ...(f.label ? { label: f.label } : {}) });
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -280,6 +336,8 @@ export interface BuildConceptMapArgs {
 /** 生成成功结果（降级图用 degraded: true 区分，见 buildTermIndexMap） */
 export interface ConceptMapBuildResult {
   stages: ConceptStage[];
+  /** 概念间关系边（模型输出；无 = undefined） */
+  flows?: ConceptFlow[];
   degraded: false;
 }
 
@@ -317,8 +375,10 @@ export async function buildConceptMap(
         images: args.images,
       });
       const raw = parseConceptStages(res.content);
+      const stages = buildStagesFromRaw(raw, args.sections);
       return {
-        stages: buildStagesFromRaw(raw, args.sections),
+        stages,
+        flows: resolveFlows(raw.flows, stages),
         degraded: false,
       };
     } catch (err) {

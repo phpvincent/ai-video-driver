@@ -142,7 +142,15 @@ export interface ConceptStageRaw {
   concepts: ConceptRaw[];
 }
 
+/** 模型输出的关系边（label 引用概念） */
+export interface ConceptFlowRaw {
+  from: string;
+  to: string;
+  label?: string;
+}
+
 /** 模型输出整体（原始形状，Schema 校验后）：阶段流 */
 export interface ConceptStagesRaw {
   stages: ConceptStageRaw[];
+  flows?: ConceptFlowRaw[];
 }

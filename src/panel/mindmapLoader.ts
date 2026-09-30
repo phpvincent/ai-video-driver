@@ -140,7 +140,7 @@ export async function generateConceptMap(
     }).then((res) => ({ content: res.content }));
   };
 
-  const { stages } = await buildConceptMap({
+  const { stages, flows } = await buildConceptMap({
     sections,
     videoTitle,
     modelFn,
@@ -154,6 +154,7 @@ export async function generateConceptMap(
     promptVersion: PROMPT_VERSIONS.conceptMap,
     model: model.model,
     stages,
+    flows,
     generatedAt: new Date().toISOString(),
   };
 

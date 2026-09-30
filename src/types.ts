@@ -288,12 +288,24 @@ export interface Settings {
   obsidian?: { baseUrl?: string; apiKey?: string; rootDir?: string };
 }
 
+/** 概念间的逻辑关系边（draw.io 式流程；SPEC-08 冒烟 3b） */
+export interface ConceptFlow {
+  /** 起点概念 id（cm_xxx） */
+  fromId: string;
+  /** 终点概念 id */
+  toId: string;
+  /** 边上的条件/动作（如"判断：md5 相同"；可缺省） */
+  label?: string;
+}
+
 export interface ConceptMapData {
   videoId: VideoId;
   promptVersion: string;
   model: string;
   /** 3~5 个阶段（模型按内容逻辑划分，顺序 = 讲解推进顺序） */
   stages: ConceptStage[];
+  /** 概念间关系边（模型输出；缺省 = 无，流程视图退化为阶段内顺序边） */
+  flows?: ConceptFlow[];
   generatedAt: string;
 }
 

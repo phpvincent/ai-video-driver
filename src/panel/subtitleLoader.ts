@@ -62,8 +62,9 @@ import type { Settings } from '../types';
 
 /** 读设置（与各 loader 同款的最小实现） */
 async function fetchSettings(): Promise<Settings> {
-  const res = (await chrome.runtime.sendMessage({ type: MSG.GET_SETTINGS })) as { settings?: Settings } | null;
-  return (res?.settings ?? {}) as Settings;
+  // background 对 GET_SETTINGS 直接返回 settings 对象本身（不是 {settings} 包一层）
+  const res = (await chrome.runtime.sendMessage({ type: MSG.GET_SETTINGS })) as Settings | null;
+  return (res ?? {}) as Settings;
 }
 
 export interface PunctuateResult {

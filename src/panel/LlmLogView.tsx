@@ -207,6 +207,18 @@ export function LlmLogView() {
                   <div className="llm-log-block">
                     <div className="llm-log-block-title">
                       {e.ok ? '响应正文（预览）' : '响应体 / 错误原文'}
+                      <button
+                        type="button"
+                        className="llm-log-copy-one"
+                        onClick={() => {
+                          void navigator.clipboard
+                            ?.writeText(JSON.stringify(e, null, 2))
+                            .then(() => setFeedback('已复制本条日志（JSON）'))
+                            .catch(() => setFeedback('复制失败：浏览器未授权剪贴板'));
+                        }}
+                      >
+                        复制本条
+                      </button>
                     </div>
                     <pre className="llm-log-pre">{e.responsePreview || '（无响应体）'}</pre>
                   </div>

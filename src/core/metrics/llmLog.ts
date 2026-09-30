@@ -74,8 +74,8 @@ export function setConsoleMirrorEnabled(v: boolean): void {
   consoleMirrorEnabled = v;
 }
 
-/** 是否保存帧缩略图（默认关：图像体积大，只在排查抽帧时临时打开） */
-let thumbnailsEnabled = false;
+/** 是否保存帧缩略图（默认开：160px 小图单张几 KB；可在日志工具栏关闭） */
+let thumbnailsEnabled = true;
 export function setThumbnailsEnabled(v: boolean): void {
   thumbnailsEnabled = v;
 }

@@ -31,17 +31,20 @@ describe('originOfBaseUrl（红线 9：不触碰具体端点）', () => {
 });
 
 describe('ensureHostPermission（SPEC-08 8.3 / A4）', () => {
-  it('已含权限 → granted，不再弹申请', async () => {
-    const perms = fakePermissions({ contains: true });
+  // 冒烟 8 根因：先 await contains 再 request 会丢失用户手势 → Chrome 不弹窗。
+  // 修复后 request 永远是第一个调用（对已授权 origin 直接 resolve true，不重复弹窗）。
+  it('request 永远第一个调用（保住用户手势）；同意 → granted', async () => {
+    const perms = fakePermissions({ contains: true, request: true });
     expect(await ensureHostPermission('https://api.example.com')).toBe('granted');
-    expect(perms.request).not.toHaveBeenCalled();
+    expect(perms.request).toHaveBeenCalledWith({ origins: ['https://api.example.com'] });
+    // request 之前没有别的 chrome 调用（contains 未被触达）
+    expect(perms.contains).not.toHaveBeenCalled();
     clearChrome();
   });
 
-  it('未含权限 → 发起申请，用户同意 → granted', async () => {
-    const perms = fakePermissions({ contains: false, request: true });
+  it('已授权 origin 的 request 直接 resolve true（Chrome 语义，无二次弹窗）', async () => {
+    fakePermissions({ contains: true, request: true });
     expect(await ensureHostPermission('https://api.example.com')).toBe('granted');
-    expect(perms.request).toHaveBeenCalledWith({ origins: ['https://api.example.com'] });
     clearChrome();
   });
 
