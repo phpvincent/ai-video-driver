@@ -29,6 +29,8 @@ export interface RouteContext {
   senderTabId: number | null;
   /** 当前活跃 tab 的视频（executor 已解析，供 CURRENT_VIDEO_GET 使用） */
   getActiveTabVideo(): VideoInfoPayload | null;
+  /** 全屏标签页等扩展页面自身成为活跃 tab 时，回退到最近检测到的视频 */
+  getLastVideo(): VideoInfoPayload | null;
   getVideoByTabId(tabId: number): VideoInfoPayload | null;
   getTabIdByVideoId(videoId: VideoId): number | null;
 }
@@ -79,8 +81,12 @@ export function routeBackgroundMessage(msg: RuntimeMessage, ctx: RouteContext): 
       }
       return [{ kind: 'forwardToTab', tabId, message: msg }];
     }
-    case MSG.CURRENT_VIDEO_GET:
-      return [{ kind: 'respond', response: ctx.getActiveTabVideo() }];
+    case MSG.CURRENT_VIDEO_GET: {
+      // 全屏单视图（panel.html?view=xxx）自身是活跃 tab，映射里查不到；
+      // 回退最近检测到的视频（播放进度走 PLAYBACK_CHANGED 广播自动跟上）
+      const active = ctx.getActiveTabVideo();
+      return [{ kind: 'respond', response: active ?? ctx.getLastVideo() }];
+    }
     case MSG.GET_SETTINGS:
       return [{ kind: 'readSettings' }];
     case MSG.SET_SETTINGS:
@@ -97,6 +103,8 @@ const SETTINGS_KEY = 'settings';
 
 /** 内存映射：tabId → VideoInfoPayload；SW 重启由 restoreTabVideoMap 恢复 */
 const tabVideoMap = new Map<number, VideoInfoPayload>();
+/** 最近一次检测到的视频（全屏单视图等无 tab 上下文页面的回退来源） */
+let lastVideoPayload: VideoInfoPayload | null = null;
 
 async function persistTabVideoMap(): Promise<void> {
   await chrome.storage.session.set({ [TAB_VIDEO_MAP_KEY]: Object.fromEntries(tabVideoMap) });
@@ -109,6 +117,7 @@ async function restoreTabVideoMap(): Promise<void> {
     for (const [tabId, payload] of Object.entries(raw)) {
       if (payload && typeof payload === 'object' && typeof payload.videoId === 'string') {
         tabVideoMap.set(Number(tabId), payload);
+        lastVideoPayload = payload;
       }
     }
   }
@@ -120,6 +129,7 @@ async function buildRouteContext(senderTabId: number | null): Promise<RouteConte
   return {
     senderTabId,
     getActiveTabVideo: () => (activeTabId !== null ? (tabVideoMap.get(activeTabId) ?? null) : null),
+    getLastVideo: () => lastVideoPayload,
     getVideoByTabId: (tabId) => tabVideoMap.get(tabId) ?? null,
     getTabIdByVideoId: (videoId) => {
       for (const [tabId, payload] of tabVideoMap) {
@@ -136,6 +146,7 @@ async function executeActions(actions: Action[], sendResponse: (response?: unkno
     switch (action.kind) {
       case 'storeVideo':
         tabVideoMap.set(action.tabId, action.payload);
+        lastVideoPayload = action.payload;
         await persistTabVideoMap();
         break;
       case 'clearVideo':

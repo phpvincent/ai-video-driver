@@ -29,6 +29,7 @@ function makeCtx(overrides: Partial<RouteContext> = {}): RouteContext {
   return {
     senderTabId: TAB_ID,
     getActiveTabVideo: () => video,
+    getLastVideo: () => video,
     getVideoByTabId: () => video,
     getTabIdByVideoId: () => TAB_ID,
     ...overrides,
