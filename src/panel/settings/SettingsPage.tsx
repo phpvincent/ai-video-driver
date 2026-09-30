@@ -4,13 +4,16 @@
  * - 保存：校验后经 SET_SETTINGS 持久化 ModelConfig
  * - 测试连接：用当前表单值直接调 chatCompletion（ping, maxTokens 1），期间按钮禁用
  * - apiKey 仅存于表单状态与 storage，任何提示/日志不输出其值
- * Obsidian 区为占位（SPEC-06）。
+ * Obsidian 区（SPEC-06）：接口地址 / API Key / 笔记根目录三字段，保存经
+ * SET_SETTINGS 只合并 obsidian 段（不动 model），测试连接显示根目录条目数；
+ * apiKey 用 password 输入，任何提示不输出明文。
  */
 import { useEffect, useState } from 'react';
 import { chatCompletion } from '../../core/harness/modelClient';
 import { DEFAULT_MODEL, OBSIDIAN } from '../../config';
 import { MSG } from '../../messages';
-import type { ModelConfig } from '../../types';
+import { testObsidianConnection } from '../obsidianLoader';
+import type { ModelConfig, ObsidianConfig } from '../../types';
 
 interface ModelFormState {
   baseUrl: string;
@@ -29,6 +32,19 @@ const INITIAL_MODEL_FORM: ModelFormState = {
   temperatureOutline: String(DEFAULT_MODEL.temperature.outline),
   temperatureQa: String(DEFAULT_MODEL.temperature.qa),
   maxTokens: String(DEFAULT_MODEL.maxTokens),
+};
+
+interface ObsidianFormState {
+  baseUrl: string;
+  apiKey: string;
+  rootDir: string;
+}
+
+/** 未配置时的回填默认：只带接口地址默认值（OBSIDIAN.baseUrl，红线 9 的唯一来源） */
+const INITIAL_OBSIDIAN_FORM: ObsidianFormState = {
+  baseUrl: OBSIDIAN.baseUrl,
+  apiKey: '',
+  rootDir: '',
 };
 
 type Feedback = { kind: 'ok' | 'error'; text: string } | null;
@@ -71,21 +87,47 @@ function formToModelConfig(form: ModelFormState, outlineTokenBudget: number): Mo
   };
 }
 
-export function SettingsPage({ onClose }: { onClose: () => void }) {
+export function SettingsPage({
+  onClose,
+  onOpenValidationReport,
+}: {
+  onClose: () => void;
+  /** SPEC-07：验证期报告入口（父 agent 接线；未传则隐藏该区） */
+  onOpenValidationReport?: () => void;
+}) {
   const [form, setForm] = useState<ModelFormState>(INITIAL_MODEL_FORM);
   /** 预算上限不在表单中，读设置时保留已存值 */
   const [outlineTokenBudget, setOutlineTokenBudget] = useState<number>(DEFAULT_MODEL.outlineTokenBudget);
   const [saveFeedback, setSaveFeedback] = useState<Feedback>(null);
   const [testFeedback, setTestFeedback] = useState<Feedback>(null);
   const [testing, setTesting] = useState(false);
+  /** Obsidian 区表单与提示（与模型区状态独立） */
+  const [obsidian, setObsidian] = useState<ObsidianFormState>(INITIAL_OBSIDIAN_FORM);
+  /** 问答时检索个人知识库（默认开启，与 Obsidian 配置一起保存） */
+  const [knowledgeSearch, setKnowledgeSearch] = useState<boolean>(true);
+  const [obsidianFeedback, setObsidianFeedback] = useState<Feedback>(null);
+  const [obsidianTesting, setObsidianTesting] = useState(false);
+  const [obsidianSaving, setObsidianSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     sendRuntimeMessage({ type: MSG.GET_SETTINGS })
       .then((response: unknown) => {
         if (cancelled) return;
-        const stored = (response ?? {}) as { model?: Partial<ModelConfig> };
+        const stored = (response ?? {}) as {
+          model?: Partial<ModelConfig>;
+          obsidian?: Partial<ObsidianConfig>;
+          knowledgeSearch?: boolean;
+        };
         const merged = { ...DEFAULT_MODEL, ...(stored.model ?? {}) } as Partial<ModelConfig>;
+        const obs = (stored.obsidian ?? {}) as Partial<ObsidianConfig>;
+        setObsidian({
+          baseUrl: obs.baseUrl || OBSIDIAN.baseUrl,
+          apiKey: obs.apiKey ?? '',
+          rootDir: obs.rootDir ?? '',
+        });
+        // 未存过该项时视为开启（默认开启）
+        setKnowledgeSearch(stored.knowledgeSearch !== false);
         setForm({
           baseUrl: merged.baseUrl ?? '',
           apiKey: merged.apiKey ?? '',
@@ -131,6 +173,86 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
       .catch(() => {
         setSaveFeedback({ kind: 'error', text: '保存失败：无法连接 background' });
       });
+  };
+
+  /** Obsidian 表单字段更新（清空该区提示，避免与旧结果混淆） */
+  const updateObsidian = (field: keyof ObsidianFormState) => (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    setObsidian((prev) => ({ ...prev, [field]: e.target.value }));
+    setObsidianFeedback(null);
+  };
+
+  /** Obsidian 配置校验：三段必填 */
+  const validateObsidian = (form: ObsidianFormState): string | null => {
+    if (!form.baseUrl.trim()) return 'Obsidian 接口地址不能为空';
+    if (!form.apiKey.trim()) return 'Obsidian API Key 不能为空';
+    if (!form.rootDir.trim()) return '笔记根目录不能为空';
+    return null;
+  };
+
+  /** 保存 Obsidian 配置（只合并 obsidian 段，不动 model） */
+  const handleSaveObsidian = () => {
+    const error = validateObsidian(obsidian);
+    if (error) {
+      setObsidianFeedback({ kind: 'error', text: error });
+      return;
+    }
+    setObsidianSaving(true);
+    setObsidianFeedback(null);
+    const cfg: ObsidianConfig = {
+      baseUrl: obsidian.baseUrl.trim(),
+      apiKey: obsidian.apiKey.trim(),
+      rootDir: obsidian.rootDir.trim(),
+    };
+    // 与 Obsidian 配置一起保存 knowledgeSearch 开关（整份 settings 合并写，不动其他分区）
+    sendRuntimeMessage({ type: MSG.GET_SETTINGS })
+      .then((stored: unknown) =>
+        sendRuntimeMessage({
+          type: MSG.SET_SETTINGS,
+          payload: { ...((stored ?? {}) as Record<string, unknown>), obsidian: cfg, knowledgeSearch },
+        }),
+      )
+      .then(() => setObsidianFeedback({ kind: 'ok', text: '已保存' }))
+      .catch((err: unknown) =>
+        setObsidianFeedback({
+          kind: 'error',
+          text: `保存失败：${err instanceof Error ? err.message : String(err)}`,
+        }),
+      )
+      .finally(() => setObsidianSaving(false));
+  };
+
+  /**
+   * Obsidian 连通性自检：成功显示根目录条目数，失败显示错误摘要
+   * （摘要一律不含 apiKey：sink 层只在 header 携带，错误文案只带状态码）。
+   */
+  const handleTestObsidian = () => {
+    const error = validateObsidian(obsidian);
+    if (error) {
+      setObsidianFeedback({ kind: 'error', text: error });
+      return;
+    }
+    setObsidianTesting(true);
+    setObsidianFeedback(null);
+    const cfg: ObsidianConfig = {
+      baseUrl: obsidian.baseUrl.trim(),
+      apiKey: obsidian.apiKey.trim(),
+      rootDir: obsidian.rootDir.trim(),
+    };
+    testObsidianConnection(cfg)
+      .then((res) => {
+        setObsidianFeedback({
+          kind: 'ok',
+          text: `连接成功（根目录 ${res.rootEntries.length} 项）`,
+        });
+      })
+      .catch((err: unknown) => {
+        // 兜底脱敏：任何提示均不输出 apiKey 明文
+        const raw = err instanceof Error ? err.message : String(err);
+        setObsidianFeedback({ kind: 'error', text: raw.split(cfg.apiKey).join('***') });
+      })
+      .finally(() => setObsidianTesting(false));
   };
 
   const handleTestConnection = () => {
@@ -256,20 +378,93 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
 
       <section className="settings-section">
         <h4>Obsidian 配置</h4>
-        <p className="settings-hint">待 SPEC-06 实现：Local REST API 地址 / 密钥 / 笔记根目录</p>
+        <p className="settings-hint">
+          Local REST API（HTTP 模式）地址 / 密钥 / 笔记根目录；笔记落在「根目录/视频笔记/」与「根目录/术语/」
+        </p>
         <label className="field">
           <span>接口地址</span>
-          <input type="text" defaultValue={OBSIDIAN.baseUrl} disabled />
+          <input
+            type="text"
+            placeholder={OBSIDIAN.baseUrl}
+            value={obsidian.baseUrl}
+            onChange={updateObsidian('baseUrl')}
+          />
         </label>
         <label className="field">
           <span>API Key</span>
-          <input type="password" placeholder="待配置" disabled />
+          <input
+            type="password"
+            placeholder="粘贴 Local REST API 的 API Key"
+            value={obsidian.apiKey}
+            onChange={updateObsidian('apiKey')}
+          />
         </label>
         <label className="field">
           <span>笔记根目录</span>
-          <input type="text" placeholder="待配置" disabled />
+          <input
+            type="text"
+            placeholder="如：视频学习副驾"
+            value={obsidian.rootDir}
+            onChange={updateObsidian('rootDir')}
+          />
         </label>
+        <label
+          className="field"
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+        >
+          <input
+            type="checkbox"
+            checked={knowledgeSearch}
+            onChange={(e) => {
+              setKnowledgeSearch(e.target.checked);
+              setObsidianFeedback(null);
+            }}
+          />
+          <span>问答时检索个人知识库（默认开启）</span>
+        </label>
+        <div className="field-row">
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={handleSaveObsidian}
+            disabled={obsidianSaving}
+          >
+            {obsidianSaving ? '保存中…' : '保存'}
+          </button>
+          <button
+            type="button"
+            className="btn"
+            onClick={handleTestObsidian}
+            disabled={obsidianTesting}
+          >
+            {obsidianTesting ? '测试中…' : '测试连接'}
+          </button>
+        </div>
+        {obsidianFeedback && (
+          <p
+            className={
+              obsidianFeedback.kind === 'ok' ? 'settings-hint' : 'settings-hint settings-error'
+            }
+          >
+            {obsidianFeedback.text}
+          </p>
+        )}
       </section>
+
+      {/* SPEC-07：验证期报告入口（仅追加，未接线时整区隐藏） */}
+      {onOpenValidationReport && (
+        <section className="settings-section">
+          <h4>验证期报告</h4>
+          <p className="settings-hint">
+            统计本机使用数据（大纲/导图跳转、划词与区间提问、字幕命中），生成 Markdown 报告，可存入 Obsidian
+          </p>
+          <div className="field-row">
+            <button type="button" className="btn" onClick={onOpenValidationReport}>
+              打开验证期报告
+            </button>
+          </div>
+        </section>
+      )}
     </div>
   );
 }

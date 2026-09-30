@@ -92,6 +92,28 @@ export async function putNote(
 }
 
 /**
+ * 读取一篇笔记正文（索引文件 `_meta/index.json` 也走这里）。
+ * 404 与其余非 2xx 均 throw（调用方 readIndex 自行决定降级为空索引）。
+ */
+export async function getNote(
+  cfg: ObsidianConfig,
+  fetchFn: ObsidianFetch,
+  vaultPath: string,
+): Promise<string> {
+  let res: Response;
+  try {
+    res = await fetchFn(obsidianUrl(cfg.baseUrl, vaultPath), {
+      method: 'GET',
+      headers: { ...authHeaders(cfg.apiKey), Accept: '*/*' },
+    });
+  } catch (err) {
+    throw networkError(err);
+  }
+  if (!res.ok) throw httpError(res.status, await readSummary(res));
+  return await res.text();
+}
+
+/**
  * 连通性自检：列根目录。成功返回根目录条目数（供设置页"连接成功（根目录 N 项）"）；
  * 失败 throw（文案区分未启动 / Key 错误 / 其他）。
  */
