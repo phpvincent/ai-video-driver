@@ -13,6 +13,7 @@ import {
   isModelConfigured,
   seedProfilesIfEmpty,
   stripSeedProfiles,
+  savedKeyForEndpoint,
 } from './settings/modelForm';
 import type { ModelConfig, Settings } from '../types';
 
@@ -59,11 +60,13 @@ export function buildPickerOptions(settings: Settings): PickerOption[] {
     if (!name || seen.has(name)) continue;
     seen.add(name);
     const vision = p.supportsVision === true;
+    // 方案无 Key 但该端点有已保存的 Key → 视为可用（继承语义，与 resolveModuleModel 一致）
+    const effectiveKey = p.apiKey?.trim() || savedKeyForEndpoint(settings, p.baseUrl);
     options.push({
       value: name,
       // 多模态方案在标签中显式标注（下拉列表里绿色渲染，闭合同样可见后缀）
       label: vision ? `${name} · 多模态` : name,
-      hasKey: Boolean(p.apiKey?.trim()),
+      hasKey: Boolean(effectiveKey),
       vision,
     });
   }

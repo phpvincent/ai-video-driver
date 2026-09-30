@@ -18,6 +18,7 @@ import { getConceptMapSystemPrompt, PROMPT_VERSIONS } from '../prompts';
 import { VISION } from '../config';
 import { planFrames, requestFrames, toPipelineImage } from './framesClient';
 import { resolveModuleModel, visionActiveFor } from './settings/modelForm';
+import { setGenerationSource } from './generationTrace';
 import type { Settings } from '../types';
 import { createSubtitleDb, getSubtitle } from '../storage/db';
 import type { ConceptMapData, ModelConfig, Section } from '../types';
@@ -83,8 +84,10 @@ export async function generateConceptMap(
 ): Promise<ConceptMapData> {
   const model = await fetchModelConfig();
   if (!model?.apiKey) {
+    setGenerationSource('mindmap', { kind: 'fallback', reason: '模型未配置' });
     throw new Error('模型未配置：请先在设置页配置模型');
   }
+  setGenerationSource('mindmap', { kind: 'model', model: model.model });
   if (sections.length === 0) {
     throw new Error('无章节可用：请先生成大纲');
   }

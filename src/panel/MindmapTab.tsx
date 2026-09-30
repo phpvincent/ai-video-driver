@@ -25,6 +25,7 @@ import type { ConceptMapData, ConceptItem, ConceptStage, Section } from '../type
 import { buildTermIndexMap } from '../core/pipeline/conceptMap';
 import { formatTimestamp } from './SubtitleTab';
 import { ModelPicker } from './ModelPicker';
+import { GenerationBanner } from './GenerationBanner';
 import './mindmap.css';
 
 export interface MindmapTabProps {
@@ -656,8 +657,15 @@ export function MindmapTab(props: MindmapTabProps) {
         >
           {CHRONO_VIEW_LABEL}
         </button>
+        {/* 重新生成入口：有缓存时也允许重抽（用户要求） */}
+        {generateConceptMap && sections.length > 0 && (
+          <button type="button" className="btn" onClick={handleGenerate} disabled={generating}>
+            {generating ? '生成中…' : conceptMap ? '重新生成' : CONCEPT_GENERATE_TEXT}
+          </button>
+        )}
         {/* 模块模型选择（margin-left:auto 靠右；select 不参与 tablist 语义） */}
         <ModelPicker module="mindmap" />
+        <GenerationBanner module="mindmap" />
       </div>
 
       {showEmptyGuide && <MindmapEmptyGuide onGoOutline={onGoOutline} />}

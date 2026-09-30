@@ -692,4 +692,15 @@ describe('mergeSettings', () => {
     expect(masked.endsWith('1234')).toBe(true);
     expect(masked).not.toContain('abcdefgh');
   });
+  it('resolveModuleModel：方案无 Key 但端点有已存 Key → 继承（端点配一次，方案全通用）', () => {
+    const settings = {
+      // 默认模型与方案同端点（https://maas）：方案无 Key 时继承端点已存 Key
+      model: { ...DEFAULT_MODEL, baseUrl: 'https://maas', apiKey: 'sk-maas' },
+      modelProfiles: [{ name: 'Qwen maas', apiKey: '', baseUrl: 'https://maas', model: 'qwen-vl-plus' }],
+      moduleModel: { qa: 'Qwen maas' },
+    } as never;
+    const out = resolveModuleModel(settings, 'qa');
+    expect(out?.apiKey).toBe('sk-maas'); // 继承端点的 Key
+    expect(out?.model).toBe('qwen-vl-plus'); // 端点/模型名仍是方案的
+  });
 });

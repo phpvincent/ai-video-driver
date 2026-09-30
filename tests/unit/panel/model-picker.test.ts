@@ -40,13 +40,20 @@ describe('buildPickerOptions', () => {
     expect(options[0].hasKey).toBe(false);
   });
 
-  it('方案项：value 与 label 为方案名，hasKey 按 Key 标记', () => {
+  it('方案项：value 与 label 为方案名，hasKey 按 Key 标记（含端点继承）', () => {
     const vision = { ...textConfig(), name: 'Qwen 视觉' };
-    const keyless = { ...textConfig({ apiKey: '' }), name: '无 Key 方案' };
-    const options = buildPickerOptions({ model: textConfig(), modelProfiles: [vision, keyless] });
-    expect(options.map((o) => o.value)).toEqual(['', 'Qwen 视觉', '无 Key 方案']);
+    // 无 Key 方案：端点与默认模型相同 → 继承默认模型的 Key（hasKey=true）
+    const keylessSameEndpoint = { ...textConfig({ apiKey: '' }), name: '无 Key 方案' };
+    // 无 Key 方案：独立端点且无处可继承 → hasKey=false
+    const keylessOtherEndpoint = { ...textConfig({ apiKey: '', baseUrl: 'https://other.example/v1' }), name: '孤儿方案' };
+    const options = buildPickerOptions({
+      model: textConfig(),
+      modelProfiles: [vision, keylessSameEndpoint, keylessOtherEndpoint],
+    } as never);
+    expect(options.map((o) => o.value)).toEqual(['', 'Qwen 视觉', '无 Key 方案', '孤儿方案']);
     expect(options[1].hasKey).toBe(true);
-    expect(options[2].hasKey).toBe(false);
+    expect(options[2].hasKey).toBe(true); // 继承同端点默认模型的 Key
+    expect(options[3].hasKey).toBe(false); // 独立端点无处继承
   });
 
   it('无 name 的方案不出现；同名方案先出现者优先', () => {

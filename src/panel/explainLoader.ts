@@ -5,6 +5,7 @@
  */
 import { findSectionAt } from '../core/context/compiler';
 import { resolveModuleModel, visionActiveFor } from './settings/modelForm';
+import { setGenerationSource } from './generationTrace';
 import { VISION } from '../config';
 import { planFrames } from './framesClient';
 import { chatCompletion } from '../core/harness/modelClient';
@@ -165,7 +166,11 @@ export async function explain(args: ExplainRequest): Promise<ExplainResponse> {
   const settings = (await fetchSettings()) as unknown as Settings;
   // 问答模块模型：moduleModel 命中方案 → 否则默认；方案缺 Key 回退默认
   const model = resolveModuleModel(settings, 'qa');
-  if (!model?.apiKey) throw new Error('模型未配置：请先在设置页配置模型');
+  if (!model?.apiKey) {
+    setGenerationSource('qa', { kind: 'fallback', reason: '模型未配置' });
+    throw new Error('模型未配置：请先在设置页配置模型');
+  }
+  setGenerationSource('qa', { kind: 'model', model: model.model });
   /** 问答时检索个人知识库（默认开启；未存过该项也视为开启） */
   const knowledgeSearch = settings.knowledgeSearch !== false;
 

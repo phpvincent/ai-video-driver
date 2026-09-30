@@ -16,6 +16,7 @@ import type { Density, Section, VideoMeta } from '../types';
 import { formatTimestamp } from './SubtitleTab';
 import { getInflightOutline } from './outlineLoader';
 import { ModelPicker } from './ModelPicker';
+import { GenerationBanner } from './GenerationBanner';
 
 export interface OutlineTabProps {
   videoId: string | null;
@@ -525,6 +526,7 @@ export function OutlineTab(props: OutlineTabProps) {
     return (
       <div className="outline-tab">
         {pickerRow}
+      <GenerationBanner module="outline" />
         <div className="tab-placeholder">
           <p>{OUTLINE_PHASE_TEXT.loading}</p>
         </div>

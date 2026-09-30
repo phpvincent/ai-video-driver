@@ -125,10 +125,18 @@ export function resolveModuleModel(
 ): ModelConfig | null {
   const wanted = settings.moduleModel?.[module];
   if (wanted) {
-    const profile = listProfiles(settings).find((p) => p.name === wanted);
-    // 方案存在但 Key 缺失 → 视为未激活，回退默认模型；
-    // 否则主流程会拿到不完整配置（或把默认模型的 Key 发给方案端点 → 平台错配 401）
-    if (profile && profile.apiKey?.trim()) return profile;
+    // 注意：不能走 listProfiles（它会过滤掉无 Key 的方案）——
+    // 无 Key 的方案正是需要走「继承端点 Key」路径的对象
+    const profile = ((settings.modelProfiles ?? []) as ModelConfig[]).find(
+      (p) => p?.name?.trim() === wanted,
+    );
+    if (profile) {
+      if (profile.apiKey?.trim()) return profile;
+      // 方案无 Key → 继承该端点已保存的 Key（端点配一次，方案全通用）；
+      // 端点也没有 → 回退默认模型（绝不让主流程拿到不完整配置）
+      const inherited = savedKeyForEndpoint(settings, profile.baseUrl);
+      if (inherited) return { ...profile, apiKey: inherited };
+    }
   }
   return settings.model ?? null;
 }
