@@ -64,6 +64,17 @@
 3. **一键全屏**：每个 Tab 的视图可在新标签页全窗口打开（panel.html?view=xxx 单视图模式）——App 支持独立视图模式（无 Tab 栏），数据流经 background 广播照常工作（VIDEO_CHANGED/PLAYBACK_CHANGED 为 runtime 广播，全屏页可收到）
 4. **字幕下载**：SubtitleTab 增加下载按钮（SRT 带时间戳 / 纯文本），core/subtitle/serialize.ts 序列化器 + 单测
 
+
+### 范围变更四次迭代（2026-09-30 上午，基于用户下载的真实 SRT 分析）
+
+用户下载 P8 字幕供分析。数据洞察：P8 内容天然分阶段（理论回顾→核心机制→代码实现→原理阐释→总结），"流程感"的实体是**阶段推进**。同时坐实 00:01 锚点 bug：开头预告章节提及全片概念，给所有概念染上开场锚点。
+
+施工项（概念图 v3：知识流程图）：
+1. 数据结构：ConceptMapData 从域列表改为**阶段流**（stages: [{label, concepts:[{label, importance, anchors, details}]}]，promptVersion 0.2.0）；模型按内容逻辑分阶段（阶段名体现推进：回顾/机制/实现/总结式）
+2. 渲染：竖向阶段流程——阶段头（步骤序号+阶段名）→ 阶段间连接箭头 → 阶段内概念行（rail 贯穿、主锚加粗）
+3. 锚点修正（确定性）：预告章节识别（提及全片概念 ≥50% 且位于前两章 → 不贡献锚点）；主锚 = 包含该概念且 score 最高的章节，排首位加重
+4. 全屏按钮挪位：移出 info-meta 行内（避免换行挤压），改为 header 右缘图标（父 agent）
+
 ## 4. 验收标准
 | 2026-09-30 | 子 agent 三迭代 | 知识路径：域按最早锚排序 + 序号徽标 + 域间连接线 + 概念 rail（锚点时间圆点，hover 可见语义）；serialize.ts（toSrt/toPlainText，红线 5 时间戳完整）+ SubtitleTab 下载按钮；61 例 | tsc 零错误；477 例全绿 | 4ce00a2 前半（已验收） |
 | 2026-09-30 | 父 agent | 全屏模式：App 支持 panel.html?view=xxx 独立单视图（无 Tab 栏）、header 全屏/退出按钮（chrome.tabs.create）；SSH 通道加固（443 + 代理 CONNECT 隧道 ~/.ssh/proxy-tunnel.py，双保险）；接线中自纠一次补丁错位（git checkout 重做） | verify 直连 477 例全绿 | 4ce00a2（已验收） |
