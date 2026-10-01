@@ -216,3 +216,106 @@
   opacity: 0.65;
   margin: 0 0 4px;
 }
+
+/* ===== 弹窗（二轮反馈：输入与展示用居中大对话框） ===== */
+
+.vnote-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 18, 25, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.vnote-modal {
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(80vh, 640px);
+  overflow: auto;
+  background: var(--bg, #fff);
+  color: inherit;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
+  padding: 14px 16px;
+  box-sizing: border-box;
+}
+
+.vnote-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.vnote-modal-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.vnote-modal-context {
+  flex: 1;
+  font-size: 12px;
+  opacity: 0.6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vnote-textarea-lg {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.vnote-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vnote-modal-btns {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.vnote-modal-btns-inline {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+}
+
+.vnote-fullbody {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.65;
+  background: var(--bg-inset, rgba(127, 127, 127, 0.06));
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.vnote-modal-reply {
+  border-top: 1px dashed var(--border, #d8d8de);
+  padding-top: 8px;
+}
+
+/* 紧凑卡片：单行摘要 + 点击展开 */
+.vnote-body {
+  margin: 4px 0 2px;
+  cursor: pointer;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.vnote-body:hover {
+  color: var(--accent, #4a7dff);
+}
+
+.vnote-reply-count {
+  font-size: 10px;
+  opacity: 0.65;
+}

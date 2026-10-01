@@ -421,6 +421,8 @@ export interface FlowLayout {
 /**
  * 流程布局（纯函数，确定性）：阶段为列（按讲解推进从左到右），概念在列内按
  * 模型输出顺序（即讲解顺序）自上而下。同列节点等宽等高，位置由序号决定。
+ * 宽度额外预留右侧余量：同列顺序边/回流边在最后一列右缘外绕行
+ * （flowEdgeGeometry 的 mx = 右缘 + colGap/2），不预留会被 svg 裁掉（实测 bug）。
  */
 export function layoutConceptFlow(stages: ConceptStage[]): FlowLayout {
   const nodes: FlowNode[] = [];
@@ -443,7 +445,14 @@ export function layoutConceptFlow(stages: ConceptStage[]): FlowLayout {
   });
   return {
     nodes,
-    width: FLOW_PAD * 2 + stages.length * FLOW_NODE_W + Math.max(0, stages.length - 1) * FLOW_COL_GAP,
+    width:
+      FLOW_PAD * 2 +
+      stages.length * FLOW_NODE_W +
+      Math.max(0, stages.length - 1) * FLOW_COL_GAP +
+      // 右侧绕行余量：gutter 中点 colGap/2 + lane 错开 14px + 画布内边距
+      FLOW_COL_GAP / 2 +
+      14 +
+      FLOW_PAD,
     height: FLOW_PAD * 2 + FLOW_HEADER_H + maxRows * (FLOW_NODE_H + FLOW_NODE_GAP) - FLOW_NODE_GAP,
   };
 }

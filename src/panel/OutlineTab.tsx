@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { OutlineResult } from '../core/pipeline/outline';
 import { rescoreOutline } from '../core/pipeline/outline';
-import type { Density, Section, VideoMeta } from '../types';
+import type { Density, NoteAnchor, Section, VideoMeta } from '../types';
 import { formatTimestamp } from './SubtitleTab';
 import { getInflightOutline } from './outlineLoader';
 import { ModelPicker } from './ModelPicker';
@@ -29,7 +29,7 @@ import {
   saveImportedOutline,
   type NotesState,
 } from './notes/notesLoader';
-import { NoteEditor, SectionNotes, UnanchoredNotes } from './notes/NotesUi';
+import { NoteModal, SectionNotes, UnanchoredNotes, type NoteEditorRequest } from './notes/NotesUi';
 import { downloadTextFile, readTextFileViaInput } from '../platform/files';
 
 export interface OutlineTabProps {
@@ -133,8 +133,8 @@ function SectionCard({
   regenerating,
   errorText,
   onSubmitRegen,
-  positionMs,
   notesState,
+  onOpenEditor,
 }: {
   section: Section;
   active: boolean;
@@ -145,19 +145,16 @@ function SectionCard({
   errorText: string | null;
   /** 确认单章重生成（feedback 可空） */
   onSubmitRegen: (section: Section, feedback?: string) => void;
-  /** 当前播放位置（时间点笔记锚定用） */
-  positionMs: number;
   /** 笔记状态（SPEC-09 9.3） */
   notesState: NotesState;
+  /** 打开笔记弹窗（二轮反馈：输入与展示走弹窗） */
+  onOpenEditor: (req: NoteEditorRequest) => void;
 }) {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedback, setFeedback] = useState('');
   /** 最近一次提交的反馈（失败重试时复用） */
   const lastFeedbackRef = useRef<string | undefined>(undefined);
   const cardRef = useRef<HTMLDivElement | null>(null);
-  /** 要点笔记 / 时间点笔记的新建中锚点（SPEC-09 三种粒度入口） */
-  const [bulletDraft, setBulletDraft] = useState<number | null>(null);
-  const [timeDraft, setTimeDraft] = useState(false);
   /** 重生成开始：平滑滚动并保持本章为视觉焦点（选中效果切换到该模块） */
   useEffect(() => {
     if (regenerating) {
@@ -191,17 +188,6 @@ function SectionCard({
         <button
           type="button"
           className="outline-regen-btn"
-          title="在当前播放位置记一条时间点笔记"
-          onClick={(e) => {
-            e.stopPropagation();
-            setTimeDraft((v) => !v);
-          }}
-        >
-          ⏱
-        </button>
-        <button
-          type="button"
-          className="outline-regen-btn"
           disabled={regenerating}
           title="重新生成本章"
           onClick={(e) => {
@@ -229,68 +215,41 @@ function SectionCard({
               {`[${formatTimestamp(bullet.startMs)}${bullet.approximate ? '~' : ''}]`}
             </button>
             <span className="outline-bullet-text">{bullet.text}</span>
-            {/* 要点笔记入口（SPEC-09：锚点粒度 = 某条要点） */}
+            {/* 要点笔记入口（SPEC-09：锚点粒度 = 某条要点；弹窗输入） */}
             <button
               type="button"
               className="outline-regen-btn"
-              title="给这条要点记笔记"
+              title="给这条要点记笔记（弹窗输入）"
               onClick={(e) => {
                 e.stopPropagation();
-                setBulletDraft(bulletDraft === i ? null : i);
+                onOpenEditor({
+                  mode: 'create',
+                  anchor: {
+                    kind: 'bullet',
+                    sectionId: section.id,
+                    bulletId: bulletIdOf(section.id, i),
+                    tMs: bullet.startMs,
+                  },
+                  contextLabel: `要点 · ${bullet.text}`,
+                });
               }}
             >
               记
             </button>
-            {bulletDraft === i && (
-              <NoteEditor
-                placeholder={`对要点「${bullet.text}」的笔记…`}
-                onSubmit={(body) => {
-                  void notesState.addNote(
-                    {
-                      kind: 'bullet',
-                      sectionId: section.id,
-                      bulletId: bulletIdOf(section.id, i),
-                      tMs: bullet.startMs,
-                    },
-                    body,
-                  );
-                  setBulletDraft(null);
-                }}
-                onCancel={() => setBulletDraft(null)}
-              />
-            )}
           </li>
         ))}
       </ul>
       {section.terms.length > 0 && (
         <div className="outline-terms">{section.terms.join(' · ')}</div>
       )}
-      {/* 时间点笔记（SPEC-09：锚点粒度 = 某个时间点；锚在当前播放位置） */}
-      {timeDraft && (
-        <NoteEditor
-          placeholder={`时间点笔记（锚在 ${formatTimestamp(positionMs)}）…`}
-          onSubmit={(body) => {
-            void notesState.addNote(
-              {
-                kind: 'time',
-                sectionId: section.id,
-                tMs: Math.max(section.startMs, Math.min(positionMs, section.endMs - 1)),
-              },
-              body,
-            );
-            setTimeDraft(false);
-          }}
-          onCancel={() => setTimeDraft(false)}
-        />
-      )}
       {/* 章节笔记区块（整章锚点 + 已归位到本章的 bullet/time 笔记） */}
       <SectionNotes
         section={section}
         notes={sectionNotes}
         pendingIds={notesState.pendingIds}
-        busyId={notesState.busyId}
         state={notesState}
         onSeek={onSeek}
+        onOpenEditor={onOpenEditor}
       />
       {/* 反馈表单常驻渲染，grid 0fr/1fr 过渡实现丝滑展开收起（避免条件渲染的硬切） */}
       <div className={'outline-regen-collapse' + (feedbackOpen && !regenerating ? ' open' : '')}>
@@ -339,8 +298,8 @@ export function OutlineSectionList({
   regeneratingId,
   regenError,
   onSubmitRegen,
-  positionMs = 0,
   notesState,
+  onOpenEditor,
 }: {
   sections: Section[];
   /** 当前高亮章节 id；null 表示无 */
@@ -352,10 +311,10 @@ export function OutlineSectionList({
   regenError: { sectionId: string; text: string } | null;
   /** 单章重生成确认（SectionCard 内联表单触发） */
   onSubmitRegen: (section: Section, feedback?: string) => void;
-  /** 当前播放位置（时间点笔记锚定用） */
-  positionMs?: number;
   /** 笔记状态（SPEC-09 9.3；不传时隐藏笔记 UI——单测向后兼容） */
   notesState?: NotesState;
+  /** 打开笔记弹窗（二轮反馈） */
+  onOpenEditor?: (req: NoteEditorRequest) => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   /** 上一次滚动到的目标，防止每次 positionMs 更新都触发滚动抖动 */
@@ -382,7 +341,6 @@ export function OutlineSectionList({
             regenerating={section.id === regeneratingId}
             errorText={regenError?.sectionId === section.id ? regenError.text : null}
             onSubmitRegen={onSubmitRegen}
-            positionMs={positionMs}
             notesState={
               notesState ?? {
                 notes: [],
@@ -398,6 +356,12 @@ export function OutlineSectionList({
                 askAssistant: async () => {},
                 reanchor: async () => {},
               }
+            }
+            onOpenEditor={
+              onOpenEditor ??
+              (() => {
+                /* 未注入弹窗回调（单测）时空操作 */
+              })
             }
           />
         ))}
@@ -499,6 +463,8 @@ export function OutlineTab(props: OutlineTabProps) {
   /** 导入/导出（SPEC-09 9.6）：进行中 / 结果文案 / 待冲突三选一的导入文件 */
   const [exchanging, setExchanging] = useState(false);
   const [pendingImport, setPendingImport] = useState<VscOutlineFile | null>(null);
+  /** 笔记弹窗（SPEC-09 9.3 二轮反馈：输入与展示走居中大弹窗） */
+  const [noteModal, setNoteModal] = useState<NoteEditorRequest | null>(null);
   /** 请求序号：videoId 切换 / 重新生成后，旧请求结果作废 */
   const reqIdRef = useRef(0);
   /** 已尝试自动加载的 videoId（同一挂载周期只试一次；手动生成后不被覆盖） */
@@ -823,6 +789,16 @@ export function OutlineTab(props: OutlineTabProps) {
 
   // ready：章节列表 + 头部统计与全局重新生成入口（单章重生成进行中禁用全局按钮）
   const active = findActiveSection(sections, positionMs);
+  /** 时间点笔记的锚：当前播放位置所在章节（无章节时 sectionId=null → 未归位区可见） */
+  const timeNoteAnchor = (): NoteAnchor | null => {
+    if (!videoId) return null;
+    const tMs = Math.max(0, Math.floor(positionMs));
+    return {
+      kind: 'time',
+      sectionId: active ? active.id : null,
+      tMs,
+    };
+  };
   return (
     <div className="outline-tab">
       {pickerRow}
@@ -838,6 +814,22 @@ export function OutlineTab(props: OutlineTabProps) {
             {saving ? '存入中…' : '存入 Obsidian'}
           </button>
         )}
+        <button
+          type="button"
+          className="btn"
+          title={`在当前播放位置（${formatTimestamp(positionMs)}）记一条时间点笔记`}
+          onClick={() => {
+            const anchor = timeNoteAnchor();
+            if (!anchor) return;
+            setNoteModal({
+              mode: 'create',
+              anchor,
+              contextLabel: `时间点 · ${formatTimestamp(anchor.tMs)}${active ? ` · ${active.title}` : ''}`,
+            });
+          }}
+        >
+          ⏱ 笔记
+        </button>
         <button
           type="button"
           className="btn"
@@ -877,16 +869,26 @@ export function OutlineTab(props: OutlineTabProps) {
         regeneratingId={regeneratingId}
         regenError={regenError}
         onSubmitRegen={handleRegenerateSection}
-        positionMs={positionMs}
         notesState={notesState}
+        onOpenEditor={setNoteModal}
       />
       {/* 未归位笔记（重生成后对不上的集中展示，永不丢弃） */}
       <UnanchoredNotes
         notes={notesState.unanchored}
-        busyId={notesState.busyId}
         state={notesState}
         onSeek={onRequestSeek}
+        onOpenEditor={setNoteModal}
       />
+      {/* 笔记弹窗（输入与展示统一入口，二轮反馈） */}
+      {noteModal && (
+        <NoteModal
+          req={noteModal}
+          busyId={notesState.busyId}
+          state={notesState}
+          onSeek={onRequestSeek}
+          onClose={() => setNoteModal(null)}
+        />
+      )}
       {/* 导入冲突三选一（spec §3.4：本地已有大纲时） */}
       {pendingImport && (
         <div className="vnote-import-dialog" role="dialog">
