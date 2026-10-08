@@ -109,3 +109,4 @@ config `PRICING`：预设模型 → `{ inputPerM, outputPerM }`（元/百万 tok
 | 10-08 | 父 agent | 10.1b/10.2 README.md（新建）：快速上手三步表、隐私与数据表、权限说明表、FAQ、安装指引 | 文档评审待用户 | 本提交 |
 | 10-08 | 父 agent | 10.10 EVOLUTION-ROADMAP §6 公网产品化 P2 登记（分享裂变★★★/流式★★★/高能弹幕★★/自定义价格★/多P课程★★） | — | 本提交 |
 | 10-08 | 父 agent | 10.7 答复（不改代码）：Chrome 同窗口切 tab 侧栏常驻、生成不中断（inflight 续等）；关面板/关浏览器中断，大纲分块断点已设计 | — | — |
+| 10-09 | 父 agent | CWS 上架收尾（发布前最后一块）：图标 4 尺寸生成（public/icons/，扁平蓝底播放三角+时间戳 chip）+ manifest icons/default_icon/minimum_chrome_version 114；PRIVACY.md 独立隐私政策（数据流向/权限/删除/无服务器承诺）；docs/STORE-LISTING.md（商店文案复制区/截图脚本/权限理由逐条/Data usage 披露口径/提交前检查单） | manifest 单测更新过；dist 含 icons；1076 例全绿 | 本提交 |

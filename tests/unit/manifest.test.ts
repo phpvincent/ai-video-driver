@@ -60,6 +60,17 @@ describe('manifest.json（TECH-DESIGN §9 可执行快照）', () => {
 
   it('side_panel 与 action', () => {
     expect(manifest.side_panel).toEqual({ default_path: 'panel.html' });
-    expect(manifest.action).toEqual({ default_title: '打开视频学习副驾' });
+    // SPEC-10：CWS 上架补 icons 与最低内核（sidePanel 需 114+）
+    expect(manifest.icons).toEqual({
+      16: 'icons/icon-16.png',
+      32: 'icons/icon-32.png',
+      48: 'icons/icon-48.png',
+      128: 'icons/icon-128.png',
+    });
+    expect(manifest.minimum_chrome_version).toBe('114');
+    expect(manifest.action).toEqual({
+      default_title: '打开视频学习副驾',
+      default_icon: { 16: 'icons/icon-16.png', 32: 'icons/icon-32.png' },
+    });
   });
 });
