@@ -176,6 +176,18 @@ describe('chatCompletion', () => {
     await expect(chatCompletion(makeRequest(), fetchFn)).rejects.toThrow(/content/);
   });
 
+  it('DashScope 命名 input_tokens/output_tokens 同样映射（冒烟 10-09：maas 网关）', async () => {
+    const { fetchFn } = mockFetch(
+      okResponse({
+        choices: [{ message: { role: 'assistant', content: 'world' } }],
+        usage: { input_tokens: 21, output_tokens: 13 },
+      }),
+    );
+    const res = await chatCompletion(makeRequest(), fetchFn);
+    expect(res.inputTokens).toBe(21);
+    expect(res.outputTokens).toBe(13);
+  });
+
   it('usage 缺失 → tokens 记 0，不 throw', async () => {
     const { fetchFn } = mockFetch(okResponse({ choices: [{ message: { content: 'hi' } }] }));
     const res = await chatCompletion(makeRequest(), fetchFn);

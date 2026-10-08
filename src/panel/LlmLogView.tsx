@@ -15,6 +15,7 @@ import {
   type LlmLogEntry,
 } from '../core/metrics/llmLog';
 import { formatMmSs } from '../core/context/compiler';
+import { estimateCostCny, formatCny, summarizeCost } from '../core/metrics/cost';
 import {
   getLlmLogEnabled,
   loadLlmLogs,
@@ -58,7 +59,32 @@ export function summarizeEntry(e: LlmLogEntry): string {
   if (e.finishReason === 'length') bits.push('输出被截断(length)');
   else if (e.finishReason) bits.push(`结束:${e.finishReason}`);
   if (typeof e.inputTokens === 'number') bits.push(`token ${e.inputTokens}/${e.outputTokens ?? 0}`);
+  // 单条费用（有价格表才显示；冒烟 10-09：费用要能看到，不用去翻报告）
+  const cny = estimateCostCny(e.model, e.inputTokens ?? 0, e.outputTokens ?? 0);
+  if (typeof e.inputTokens === 'number' && cny !== null) bits.push(`≈¥${cny.toFixed(4)}`);
   return bits.join(' · ');
+}
+
+/** 头部 token/费用汇总（SPEC-10 10.8 补充：费用在日志页直接可见） */
+export function LLMLogCostSummary({ entries }: { entries: LlmLogEntry[] }): React.ReactNode {
+  const withTokens = entries.filter((e) => typeof e.inputTokens === 'number');
+  const sum = summarizeCost(
+    entries.map((e) => ({ model: e.model, inputTokens: e.inputTokens, outputTokens: e.outputTokens })),
+  );
+  const inTok = entries.reduce((n, e) => n + (e.inputTokens ?? 0), 0);
+  const outTok = entries.reduce((n, e) => n + (e.outputTokens ?? 0), 0);
+  const costText =
+    sum.totalCny === null
+      ? `费用合计未知（含无价格表模型）`
+      : `费用估算约 ¥${formatCny(sum.totalCny)}`;
+  return (
+    <>
+      {` · token ${inTok}/${outTok} · ${costText}`}
+      {entries.length > 0 && withTokens.length === 0 && (
+        <span className="llm-log-usage-missing">（当前网关未返回 usage，token 无法统计——费用估算为 0）</span>
+      )}
+    </>
+  );
 }
 
 export function LlmLogView() {
@@ -127,6 +153,9 @@ export function LlmLogView() {
       <div className="llm-log-bar">
         <span className="llm-log-count">
           共 {entries.length} 条{entries.length > 0 ? `（失败 ${failedCount}）` : ''}
+          {entries.length > 0 && (
+            <LLMLogCostSummary entries={entries} />
+          )}
         </span>
         <label className="llm-log-switch">
           <input

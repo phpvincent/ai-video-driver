@@ -273,8 +273,10 @@ export async function chatCompletion(req: ChatRequest, fetchFn: FetchLike = fetc
   }
 
   const usage = asRecord(root?.usage);
-  const inputTokens = toTokens(usage?.prompt_tokens);
-  const outputTokens = toTokens(usage?.completion_tokens);
+  // 两种命名都收（冒烟 10-09）：OpenAI 系 prompt_tokens/completion_tokens；
+  // DashScope 原生系 input_tokens/output_tokens（maas 网关用它，此前 token 全记 0）
+  const inputTokens = toTokens(usage?.prompt_tokens ?? usage?.input_tokens);
+  const outputTokens = toTokens(usage?.completion_tokens ?? usage?.output_tokens);
   const finishReason =
     typeof (asRecord(choices[0])?.finish_reason) === 'string'
       ? String(asRecord(choices[0])?.finish_reason)
