@@ -44,6 +44,27 @@ export const INDEX_MD_NAME = '_索引.md';
 export const FRONTMATTER_SOURCE = 'bilibili';
 export const FRONTMATTER_TAGS = ['ai', '视频笔记', 'B站'];
 
+/**
+ * 内容标签（SPEC-10 10.4 二轮冒烟：tags 不能只有固定标签，脱离文章内容）：
+ * 从各章 terms 按跨章出现频次取前 N（≤10 字、与固定标签去重），让 .md
+ * 裸读 frontmatter 或被外部工具索引时能知道"这篇讲什么"。
+ * 并列时按字典序稳定排序。
+ */
+export function contentTagsFor(sections: readonly Section[], max = 4): string[] {
+  const counts = new Map<string, number>();
+  for (const s of sections) {
+    for (const t of s.terms) {
+      const k = t.trim();
+      if (!k || k.length > 10 || FRONTMATTER_TAGS.includes(k)) continue;
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .slice(0, max)
+    .map(([k]) => k);
+}
+
 /** 去重阈值：相似度 ≥ 此值视为同一术语（TECH-DESIGN §6.4 的 >0.8 口径取 ≥0.8） */
 export const DUPLICATE_THRESHOLD = 0.8;
 
@@ -157,7 +178,13 @@ export function buildFrontmatter(
   meta: VideoMeta,
   type: NoteType,
   now: Date = new Date(),
+  /** 内容标签（视频笔记=章节术语 topN；术语卡=术语本身），与固定标签合并 */
+  extraTags: readonly string[] = [],
 ): string {
+  const fixed = type === 'video-note' ? FRONTMATTER_TAGS : TERM_FRONTMATTER_TAGS;
+  const tags = [...fixed, ...extraTags.filter((t) => !fixed.includes(t))]
+    .map((t) => (t === yamlValue(t) ? t : JSON.stringify(t)))
+    .join(', ');
   const lines = [
     `title: ${yamlValue(meta.title)}`,
     `source: ${FRONTMATTER_SOURCE}`,
@@ -165,7 +192,7 @@ export function buildFrontmatter(
     `video_id: ${yamlValue(meta.videoId)}`,
     `duration: ${Math.max(0, Math.floor((Number.isFinite(meta.durationMs) ? meta.durationMs : 0) / 1000))}`,
     `created: ${formatDate(now)}`,
-    `tags: [${FRONTMATTER_TAGS.join(', ')}]`,
+    `tags: [${tags}]`,
     `type: ${type}`,
   ];
   return ['---', ...lines, '---'].join('\n');
@@ -196,7 +223,8 @@ export function buildTermFrontmatter(
     `url: ${yamlValue(videoPageUrl(meta))}`,
     `video_id: ${yamlValue(meta.videoId)}`,
     `created: ${formatDate(now)}`,
-    `tags: [${TERM_FRONTMATTER_TAGS.join(', ')}]`,
+    `tags: [${[...TERM_FRONTMATTER_TAGS, ...(yamlValue(term) === term ? [term] : [JSON.stringify(term)])]
+      .join(', ')}]`,
     `type: term-card`,
   ];
   return ['---', ...lines, '---'].join('\n');
@@ -278,7 +306,10 @@ export function buildVideoNoteMarkdown(args: BuildVideoNoteArgs): {
     .filter((x) => x.length > 0)
     .join(' ');
   const summaryPreview = truncatePreview(previewRaw || meta.title);
-  const markdown = withFrontmatter(buildFrontmatter(meta, 'video-note', now), [...head, ...body].join('\n'));
+  const markdown = withFrontmatter(
+    buildFrontmatter(meta, 'video-note', now, contentTagsFor(sections)),
+    [...head, ...body].join('\n'),
+  );
   return { markdown, terms, summaryPreview };
 }
 

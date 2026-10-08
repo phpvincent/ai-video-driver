@@ -654,11 +654,24 @@ export function OutlineTab(props: OutlineTabProps) {
       return;
     }
     if (!picked) return;
-    const verdict = await parseOutlineImport(picked.text, {
+    let verdict = await parseOutlineImport(picked.text, {
       bvid: meta.bvid,
       page: meta.page,
       title: meta.title,
     });
+    // 二轮冒烟：视频不一致 → 用户确认后才继续（覆盖导入）
+    if (!verdict.ok && verdict.stage === 'video-mismatch') {
+      const ok = window.confirm(
+        `${verdict.message}。\n这不是当前视频的大纲（可能是同课程的另一集或重新上传的视频）。\n` +
+          '仍要导入吗？超出现频时长的章节与笔记会被自动忽略。',
+      );
+      if (!ok) return;
+      verdict = await parseOutlineImport(
+        picked.text,
+        { bvid: meta.bvid, page: meta.page, title: meta.title },
+        { allowVideoMismatch: true },
+      );
+    }
     if (!verdict.ok) {
       setSaveResult({ ok: false, text: `导入失败：${verdict.message}` });
       return;
@@ -681,29 +694,45 @@ export function OutlineTab(props: OutlineTabProps) {
     setExchanging(true);
     try {
       const durationMs = meta?.durationMs ?? file.video.durationMs;
+      // 二轮冒烟：超出现频时长的导入内容自动忽略（章节按 startMs 截断、笔记按 tMs 丢弃）
       if (mode === 'replace') {
         // 替换前自动备份本地大纲（spec §3.4）
         const backup = await buildLocalBackup({ videoId, meta: meta!, sections });
         if (backup) downloadTextFile(backup.filename, backup.json);
         const imported = await saveImportedOutline(videoId, file);
+        const inRange = imported.filter((s) => s.startMs < durationMs);
+        const droppedSections = imported.length - inRange.length;
         // 派生字段重算（score/density；cueRange 留空由后续字幕流程回填）
-        const rescored = rescoreOutline(imported);
+        const rescored = rescoreOutline(inRange);
+        if (rescored.length === 0) {
+          setSaveResult({ ok: false, text: '导入失败：文件中所有章节都超出了当前视频时长，没有可导入的内容' });
+          return;
+        }
         setResult({ sections: rescored, chunkState: [], droppedBySnap: 0, budgetHit: false, failedChunks: 0 });
         setPhase('ready');
         const localIds = new Set(notesState.notes.map((n) => n.id));
-        const mapped = mapImportedNotes(file, rescored, durationMs, localIds);
+        const { notes: mapped, droppedOutOfRange } = mapImportedNotes(file, rescored, durationMs, localIds, true);
         await saveImportedNotes(mapped);
         await notesState.reload();
         setSaveResult({
           ok: true,
-          text: `已导入大纲（${rescored.length} 章）与 ${mapped.length} 条笔记${backup ? '；本地原大纲已备份下载' : ''}`,
+          text:
+            `已导入大纲（${rescored.length} 章）与 ${mapped.length} 条笔记` +
+            `${droppedSections > 0 ? `；忽略超长章节 ${droppedSections} 个` : ''}` +
+            `${droppedOutOfRange > 0 ? `；忽略超长笔记 ${droppedOutOfRange} 条` : ''}` +
+            `${backup ? '；本地原大纲已备份下载' : ''}`,
         });
       } else {
         const localIds = new Set(notesState.notes.map((n) => n.id));
-        const mapped = mapImportedNotes(file, sections, durationMs, localIds);
+        const { notes: mapped, droppedOutOfRange } = mapImportedNotes(file, sections, durationMs, localIds, true);
         await saveImportedNotes(mapped);
         await notesState.reload();
-        setSaveResult({ ok: true, text: `已合并 ${mapped.length} 条笔记到本地大纲` });
+        setSaveResult({
+          ok: true,
+          text:
+            `已合并 ${mapped.length} 条笔记到本地大纲` +
+            `${droppedOutOfRange > 0 ? `；忽略超出现频时长的笔记 ${droppedOutOfRange} 条` : ''}`,
+        });
       }
     } catch (err: unknown) {
       console.error('[vsc] outline import failed', err);

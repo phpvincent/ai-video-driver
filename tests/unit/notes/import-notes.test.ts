@@ -93,7 +93,7 @@ const localSections: Section[] = [
 
 describe('mapImportedNotes（A8 数据部分）', () => {
   it('bullet 锚点按 tMs+文本相似度归位到本地章节', () => {
-    const mapped = mapImportedNotes(file, localSections, DURATION, new Set());
+    const { notes: mapped } = mapImportedNotes(file, localSections, DURATION, new Set());
     const peer1 = mapped.find((n) => n.id === 'n_peer1')!;
     expect(peer1.anchor.sectionId).toBe('lsec_1');
     expect(peer1.anchor.kind).toBe('bullet');
@@ -101,7 +101,7 @@ describe('mapImportedNotes（A8 数据部分）', () => {
   });
 
   it('全部标记 importedFrom（导出方 + 时间）', () => {
-    const mapped = mapImportedNotes(file, localSections, DURATION, new Set());
+    const { notes: mapped } = mapImportedNotes(file, localSections, DURATION, new Set());
     for (const n of mapped) {
       expect(n.importedFrom).toEqual({ exporter: 'video-study-copilot', exportedAt: '2026-10-01T11:00:00.000Z' });
       expect(n.videoId).toBe('BV1X_p1');
@@ -109,7 +109,7 @@ describe('mapImportedNotes（A8 数据部分）', () => {
   });
 
   it('id 防碰撞：与本地已有 id 冲突时加序号后缀，不覆盖', () => {
-    const mapped = mapImportedNotes(file, localSections, DURATION, new Set(['n_peer1']));
+    const { notes: mapped } = mapImportedNotes(file, localSections, DURATION, new Set(['n_peer1']));
     expect(mapped.some((n) => n.id === 'n_peer1')).toBe(false);
     expect(mapped.some((n) => n.id === 'n_peer1~2')).toBe(true);
     // 未冲突的保持原 id
@@ -117,7 +117,7 @@ describe('mapImportedNotes（A8 数据部分）', () => {
   });
 
   it('回复串完整透传（author=assistant）', () => {
-    const mapped = mapImportedNotes(file, localSections, DURATION, new Set());
+    const { notes: mapped } = mapImportedNotes(file, localSections, DURATION, new Set());
     const peer2 = mapped.find((n) => n.id === 'n_peer2')!;
     expect(peer2.replies).toHaveLength(1);
     expect(peer2.replies[0].author).toBe('assistant');
@@ -137,7 +137,7 @@ describe('mapImportedNotes（A8 数据部分）', () => {
         },
       ],
     };
-    const mapped = mapImportedNotes(outOfRange, localSections, DURATION, new Set());
+    const { notes: mapped } = mapImportedNotes(outOfRange, localSections, DURATION, new Set());
     expect(mapped).toHaveLength(1);
     expect(mapped[0].anchor.sectionId).toBeNull();
   });

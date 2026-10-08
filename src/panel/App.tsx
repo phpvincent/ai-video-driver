@@ -610,6 +610,14 @@ export function App() {
               >
                 ？
               </button>
+              <button
+                type="button"
+                className="tab settings-btn"
+                title="重新加载本机数据（大纲/笔记/导图/问答全部从本地存储重读）"
+                onClick={() => window.location.reload()}
+              >
+                ⟳
+              </button>
             </nav>
           )}
           <main className="tab-body">

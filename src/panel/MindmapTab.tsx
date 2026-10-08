@@ -150,10 +150,14 @@ export function findActiveSectionIndex(sections: Section[], positionMs: number):
 const normalizeTerm = (s: string): string => s.trim().toLowerCase();
 
 /**
- * 概念跟随命中（纯函数，导出供单测；精确匹配）：
- * 当前章节（二分，覆盖 positionMs）的 terms 与概念 label 双侧归一化后
- * **精确相等**才命中（修复 substring 包含匹配过松导致"亮起好多个"）；
- * 章节标题不再参与匹配。返回命中的概念 label 列表（去重，遍历顺序稳定）。
+ * 概念跟随命中（纯函数，导出供单测；三级匹配，2026-10-09 冒烟三轮）：
+ * 精确相等在真实视频几乎不亮（概念名是"定义判断读题方法"，术语是"定义判断"），
+ * 全 substring 又会"亮起好多个"。分级规则（归一化后）：
+ * ① label 与术语精确相等 → 命中；
+ * ② 术语 ⊆ label 且术语 ≥3 字、覆盖 label ≥50% → 命中（概念是术语的展开表述）；
+ * ③ label ⊆ 章节标题 且 label ≥3 字、覆盖标题 ≥40% → 命中（标题点名主题）。
+ * 反向（label ⊆ 术语）不参与：短概念被长术语吞掉是历史"亮起好多个"的主因。
+ * 返回命中的概念 label 列表（去重，遍历顺序稳定）。
  */
 export function matchConcepts(
   sections: Section[],
@@ -162,13 +166,18 @@ export function matchConcepts(
 ): string[] {
   const idx = findActiveSectionIndex(sections, positionMs);
   if (idx < 0) return [];
-  const termSet = new Set(sections[idx].terms.map(normalizeTerm));
+  const sec = sections[idx];
+  const terms = sec.terms.map(normalizeTerm).filter((t) => t.length > 0);
+  const title = normalizeTerm(sec.title);
   const out: string[] = [];
   for (const stage of stages) {
     for (const c of stage.concepts) {
-      if (termSet.has(normalizeTerm(c.label)) && !out.includes(c.label)) {
-        out.push(c.label);
-      }
+      const label = normalizeTerm(c.label);
+      if (!label || out.includes(c.label)) continue;
+      const hit =
+        terms.some((t) => t === label || (t.length >= 3 && t.length / label.length >= 0.5 && label.includes(t))) ||
+        (title.length > 0 && label.length >= 3 && label.length / title.length >= 0.4 && title.includes(label));
+      if (hit) out.push(c.label);
     }
   }
   return out;

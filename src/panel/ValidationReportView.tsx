@@ -195,7 +195,7 @@ export function ValidationReportView({ onLoad, onSubjective }: ValidationReportV
           统计本机使用数据（大纲/导图跳转、划词与区间提问、字幕命中），生成可存入 Obsidian 的 Markdown 报告。
         </p>
         <button type="button" className="btn btn-primary" onClick={handleLoad} disabled={loading || !onLoad}>
-          {loading ? '生成中…' : '生成验证期报告'}
+          {loading ? '加载中…' : '加载数据并生成报告'}
         </button>
         {!onLoad && <p className="vr-hint">未接入数据加载（onLoad 未传入）</p>}
         {error && <p className="vr-hint vr-error">{error}</p>}
@@ -215,7 +215,7 @@ export function ValidationReportView({ onLoad, onSubjective }: ValidationReportV
       <header className="vr-header">
         <h4>验证期报告</h4>
         <button type="button" className="btn" onClick={handleLoad} disabled={loading}>
-          {loading ? '重新生成中…' : '重新生成'}
+          {loading ? '重新加载中…' : '重新加载数据'}
         </button>
       </header>
 

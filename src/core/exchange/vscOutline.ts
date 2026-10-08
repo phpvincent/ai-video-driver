@@ -289,6 +289,8 @@ export interface ParseOutlineImportOptions {
   cueRangeMs?: readonly [number, number] | null;
   /** 覆盖率低于此比例时产生警告（spec §3.4：<90% 警告） */
   coverageWarnRatio?: number;
+  /** 二轮冒烟：视频不一致时由用户确认后强制导入（调用方先收到 video-mismatch 拒绝再带此标记重试） */
+  allowVideoMismatch?: boolean;
 }
 
 /**
@@ -352,18 +354,24 @@ export async function parseOutlineImport(
   }
   const file = parsed.data as VscOutlineFile;
 
-  // ⑤ 视频身份（platform + bvid + page 三者相等才算同一视频）
+  // 时间戳覆盖率警告先声明（video-mismatch 强制导入时也要能追加）
+  const warnings: string[] = [];
+  const cueRange = opts.cueRangeMs ?? null;
+
+  // ⑤ 视频身份（platform + bvid + page 三者相等才算同一视频；
+  // 二轮冒烟：不匹配时拒绝并给出两侧信息，调用方确认后可 allowVideoMismatch 强制导入）
   if (file.video.bvid !== localVideo.bvid || file.video.page !== localVideo.page) {
-    return {
-      ok: false,
-      stage: 'video-mismatch',
-      message: `文件对应的是《${file.video.title}》P${file.video.page}，当前是《${localVideo.title}》P${localVideo.page}——请切到对应视频再导入`,
-    };
+    if (!opts.allowVideoMismatch) {
+      return {
+        ok: false,
+        stage: 'video-mismatch',
+        message: `文件对应的是《${file.video.title}》P${file.video.page}，当前是《${localVideo.title}》P${localVideo.page}`,
+      };
+    }
+    warnings.push('视频不一致（已按你的确认强制导入）：超出现频时长的章节与笔记会被自动忽略');
   }
 
   // ⑥ 时间戳覆盖率（警告，不拒绝）
-  const warnings: string[] = [];
-  const cueRange = opts.cueRangeMs ?? null;
   if (cueRange) {
     const [lo, hi] = cueRange;
     const stamps = [

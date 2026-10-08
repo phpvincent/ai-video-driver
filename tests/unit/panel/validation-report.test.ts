@@ -19,7 +19,7 @@ import { createEmptyUsage } from '../../../src/core/metrics/usage';
 describe('ValidationReportView 未加载态', () => {
   it('渲染「生成验证期报告」按钮', () => {
     const html = renderToString(createElement(ValidationReportView, {}));
-    expect(html).toContain('生成验证期报告');
+    expect(html).toContain('加载数据并生成报告');
   });
 
   it('未传 onLoad 时按钮禁用并给出提示', () => {
@@ -34,7 +34,7 @@ describe('ValidationReportView 未加载态', () => {
         onLoad: () => Promise.reject(new Error('不应被调用')),
       }),
     );
-    expect(html).toContain('生成验证期报告');
+    expect(html).toContain('加载数据并生成报告');
     expect(html).not.toContain('未接入数据加载');
   });
 });

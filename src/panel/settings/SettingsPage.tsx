@@ -71,6 +71,8 @@ interface ObsidianFormState {
   baseUrl: string;
   apiKey: string;
   rootDir: string;
+  /** 暂时停用（SPEC-10 二轮冒烟：关掉后存入走本地 .md 下载，凭据保留） */
+  enabled: boolean;
 }
 
 /** 未配置时的回填默认：只带接口地址默认值（OBSIDIAN.baseUrl，红线 9 的唯一来源） */
@@ -78,6 +80,7 @@ const INITIAL_OBSIDIAN_FORM: ObsidianFormState = {
   baseUrl: OBSIDIAN.baseUrl,
   apiKey: '',
   rootDir: '',
+  enabled: true,
 };
 
 /** 抽帧模块开关（未配置视为开启） */
@@ -251,6 +254,7 @@ export function SettingsPage({
           baseUrl: obs.baseUrl || OBSIDIAN.baseUrl,
           apiKey: obs.apiKey ?? '',
           rootDir: obs.rootDir ?? '',
+          enabled: obs.enabled !== false,
         });
         setKnowledgeSearch(stored.knowledgeSearch !== false);
         setForm(
@@ -478,6 +482,7 @@ export function SettingsPage({
       baseUrl: obsidian.baseUrl.trim(),
       apiKey: obsidian.apiKey.trim(),
       rootDir: obsidian.rootDir.trim(),
+      enabled: obsidian.enabled,
     };
     // 与 Obsidian 配置一起保存 knowledgeSearch 开关（整份 settings 合并写，不动其他分区）
     savePatch({ obsidian: cfg, knowledgeSearch })
@@ -505,6 +510,7 @@ export function SettingsPage({
       baseUrl: obsidian.baseUrl.trim(),
       apiKey: obsidian.apiKey.trim(),
       rootDir: obsidian.rootDir.trim(),
+      enabled: obsidian.enabled,
     };
     testObsidianConnection(cfg)
       .then((res) => {
@@ -769,6 +775,20 @@ export function SettingsPage({
 
       <section className="settings-section">
         <h4>Obsidian 配置</h4>
+        <label
+          className="field"
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+        >
+          <input
+            type="checkbox"
+            checked={obsidian.enabled}
+            onChange={(e) => {
+              setObsidian({ ...obsidian, enabled: e.target.checked });
+              setObsidianFeedback(null);
+            }}
+          />
+          <span>使用 Obsidian 存库（不勾 = 暂时停用：存入将直接下载 .md 到本地，凭据保留不擦除）</span>
+        </label>
         <p className="settings-hint">
           Local REST API（HTTP 模式）地址 / 密钥 / 笔记根目录；笔记落在「根目录/视频笔记/」与「根目录/术语/」
         </p>

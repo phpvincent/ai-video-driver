@@ -11,6 +11,7 @@ import {
   buildIndexMarkdown,
   buildTermCardMarkdown,
   buildVideoNoteMarkdown,
+  contentTagsFor,
   emptyIndexFile,
   findDuplicateTerm,
   formatDate,
@@ -99,6 +100,23 @@ describe('yamlValue（YAML 标量转义）', () => {
 
   it('首尾空白 → 加双引号', () => {
     expect(yamlValue('  x  ')).toBe('"  x  "');
+  });
+});
+
+describe('contentTagsFor（内容标签：术语频次 topN，SPEC-10 二轮冒烟）', () => {
+  it('按跨章频次降序取前 4；并列按字典序', () => {
+    const secs = [
+      section({ id: 's1', terms: ['甲', '乙'] }),
+      section({ id: 's2', terms: ['甲', '丙'] }),
+      section({ id: 's3', terms: ['甲', '丁', '戊'] }),
+    ];
+    expect(contentTagsFor(secs, 4)).toEqual(['甲', '丁', '丙', '乙']); // 并列按码元序：丁(U+4E01)<丙(U+4E19)<乙(U+4E59)
+  });
+
+  it('超 10 字术语跳过；与固定标签重名跳过；空输入空数组', () => {
+    const secs = [section({ terms: ['这是一个特别特别长的术语', '视频笔记', '短'] })];
+    expect(contentTagsFor(secs)).toEqual(['短']);
+    expect(contentTagsFor([])).toEqual([]);
   });
 });
 
@@ -200,7 +218,8 @@ describe('buildVideoNoteMarkdown', () => {
     expect(fm.video_id).toBe('BV1YG7G6eEPR_p2');
     expect(fm.duration).toBe('1922');
     expect(fm.created).toBe('2026-09-30');
-    expect(fm.tags).toBe('[ai, 视频笔记, B站]'); // SPEC-10 10.4：统一加 B站 来源标签
+    // SPEC-10 二轮冒烟：固定标签 + 内容标签（章节术语按频次 topN）——裸读即知讲什么
+    expect(fm.tags).toBe('[ai, 视频笔记, B站, Agent, 工作流]');
     expect(fm.type).toBe('video-note');
   });
 

@@ -279,7 +279,9 @@ export function mapImportedNotes(
   localSections: Section[],
   durationMs: number,
   existingIds: ReadonlySet<string>,
-): OutlineNote[] {
+  /** 二轮冒烟：导入的笔记超出现频时长时直接丢弃（自动忽略），而非进未归位 */
+  dropOutOfRange = false,
+): { notes: OutlineNote[]; droppedOutOfRange: number } {
   const fileSections = file.outline.sections.map(exchangeSectionToLocal);
   const imported: OutlineNote[] = file.notes.map((n) => ({
     id: n.id,
@@ -299,8 +301,12 @@ export function mapImportedNotes(
     importedFrom: { exporter: file.exporter.app, exportedAt: file.exportedAt },
   }));
   const reanchored = reanchorNotes(imported, fileSections, localSections, durationMs);
+  const kept = dropOutOfRange
+    ? reanchored.notes.filter((n) => n.anchor.tMs < durationMs)
+    : reanchored.notes;
+  const droppedOutOfRange = reanchored.notes.length - kept.length;
   const used = new Set(existingIds);
-  return reanchored.notes.map((note) => {
+  const notes = kept.map((note) => {
     if (!used.has(note.id)) {
       used.add(note.id);
       return note;
@@ -314,6 +320,7 @@ export function mapImportedNotes(
     used.add(id);
     return { ...note, id };
   });
+  return { notes, droppedOutOfRange };
 }
 
 /** 交换格式大纲 → 本地大纲缓存记录（imported 键；不被 promptVersion 升级失效） */

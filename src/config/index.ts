@@ -246,7 +246,9 @@ export const NOTES = {
 export const PRICING = {
   presets: [
     { prefix: 'deepseek-chat', inputPerM: 2, outputPerM: 8 },
+    { prefix: 'deepseek-flash', inputPerM: 2, outputPerM: 8 },
     { prefix: 'deepseek-reasoner', inputPerM: 4, outputPerM: 16 },
+    { prefix: 'qwen-flash', inputPerM: 0.5, outputPerM: 2 },
     { prefix: 'qwen-max', inputPerM: 20, outputPerM: 60 },
     { prefix: 'qwen-vl-max', inputPerM: 20, outputPerM: 60 },
     { prefix: 'qwen-plus', inputPerM: 0.8, outputPerM: 2 },

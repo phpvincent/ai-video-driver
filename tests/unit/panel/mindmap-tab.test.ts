@@ -242,7 +242,7 @@ describe('findActiveSectionIndex', () => {
   });
 });
 
-describe('matchConcepts（概念跟随命中，精确匹配，stages 遍历）', () => {
+describe('matchConcepts（概念跟随命中，三级匹配，stages 遍历）', () => {
   it('当前章节 terms 与概念 label 归一化后相等才命中（跨阶段去重，顺序稳定）', () => {
     expect(matchConcepts(sections, 0, stageFlow())).toEqual(['上下文窗口', 'Token']);
   });
@@ -260,22 +260,38 @@ describe('matchConcepts（概念跟随命中，精确匹配，stages 遍历）',
     expect(matchConcepts(secs, 0, stages)).toEqual(['Context Window']);
   });
 
-  it('精确匹配（反向，必须）：term="token" 不命中 label="token 长度"（substring 过松已修复）', () => {
+  it('术语 ⊆ 概念且覆盖 ≥50% 命中（冒烟三轮：真实视频概念是术语的展开表述）', () => {
     const stages: ConceptStage[] = [
       { id: 'st_01', label: '阶段', concepts: [concept('cm_x', 'token 长度')] },
     ];
     const secs = [section('s1', 0, 1000, '开场', { terms: ['token'] })];
+    expect(matchConcepts(secs, 0, stages)).toEqual(['token 长度']);
+  });
+
+  it('术语 ⊆ 概念但覆盖 <50% 不命中（防展开过长误亮）', () => {
+    const stages: ConceptStage[] = [
+      { id: 'st_01', label: '阶段', concepts: [concept('cm_x', '定义判断的完整解题流程')] },
+    ];
+    const secs = [section('s1', 0, 1000, '开场', { terms: ['定义判断'] })];
     expect(matchConcepts(secs, 0, stages)).toEqual([]);
   });
 
-  it('精确匹配（反向）：term 比概念 label 长也不命中', () => {
+  it('反向（label ⊆ 术语）不参与：短概念被长术语吞掉是"亮起好多个"主因', () => {
     const secs = [section('s1', 0, 1000, '任意标题', { terms: ['上下文窗口详解'] })];
     expect(matchConcepts(secs, 0, stageFlow())).toEqual([]);
   });
 
-  it('精确匹配（反向）：章节标题含概念 label 但 terms 不含 → 不命中（标题不参与）', () => {
+  it('章节标题参与：label ⊆ 标题且覆盖 ≥40% 命中（冒烟三轮新增）', () => {
     const secs = [section('s1', 0, 1000, '上下文窗口详解')];
-    expect(matchConcepts(secs, 0, stageFlow())).toEqual([]);
+    expect(matchConcepts(secs, 0, stageFlow())).toEqual(['上下文窗口']);
+  });
+
+  it('标题覆盖 <40% 不命中', () => {
+    const secs = [section('s1', 0, 1000, '图形推理的观察方法与速解技巧')];
+    const stages: ConceptStage[] = [
+      { id: 'st_01', label: '阶段', concepts: [concept('cm_x', '观察方法')] },
+    ];
+    expect(matchConcepts(secs, 0, stages)).toEqual([]);
   });
 
   it('label 两侧空白不参与比较（trim 归一化）', () => {

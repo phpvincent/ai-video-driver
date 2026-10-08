@@ -113,7 +113,10 @@ export async function getObsidianConfig(): Promise<ObsidianConfig | null> {
     baseUrl: typeof stored.baseUrl === 'string' ? stored.baseUrl : '',
     apiKey: typeof stored.apiKey === 'string' ? stored.apiKey : '',
     rootDir: typeof stored.rootDir === 'string' ? stored.rootDir : '',
+    enabled: stored.enabled !== false,
   };
+  // enabled=false（设置页"暂时停用"）→ 视同未配置：存入走本地 .md 下载降级
+  if (cfg.enabled === false) return null;
   if (!cfg.baseUrl && !cfg.apiKey && !cfg.rootDir) return null;
   return cfg;
 }
