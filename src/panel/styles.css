@@ -1075,3 +1075,198 @@ body {
 .onboarding-box a {
   color: var(--accent, #4a7dff);
 }
+
+/* ===========================================================================
+   UI 控件精修（2026-10-09 冒烟反馈：无悬浮态、表单控件传统样式）
+   原则：设计令牌统一色板；:where() 零特异性兜底——既有类规则不受破坏；
+   只加交互态与质感，不改任何布局与行为。
+   =========================================================================== */
+
+:root {
+  --accent: #165dff;
+  --accent-hover: #0e4fd1;
+  --accent-soft: #e8f3ff;
+  --text: #1f2329;
+  --text-secondary: #4e5969;
+  --text-tertiary: #86909c;
+  --border: #e5e6eb;
+  --border-strong: #c9cdd4;
+  --bg: #f7f8fa;
+  --surface: #fff;
+  --danger: #d93026;
+  --radius-sm: 6px;
+  --radius: 8px;
+  --ring: 0 0 0 3px rgba(22, 93, 255, 0.14);
+  --ease: 140ms ease;
+}
+
+/* ---- 按钮交互态（.btn 全系） ---- */
+.btn {
+  transition:
+    background var(--ease),
+    border-color var(--ease),
+    color var(--ease),
+    box-shadow var(--ease),
+    transform var(--ease);
+}
+
+.btn:hover:not(:disabled) {
+  background: #f2f3f5;
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.btn:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(22, 93, 255, 0.28);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: scale(0.97);
+  box-shadow: none;
+}
+
+/* ---- 表单控件兜底（:where 零特异性，不覆盖既有类样式） ---- */
+:where(.app) :where(
+  input[type='text'],
+  input[type='password'],
+  input[type='number'],
+  input[type='url'],
+  input[type='search'],
+  textarea
+) {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--ease), box-shadow var(--ease), background var(--ease);
+}
+
+:where(.app) :where(
+  input[type='text'],
+  input[type='password'],
+  input[type='number'],
+  input[type='url'],
+  input[type='search'],
+  textarea
+):hover:not(:disabled):not(:focus) {
+  border-color: var(--border-strong);
+}
+
+:where(.app) :where(
+  input[type='text'],
+  input[type='password'],
+  input[type='number'],
+  input[type='url'],
+  input[type='search'],
+  textarea
+):focus {
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+}
+
+/* 下拉框：现代箭头（背景图长手写法，避免被 background 简写误伤） */
+:where(.app) :where(select) {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 6px 28px 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background-color: var(--surface);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5L6 8l3.5-3.5' fill='none' stroke='%2386909c' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color var(--ease), box-shadow var(--ease);
+}
+
+:where(.app) :where(select):hover:not(:disabled):not(:focus) {
+  border-color: var(--border-strong);
+}
+
+:where(.app) :where(select):focus {
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+}
+
+/* 单选/复选：品牌色 + 可点击暗示 */
+:where(input[type='radio'], input[type='checkbox']) {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* 设置页输入框获得统一聚焦环（.field input 无焦点样式） */
+.field input:focus {
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+  outline: none;
+}
+
+.field input:hover:not(:disabled):not(:focus) {
+  border-color: var(--border-strong);
+}
+
+/* 模型选择下拉：同款现代箭头（覆盖其 background 简写需在此补齐） */
+.model-picker-select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 22px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5L6 8l3.5-3.5' fill='none' stroke='%2386909c' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  border-radius: var(--radius-sm);
+  transition: border-color var(--ease), box-shadow var(--ease);
+}
+
+.model-picker-select:hover:not(:focus) {
+  border-color: var(--border-strong);
+}
+
+.model-picker-select:focus {
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+}
+
+/* ---- 细滚动条（桌面侧栏质感） ---- */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(31, 35, 41, 0.18);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(31, 35, 41, 0.32);
+}

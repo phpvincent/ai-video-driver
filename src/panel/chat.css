@@ -205,9 +205,23 @@
 
 .chat-range-input {
   width: 56px;
-  padding: 2px 4px;
+  padding: 3px 6px;
   font-size: 12px;
   font-family: monospace;
+  border: 1px solid var(--border, #e5e6eb);
+  border-radius: 6px;
+  background: var(--surface, #fff);
+  outline: none;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.chat-range-input:hover:not(:focus) {
+  border-color: var(--border-strong, #c9cdd4);
+}
+
+.chat-range-input:focus {
+  border-color: var(--accent, #165dff);
+  box-shadow: var(--ring, 0 0 0 3px rgba(22, 93, 255, 0.14));
 }
 
 .chat-range-current {
@@ -228,7 +242,23 @@
   flex: 1;
   resize: none;
   font-size: 13px;
-  padding: 6px 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border, #e5e6eb);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+  font-family: inherit;
+  line-height: 1.5;
+  outline: none;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.chat-input:hover:not(:focus) {
+  border-color: var(--border-strong, #c9cdd4);
+}
+
+.chat-input:focus {
+  border-color: var(--accent, #165dff);
+  box-shadow: var(--ring, 0 0 0 3px rgba(22, 93, 255, 0.14));
 }
 
 .chat-send {
@@ -305,4 +335,15 @@
   border-radius: 4px;
   object-fit: contain;
   background: #fff;
+}
+
+/* ===== UI 精修（2026-10-09）：问答控件交互态 ===== */
+
+/* 区间单选 label：整块可点暗示（radio 本体 accent-color 全局已改） */
+.chat-range-option {
+  transition: color 140ms ease;
+}
+
+.chat-range-option:hover {
+  color: var(--accent, #165dff);
 }
