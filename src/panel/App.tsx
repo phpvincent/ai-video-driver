@@ -8,6 +8,7 @@ import type { FetchResult, ModelConfig, VideoMeta } from '../types';
 import { ChatTab } from './ChatTab';
 import { listQaByVideo } from '../storage/db';
 import { MindmapTab } from './MindmapTab';
+import { HelpOverlay } from './HelpOverlay';
 import { OutlineTab } from './OutlineTab';
 import { generateOutline, loadOutlineCached, regenerateOne } from './outlineLoader';
 import { SettingsPage } from './settings/SettingsPage';
@@ -111,6 +112,8 @@ export function App() {
   const [video, setVideo] = useState<VideoInfoPayload | null>(null);
   const [playback, setPlayback] = useState<PlaybackPayload | null>(null);
   const [tab, setTab] = useState<TabKey>('subtitle');
+  /** 帮助浮层（SPEC-10 10.9） */
+  const [showHelp, setShowHelp] = useState(false);
   /** 全屏单视图模式（panel.html?view=xxx）；null=普通侧栏模式 */
   const [standaloneView] = useState<TabKey | null>(parseStandaloneView);
   const effectiveTab: TabKey = standaloneView ?? tab;
@@ -399,9 +402,9 @@ export function App() {
   const handleSaveVideoNote = async (): Promise<string> => {
     if (!meta || !video || sections.length === 0) return '暂无可存的大纲';
     try {
-      const { path } = await saveVideoNoteToObsidian({ videoId: video.videoId, meta, sections });
+      const { path, local } = await saveVideoNoteToObsidian({ videoId: video.videoId, meta, sections });
       void trackUsage('save');
-      return `已存入 ${path}`;
+      return local ? `未配置 Obsidian，已下载 .md：${path}` : `已存入 ${path}`;
     } catch (err) {
       return `存库失败：${err instanceof Error ? err.message : String(err)}`;
     }
@@ -416,22 +419,22 @@ export function App() {
     if (!meta || !video) return '未检测到视频';
     try {
       if (args.kind === 'term' && args.term) {
-        const { path } = await saveTermCardToObsidian({
+        const { path, local } = await saveTermCardToObsidian({
           term: args.term,
           payload: args.payload as never,
           meta,
           existingTerms: [],
         });
         void trackUsage('save');
-        return `已存入 ${path}`;
+        return local ? `未配置 Obsidian，已下载 .md：${path}` : `已存入 ${path}`;
       }
-      const { path } = await saveVideoNoteToObsidian({
+      const { path, local } = await saveVideoNoteToObsidian({
         videoId: video.videoId,
         meta,
         sections,
       });
       void trackUsage('save');
-      return `已存入 ${path}`;
+      return local ? `未配置 Obsidian，已下载 .md：${path}` : `已存入 ${path}`;
     } catch (err) {
       return err instanceof Error ? err.message : `存库失败：${String(err)}`;
     }
@@ -599,6 +602,14 @@ export function App() {
               >
                 设置
               </button>
+              <button
+                type="button"
+                className="tab settings-btn"
+                title="使用帮助"
+                onClick={() => setShowHelp(true)}
+              >
+                ？
+              </button>
             </nav>
           )}
           <main className="tab-body">
@@ -677,6 +688,7 @@ export function App() {
           </main>
         </>
       )}
+      {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} />}
     </div>
   );
 }

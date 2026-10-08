@@ -316,6 +316,21 @@ function formatTermText(term: TermPayload): string {
 
 const DIALOGUE_MAX_TURNS = 5;
 
+/** 等待提示（SPEC-10 10.6）：已耗时秒数 + 时长预期，缓解"死了吗"焦虑 */
+function QaLoadingHint() {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <div className="chat-loading chat-loading-live">
+      <span className="chat-loading-dot" aria-hidden="true" />
+      助教思考中… 已等待 {elapsed} 秒（通常 3~15 秒，带题目图片可能更久，可切走稍后回来）
+    </div>
+  );
+}
+
 export function ChatTab(props: ChatTabProps) {
   const videoId = props.videoId ?? null;
   const sections = props.sections ?? [];
@@ -770,7 +785,7 @@ export function ChatTab(props: ChatTabProps) {
           </div>
           );
         })}
-        {busy && <div className="chat-loading">思考中…</div>}
+        {busy && <QaLoadingHint />}
       </div>
 
       <div className="chat-range-bar">

@@ -26,6 +26,8 @@ import { DEFAULT_MODEL, FRAME_PLAN, MODEL_PRESETS, OBSIDIAN, VISION } from '../.
 import { ensureHostPermission, originOfBaseUrl } from '../../platform';
 import { MSG } from '../../messages';
 import { testObsidianConnection } from '../obsidianLoader';
+import { downloadBackup, importBackup } from '../dataBackup';
+import { readTextFileViaInput } from '../../platform/files';
 import {
   activePreset,
   describeModelStrategy,
@@ -166,6 +168,62 @@ export function SettingsPage({
   const [obsidianFeedback, setObsidianFeedback] = useState<Feedback>(null);
   const [obsidianTesting, setObsidianTesting] = useState(false);
   const [obsidianSaving, setObsidianSaving] = useState(false);
+  /** 数据管理（SPEC-10 10.5）：备份/恢复进行中与结果反馈 */
+  const [dataBusy, setDataBusy] = useState(false);
+  const [dataFeedback, setDataFeedback] = useState<Feedback>(null);
+
+  /** 导出全部数据（五 store → JSON 下载） */
+  const handleExportData = async () => {
+    setDataBusy(true);
+    setDataFeedback(null);
+    try {
+      const counts = await downloadBackup();
+      const parts = Object.entries(counts)
+        .filter(([, n]) => n > 0)
+        .map(([k, n]) => `${k} ${n} 条`);
+      setDataFeedback({
+        kind: 'ok',
+        text: `已导出备份文件${parts.length > 0 ? `（${parts.join('、')}）` : '（暂无数据）'}，请妥善保存`,
+      });
+    } catch (err) {
+      setDataFeedback({
+        kind: 'error',
+        text: `导出失败：${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setDataBusy(false);
+    }
+  };
+
+  /** 导入恢复（选备份文件 → 逐条写回，同键覆盖不删除既有数据） */
+  const handleImportData = async () => {
+    setDataBusy(true);
+    setDataFeedback(null);
+    try {
+      const picked = await readTextFileViaInput('.json,application/json');
+      if (!picked) {
+        setDataBusy(false);
+        return;
+      }
+      const { imported, skipped } = await importBackup(picked.text);
+      const parts = Object.entries(imported)
+        .filter(([, n]) => n > 0)
+        .map(([k, n]) => `${k} ${n} 条`);
+      setDataFeedback({
+        kind: 'ok',
+        text: `导入完成：${parts.length > 0 ? parts.join('、') : '备份中没有数据'}${
+          skipped > 0 ? `；跳过 ${skipped} 条无法识别的记录` : ''
+        }。刷新面板后生效`,
+      });
+    } catch (err) {
+      setDataFeedback({
+        kind: 'error',
+        text: `导入失败：${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setDataBusy(false);
+    }
+  };
   /** 最近一次读到的整份 settings：所有分区的合并写基线（避免分区互相覆盖） */
   const savedRef = useRef<Settings>({});
   /**
@@ -499,6 +557,25 @@ export function SettingsPage({
           <strong>注意：API Key 必须与所选模型所属平台一致</strong>（DeepSeek 的 Key
           不能打到 Qwen 的网关，反之亦然，混用会返回 401）；填好后先点「测试连接」确认
         </p>
+        {/* 冷启动三步引导（SPEC-10 10.1）：第一次配置模型的用户照着走完 */}
+        <div className="onboarding-box">
+          <b>第一次使用？三步完成配置：</b>
+          <ol className="onboarding-steps">
+            <li>
+              到{' '}
+              <a href={MODEL_PRESETS.deepseek.consoleUrl} target="_blank" rel="noreferrer">
+                DeepSeek 开放平台
+              </a>{' '}
+              或{' '}
+              <a href={MODEL_PRESETS.qwen.consoleUrl} target="_blank" rel="noreferrer">
+                阿里云百炼
+              </a>{' '}
+              注册并充值（都是几元起充；{MODEL_PRESETS.qwen.costHint}）
+            </li>
+            <li>在控制台创建一个 API Key，复制后粘贴到下方 Key 输入框</li>
+            <li>点「测试连接」确认可用，再点「保存」——完成</li>
+          </ol>
+        </div>
         <div className="field-row">
           {presetKeys().map((key) => (
             <button
@@ -763,6 +840,45 @@ export function SettingsPage({
             {obsidianFeedback.text}
           </p>
         )}
+      </section>
+
+      {/* SPEC-10 10.5：数据管理（备份与恢复） */}
+      <section className="settings-section">
+        <h4>数据管理（备份与恢复）</h4>
+        <p className="settings-hint">
+          你的全部数据（大纲、问答历史、笔记、术语卡、使用统计）只存在本机浏览器里。
+          导出为 JSON 文件妥善保存；换电脑或清缓存前先备份，之后可一键导入恢复
+        </p>
+        <div className="field-row">
+          <button type="button" className="btn btn-primary" onClick={() => void handleExportData()} disabled={dataBusy}>
+            {dataBusy ? '处理中…' : '导出全部数据'}
+          </button>
+          <button type="button" className="btn" onClick={() => void handleImportData()} disabled={dataBusy}>
+            导入恢复
+          </button>
+        </div>
+        {dataFeedback && (
+          <p
+            className={
+              dataFeedback.kind === 'ok' ? 'settings-hint' : 'settings-hint settings-error'
+            }
+          >
+            {dataFeedback.text}
+          </p>
+        )}
+      </section>
+
+      {/* SPEC-10 10.1/10.2：关于与隐私 */}
+      <section className="settings-section">
+        <h4>关于与隐私</h4>
+        <p className="settings-hint">
+          本扩展不设账号、不上传你的任何数据：字幕与笔记存在本机（IndexedDB），模型请求
+          用你自己配置的 API Key 直连对应服务商，公开资料检索走 DuckDuckGo。详细说明见
+          README 的「隐私与数据」章节
+        </p>
+        <p className="settings-hint">
+          开源仓库：github.com/phpvincent/ai-video-driver · 交换格式契约：docs/EXCHANGE-FORMAT.md
+        </p>
       </section>
 
       {/* SPEC-07：验证期报告入口（仅追加，未接线时整区隐藏） */}

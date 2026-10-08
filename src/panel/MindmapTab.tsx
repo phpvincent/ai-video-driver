@@ -371,7 +371,7 @@ export const CONCEPT_VIEW_LABEL = '概念图';
 export const CHRONO_VIEW_LABEL = '时间轴';
 export const CONCEPT_GENERATE_TEXT = '生成知识图';
 export const CONCEPT_GENERATING_TEXT = '正在生成概念知识图…';
-export const CONCEPT_MODEL_HINT = '需先配置模型才能生成概念知识图';
+export const CONCEPT_MODEL_HINT = '需先配置模型：到 DeepSeek / 阿里云百炼创建 API Key，在设置页粘贴并测试连接（只需一次；右上角「？」有完整帮助）';
 export const CONCEPT_OPEN_SETTINGS_TEXT = '去设置';
 /** 降级横幅文案（模型生成失败 → 术语关联图，显式告知不再静默） */
 export const CONCEPT_DEGRADED_TEXT = '模型生成失败，当前为术语关联图（降级）';

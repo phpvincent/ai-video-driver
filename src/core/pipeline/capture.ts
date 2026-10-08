@@ -42,7 +42,7 @@ export const INDEX_MD_NAME = '_索引.md';
 
 /** frontmatter 固定字段：来源与标签（TECH-DESIGN §4.7） */
 export const FRONTMATTER_SOURCE = 'bilibili';
-export const FRONTMATTER_TAGS = ['ai', '视频笔记'];
+export const FRONTMATTER_TAGS = ['ai', '视频笔记', 'B站'];
 
 /** 去重阈值：相似度 ≥ 此值视为同一术语（TECH-DESIGN §6.4 的 >0.8 口径取 ≥0.8） */
 export const DUPLICATE_THRESHOLD = 0.8;
@@ -171,6 +171,18 @@ export function buildFrontmatter(
   return ['---', ...lines, '---'].join('\n');
 }
 
+/** 术语卡固定标签（与视频笔记同构：裸读 frontmatter 即知来源与类型） */
+export const TERM_FRONTMATTER_TAGS = ['ai', '术语', 'B站'];
+
+/**
+ * 本地 .md 下载文件名（SPEC-10 10.4 Obsidian 解绑）：`{标题}.{bvid}_p{page}.md`。
+ * 与交换格式文件名同构（仅扩展名不同），用户能把两类文件归置在一起。
+ */
+export function localMarkdownFileName(meta: VideoMeta): string {
+  const safe = sanitizeFileName(meta.title);
+  return `${safe}.${meta.bvid || 'video'}_p${meta.page || 1}.md`;
+}
+
 /** 术语卡 frontmatter：type: term-card + term / video_id / source / created / tags */
 export function buildTermFrontmatter(
   term: string,
@@ -184,7 +196,7 @@ export function buildTermFrontmatter(
     `url: ${yamlValue(videoPageUrl(meta))}`,
     `video_id: ${yamlValue(meta.videoId)}`,
     `created: ${formatDate(now)}`,
-    `tags: [${FRONTMATTER_TAGS.join(', ')}]`,
+    `tags: [${TERM_FRONTMATTER_TAGS.join(', ')}]`,
     `type: term-card`,
   ];
   return ['---', ...lines, '---'].join('\n');

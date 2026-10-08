@@ -128,6 +128,10 @@ export const MODEL_PRESETS = {
     baseUrl: 'https://api.deepseek.com',
     // 官方已将 deepseek-chat 别名至 deepseek-flash（推理模型），此处用规范名
     model: 'deepseek-flash',
+    /** 开放平台控制台（冷启动引导：注册/充值/创建 Key，SPEC-10 10.1） */
+    consoleUrl: 'https://platform.deepseek.com/api_keys',
+    /** 费用参考（设置页引导文案用；估算口径见 PRICING） */
+    costHint: '一集 30 分钟视频的大纲+导图+问答，通常不到 0.1 元',
   },
   qwen: {
     label: '通义千问 Qwen · maas 网关（OpenAI 兼容，支持多模态）',
@@ -135,6 +139,8 @@ export const MODEL_PRESETS = {
     baseUrl: 'https://maas.qianwenaiapi.com/compatible-mode/v1',
     // 便宜的多模态模型；更可选 qwen-vl-max / qwen2.5-vl-72b-instruct
     model: 'qwen-vl-plus',
+    consoleUrl: 'https://bailian.console.aliyun.com/?apiKey=1',
+    costHint: '多模态可看课程画面；新用户通常有免费额度',
   },
 } as const;
 
@@ -230,6 +236,24 @@ export const NOTES = {
   reanchorBulletWindowMs: 15_000,
   /** 章节锚点「待确认」判定：旧/新章节标题完全不同 且 时长重叠 < 50% */
   reanchorPendingOverlapRatio: 0.5,
+} as const;
+
+/**
+ * 预设模型价格表（SPEC-10 10.8 成本估算）：元 / 百万 token，官方公示价。
+ * **估算口径**：缓存命中、阶梯折扣、活动价不区分；价格随官网变动需人工维护；
+ * 命中按模型名前缀最长匹配（先精确后泛化列表序）。自定义模型不在表内 → 只计 token。
+ */
+export const PRICING = {
+  presets: [
+    { prefix: 'deepseek-chat', inputPerM: 2, outputPerM: 8 },
+    { prefix: 'deepseek-reasoner', inputPerM: 4, outputPerM: 16 },
+    { prefix: 'qwen-max', inputPerM: 20, outputPerM: 60 },
+    { prefix: 'qwen-vl-max', inputPerM: 20, outputPerM: 60 },
+    { prefix: 'qwen-plus', inputPerM: 0.8, outputPerM: 2 },
+    { prefix: 'qwen-vl-plus', inputPerM: 0.8, outputPerM: 2 },
+    { prefix: 'qwen-turbo', inputPerM: 0.3, outputPerM: 0.6 },
+    { prefix: 'qwen3-vl-plus', inputPerM: 0.8, outputPerM: 2 },
+  ],
 } as const;
 
 export const DB = {

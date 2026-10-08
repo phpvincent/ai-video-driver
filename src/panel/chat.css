@@ -154,6 +154,31 @@
   padding: 2px 10px;
 }
 
+/* 等待中（SPEC-10 10.6）：呼吸圆点 + 已耗时 */
+.chat-loading-live {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chat-loading-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent, #4a7dff);
+  animation: chat-loading-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes chat-loading-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 .chat-range-bar {
   border-top: 1px solid var(--border, #e0e0e0);
   padding: 6px 12px;

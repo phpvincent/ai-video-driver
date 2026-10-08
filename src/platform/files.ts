@@ -17,6 +17,9 @@ export function downloadTextFile(
   text: string,
   mime = 'application/json',
 ): void {
+  if (typeof document === 'undefined') {
+    throw new Error('当前环境不支持文件下载（未找到 document）');
+  }
   const blob = new Blob([text], { type: `${mime};charset=utf-8` });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

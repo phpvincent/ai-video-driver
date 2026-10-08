@@ -20,12 +20,14 @@ import {
   INDEX_JSON_NAME,
   INDEX_MD_NAME,
   joinVaultPath,
+  localMarkdownFileName,
   playbackUrl,
   termNotePath,
   upsertIndexEntry,
   vaultPathsFor,
 } from '../core/pipeline/capture';
 import { getNote, putNote, testConnection, type ObsidianFetch } from '../sinks/obsidian';
+import { downloadTextFile } from '../platform/files';
 import { createSubtitleDb, listNotesByVideo } from '../storage/db';
 import type {
   KnowledgeIndexEntry,
@@ -139,19 +141,29 @@ async function requireConfig(): Promise<ObsidianConfig> {
   return cfg;
 }
 
-/** 视频笔记存库：落盘 + 双索引更新，返回笔记路径
- *
- * SPEC-09 9.7：目标笔记文件已存在时走**标记合并路径**——只增删/替换
- * `%% vsc:notes:start … %%` 区块，标记外（含用户手写）原样保留（A9）；
- * 文件不存在时按原行为全量生成，并把笔记区块直接内联。
+/** 存入结果（SPEC-10 10.4：local=true 表示未配置 Obsidian 时的本地 .md 下载降级） */
+export interface SaveNoteResult {
+  path: string;
+  /** true = 走了本地下载（未配置 Obsidian），UI 文案需区分 */
+  local?: boolean;
+}
+
+/**
+ * 视频笔记存库：Obsidian 已配置 → 落盘 + 双索引；**未配置 → 自动降级为本地
+ * .md 下载**（SPEC-10 10.4 Obsidian 解绑：同一构建函数 = 同一格式，裸读文件
+ * 即知来源与类型）。SPEC-09 9.7：目标笔记文件已存在时走标记合并路径——
+ * 只增删/替换 `%% vsc:notes:start … %%` 区块，标记外（含用户手写）原样保留。
  */
 export async function saveVideoNoteToObsidian(args: {
   videoId: string;
   meta: VideoMeta;
   sections: Section[];
   fetchFn?: ObsidianFetch;
-}): Promise<{ path: string }> {
-  const cfg = await requireConfig();
+}): Promise<SaveNoteResult> {
+  const cfg = await getObsidianConfig();
+  if (!cfg || !cfg.baseUrl || !cfg.apiKey) {
+    return await exportVideoNoteLocal(args);
+  }
   const fetchFn = args.fetchFn ?? defaultFetch;
   const { videoNote } = vaultPathsFor(args.meta, cfg.rootDir);
   const note = buildVideoNoteMarkdown({
@@ -194,7 +206,29 @@ export async function saveVideoNoteToObsidian(args: {
   return { path: videoNote };
 }
 
-/** 术语卡存库：先确定性去重（阈值 0.8），命中 throw 由 UI 提示合并 */
+/** 本地 .md 下载降级（未配置 Obsidian）：视频笔记 + 大纲笔记区块，同一构建函数 */
+async function exportVideoNoteLocal(args: {
+  videoId: string;
+  meta: VideoMeta;
+  sections: Section[];
+}): Promise<SaveNoteResult> {
+  const note = buildVideoNoteMarkdown({
+    meta: args.meta,
+    sections: args.sections,
+    sourceVideoId: args.videoId,
+  });
+  const notes = await listNotesByVideo(db, args.videoId).catch(() => []);
+  const markdown = applyNotesToMarkdown(note.markdown, args.meta, args.sections, notes);
+  const filename = localMarkdownFileName(args.meta);
+  downloadTextFile(filename, markdown, 'text/markdown');
+  return { path: filename, local: true };
+}
+
+/**
+ * 术语卡存库：Obsidian 已配置 → 先确定性去重（阈值 0.8，命中 throw 由 UI 提示
+ * 合并）再落盘；**未配置 → 本地 .md 下载降级**（SPEC-10 10.4，不做去重——
+ * 没有 vault 共享术语表，重复下载由用户自己管理）。
+ */
 export async function saveTermCardToObsidian(args: {
   term: string;
   payload: TermPayloadLike;
@@ -203,7 +237,16 @@ export async function saveTermCardToObsidian(args: {
   /** 该术语在视频中的出现位置（毫秒；缺省 0） */
   timestampMs?: number;
   fetchFn?: ObsidianFetch;
-}): Promise<{ path: string; duplicate: string | null }> {
+}): Promise<{ path: string; duplicate: string | null; local?: boolean }> {
+  const cfgNow = await getObsidianConfig();
+  if (!cfgNow || !cfgNow.baseUrl || !cfgNow.apiKey) {
+    const tMs = args.timestampMs ?? 0;
+    const note = buildTermCardMarkdown({ term: args.term, payload: args.payload, meta: args.meta, timestampMs: tMs });
+    const filename = `术语_${localMarkdownFileName(args.meta)}`;
+    downloadTextFile(filename, note.markdown, 'text/markdown');
+    return { path: filename, duplicate: null, local: true };
+  }
+
   const dup = findDuplicateTerm(args.term, args.existingTerms);
   if (dup.duplicate !== null) {
     throw new Error(`已存在相似术语「${dup.duplicate}」（相似度 ${dup.similarity}），是否合并？`);

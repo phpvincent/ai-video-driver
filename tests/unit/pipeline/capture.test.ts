@@ -200,7 +200,7 @@ describe('buildVideoNoteMarkdown', () => {
     expect(fm.video_id).toBe('BV1YG7G6eEPR_p2');
     expect(fm.duration).toBe('1922');
     expect(fm.created).toBe('2026-09-30');
-    expect(fm.tags).toBe('[ai, 视频笔记]');
+    expect(fm.tags).toBe('[ai, 视频笔记, B站]'); // SPEC-10 10.4：统一加 B站 来源标签
     expect(fm.type).toBe('video-note');
   });
 

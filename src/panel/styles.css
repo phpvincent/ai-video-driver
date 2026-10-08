@@ -1042,3 +1042,27 @@ body {
 .llm-log-copy-one:hover {
   background: #f2f7fd;
 }
+
+/* 冷启动三步引导（SPEC-10 10.1） */
+.onboarding-box {
+  background: rgba(74, 125, 255, 0.06);
+  border: 1px solid rgba(74, 125, 255, 0.25);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 6px 0 10px;
+}
+
+.onboarding-steps {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.onboarding-steps li {
+  margin: 2px 0;
+}
+
+.onboarding-box a {
+  color: var(--accent, #4a7dff);
+}

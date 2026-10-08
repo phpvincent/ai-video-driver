@@ -66,8 +66,10 @@ export const OUTLINE_PHASE_TEXT: Record<Phase, string> = {
   empty: '暂无可展示内容：请先到字幕 Tab 确认已加载字幕，再回到本页生成大纲',
 };
 
-/** 模型未配置提示文案 */
-export const OUTLINE_MODEL_NOT_READY_TEXT = '请先在设置页配置模型';
+/** 模型未配置提示文案（SPEC-10 10.1 冷启动：给步骤而不是一句话） */
+export const OUTLINE_MODEL_NOT_READY_TEXT =
+  '还没配置模型（只需一次）：① 到 DeepSeek 或阿里云百炼注册充值并创建 API Key；' +
+  '② 在设置页粘贴 Key 并测试连接。点右上角「？」可看完整使用帮助';
 
 /**
  * 当前章节查找（二分，sections 按 startMs 严格递增）：

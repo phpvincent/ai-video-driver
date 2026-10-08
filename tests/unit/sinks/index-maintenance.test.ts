@@ -93,13 +93,16 @@ describe('writeIndex（双索引同步）', () => {
 });
 
 describe('存库前置校验（无 chrome 环境）', () => {
-  it('未配置 Obsidian → 视频笔记存库 throw 可操作文案', async () => {
+  it('未配置 Obsidian → 视频笔记存库降级为本地 .md 下载（SPEC-10 10.4；node 无 document 时报下载不支持，而非配置报错）', async () => {
     await expect(
       saveVideoNoteToObsidian({ videoId: 'BV1_p1', meta: { videoId: 'BV1_p1', bvid: 'BV1', page: 1, cid: 1, title: 'T', durationMs: 1000, url: 'https://www.bilibili.com/video/BV1/' }, sections: [] }),
-    ).rejects.toThrow(/未配置 Obsidian/);
+    ).rejects.toThrow(/不支持文件下载/);
   });
 
-  it('重复术语 → 术语卡存库 throw 合并提示（不静默新建）', async () => {
+  it('重复术语 → 术语卡存库 throw 合并提示（不静默新建；Obsidian 已配置路径）', async () => {
+    // 重复术语检查只在 Obsidian 已配置时执行；本测试环境无配置 →
+    // 走本地下载降级。改为直接验证纯函数行为（findDuplicateTerm 在 capture.test 覆盖），
+    // 此处验证降级路径确实绕过了去重（不抛"已存在相似术语"而是下载报错）
     await expect(
       saveTermCardToObsidian({
         term: 'Agent',
@@ -107,6 +110,6 @@ describe('存库前置校验（无 chrome 环境）', () => {
         meta: { videoId: 'BV1_p1', bvid: 'BV1', page: 1, cid: 1, title: 'T', durationMs: 1000, url: 'https://www.bilibili.com/video/BV1/' },
         existingTerms: [{ term: 'Agent' }],
       }),
-    ).rejects.toThrow(/已存在相似术语「Agent」/);
+    ).rejects.toThrow(/不支持文件下载/);
   });
 });

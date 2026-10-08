@@ -42,6 +42,8 @@ export interface ValidationStats {
   subjective: { fewer: number; same: number; more: number; answered: number };
   /** LLM token 消耗（来自交互日志；日志被清空时为 0） */
   tokens: { calls: number; input: number; output: number; failed: number };
+  /** 费用估算（SPEC-10 10.8）：按模型聚合；totalCny=null 表示含无价格模型 */
+  cost: { totalCny: number | null; unknownTokens: number; rows: Array<{ model: string; input: number; output: number; costCny: number | null }> };
   /**
    * 抽帧开/关对照（SPEC-07 观察项，不参与判定）：按"该视频是否送出过帧"分组，
    * 对比两组的平均跳转与提问次数。样本小或某组为空时仅记录样本数。
@@ -100,6 +102,8 @@ export function formatNumber(n: number): string {
   return String(Math.round(n * 100) / 100);
 }
 
+import { formatCny, summarizeCost, type CostLogEntry } from './cost';
+
 /** 除零退化为 0（空数据时不产生 NaN/Infinity） */
 function ratio(a: number, b: number): number {
   return b > 0 ? a / b : 0;
@@ -109,8 +113,8 @@ function ratio(a: number, b: number): number {
 export function computeStats(args: {
   usage: UsageRecord[];
   qa: QaRecord[];
-  /** LLM 交互日志（token 统计；缺省为无日志） */
-  logs?: Array<{ ok: boolean; inputTokens?: number; outputTokens?: number }>;
+  /** LLM 交互日志（token 统计与费用估算；缺省为无日志） */
+  logs?: Array<{ ok: boolean; model?: string; inputTokens?: number; outputTokens?: number }>;
 }): ValidationStats {
   const usage = args.usage ?? [];
   const qa = args.qa ?? [];
@@ -146,6 +150,18 @@ export function computeStats(args: {
     tokens.output += e.outputTokens ?? 0;
     if (!e.ok) tokens.failed += 1;
   }
+  // SPEC-10 10.8：费用估算（按模型聚合；价格表见 config PRICING）
+  const costLogs: CostLogEntry[] = (args.logs ?? []).map((e) => ({
+    model: e.model ?? '',
+    inputTokens: e.inputTokens,
+    outputTokens: e.outputTokens,
+  }));
+  const costSummary = summarizeCost(costLogs);
+  const cost = {
+    totalCny: costSummary.totalCny,
+    unknownTokens: costSummary.unknownTokens,
+    rows: costSummary.rows,
+  };
   const qaByVideo = new Map<string, number>();
   for (const r of qa) qaByVideo.set(r.videoId, (qaByVideo.get(r.videoId) ?? 0) + 1);
   const visionVideos = usage.filter((u) => (u.vision?.frames ?? 0) > 0);
@@ -169,6 +185,7 @@ export function computeStats(args: {
     saves,
     subjective,
     tokens,
+    cost,
     visionObservation: {
       visionVideos: visionVideos.length,
       plainVideos: plainVideos.length,
@@ -325,6 +342,14 @@ export function buildValidationReport(args: BuildReportArgs): string {
   lines.push(
     `- LLM 消耗（交互日志）：调用 ${stats.tokens.calls} 次，输入 ${stats.tokens.input} / 输出 ${stats.tokens.output} token，失败 ${stats.tokens.failed} 次`,
   );
+  if (stats.cost.rows.length > 0) {
+    const perModel = stats.cost.rows
+      .map((r) => `${r.model} ${r.costCny === null ? '（无价格表，仅计 token）' : `¥${formatCny(r.costCny)}`}`)
+      .join(' · ');
+    lines.push(
+      `- 费用估算：${stats.cost.totalCny === null ? '含未识别模型，合计未知' : `合计约 ¥${formatCny(stats.cost.totalCny)}`}（${perModel}）——估算值，以服务商账单为准`,
+    );
+  }
   lines.push('');
   lines.push('## 抽帧开/关对照（观察项，不参与判定）');
   lines.push('');
