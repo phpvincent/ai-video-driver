@@ -33,7 +33,7 @@ export interface ValidationReportData {
   usage: UsageRecord[];
   qa: QaRecord[];
   /** LLM 交互日志（token 统计，SPEC-08 8.8；缺省为无日志） */
-  logs?: Array<{ ok: boolean; inputTokens?: number; outputTokens?: number }>;
+  logs?: Array<{ ok: boolean; model?: string; inputTokens?: number; outputTokens?: number }>;
 }
 
 export interface ValidationReportViewProps {
