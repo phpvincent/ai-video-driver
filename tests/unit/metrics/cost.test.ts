@@ -15,6 +15,9 @@ describe('priceOf（价格表前缀匹配）', () => {
     expect(priceOf('DeepSeek-Chat')).toEqual({ inputPerM: 2, outputPerM: 8 });
     expect(priceOf('qwen-vl-plus')).toEqual({ inputPerM: 0.8, outputPerM: 2 });
     expect(priceOf('qwen-vl-plus-latest')).toEqual({ inputPerM: 0.8, outputPerM: 2 });
+    // 冒烟 10-09：版本号隔断前缀（qwen3.5-flash 不以 qwen-flash 开头）需单独登记
+    expect(priceOf('qwen3.5-flash')).toEqual({ inputPerM: 0.5, outputPerM: 2 });
+    expect(priceOf('qwen3.5-flash-latest')).toEqual({ inputPerM: 0.5, outputPerM: 2 });
   });
 
   it('自定义/未知模型返回 null；空字符串 null', () => {
