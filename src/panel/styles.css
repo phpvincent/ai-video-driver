@@ -83,8 +83,17 @@ body {
   font-weight: 600;
 }
 
+/* 右侧工具按钮组（设置/？/⟳）：仅组内第一个推右，其余紧贴（冒烟反馈：
+   三个按钮各带 margin-left:auto，剩余空间被平分撑成三段式大空隙） */
 .settings-btn {
   margin-left: auto;
+  padding: 5px 10px;
+  min-width: 30px;
+  text-align: center;
+}
+
+.settings-btn + .settings-btn {
+  margin-left: 0;
 }
 
 /* Tab 内容区 */
