@@ -33,11 +33,21 @@ B 站教学视频的 AI 学习侧边栏：字幕 → 章节大纲 → 知识流�
 
 ## 安装
 
-当前为开发者模式安装（Chrome Web Store 上架中）：
+**方式一：Chrome 商店**（上架后推荐）——搜「视频学习副驾」一键安装，无需任何配置文件。
 
-1. `npm install && npm run build`
-2. Chrome 打开 `chrome://extensions` → 开启「开发者模式」→「加载已解压的扩展程序」→ 选择本项目 `dist/` 目录
+**方式二：免构建安装（推荐给不想碰命令行的用户）**：
+
+1. 到 [Releases 页面](https://github.com/phpvincent/ai-video-driver/releases) 下载最新的 `ai-video-driver-*.zip` 并解压
+2. Chrome 打开 `chrome://extensions` → 开启右上角「开发者模式」→「加载已解压的扩展程序」→ 选择**解压出来的文件夹**
 3. 打开任意 B 站视频，点击浏览器工具栏图标唤出侧边栏
+
+**方式三：从源码构建（面向开发者）**——仓库里是源代码，不含构建产物，需要 Node.js：
+
+```bash
+npm install && npm run build   # 构建产物在 dist/，加载方式同上
+```
+
+> 说明：为什么源码不能直接加载？扩展的界面代码用 React/TypeScript 编写，需要「编译」成浏览器能直接运行的 JavaScript（`npm run build` 做的就是这件事）。普通用户请直接用方式二，完全不需要安装 Node.js。
 
 ## 隐私与数据
 
