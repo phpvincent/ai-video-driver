@@ -169,6 +169,7 @@ v0.2 已规划（按优先级）：问答流式输出（秒回）、大纲分享
 | 支持其他平台吗 | v0.1 聚焦 B 站；YouTube 等在路线图 |
 | 手机能用吗 | 浏览器扩展的形态限制，暂不支持手机 B 站 App |
 | 加载报错"缺 content.js / icon-16" | 下错了包：Releases 页要点 **Assets** 里的 `ai-driver-pro-*.zip`，不要点页面下方的 Source code (zip)（那是源码，需自行构建） |
+| 报错 "supported API model names are deepseek-flash…" | 模型名填了营销名，须改成 API 规范名（区分大小写，如 `deepseek-flash`）；用预设方案可避免 |
 | 和 Glarity 有什么区别 | 总结工具给你一段话；我们给你能点回视频、能提问、能沉淀的地图 |
 
 ---
